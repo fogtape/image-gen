@@ -94,6 +94,8 @@ function getEffective() {
     useProxy: state.data.useProxy,
     isOAuth: acc ? acc.type === 'oauth' : false,
     accountId: acc ? (acc.accountId || '') : '',
+    openaiDeviceId: acc ? (acc.openaiDeviceId || '') : '',
+    openaiSessionId: acc ? (acc.openaiSessionId || '') : '',
   };
 }
 
@@ -552,7 +554,12 @@ async function generate() {
   $('#errorMsg').classList.add('hidden');
 
   try {
-    if (cfg.streamMode) {
+    if (cfg.isOAuth) {
+      if (hasRef) {
+        throw new Error('OAuth 登录生图已改走 ChatGPT 后端通道；当前先支持文字生图，参考图请暂用 API Key 账号。');
+      }
+      await genOAuthImages(cfg, prompt, quality, background, size, n, format);
+    } else if (cfg.streamMode) {
       await genResponses(cfg, prompt, quality, background, size, n, format, hasRef);
     } else if (hasRef) {
       await genEdits(cfg, prompt, quality, background, size, n, format);
@@ -564,6 +571,41 @@ async function generate() {
   } finally {
     setLoading(false);
   }
+}
+
+// --- OAuth ChatGPT backend image generation ---
+async function genOAuthImages(cfg, prompt, quality, background, size, n, format) {
+  const body = {
+    accessToken: cfg.apiKey,
+    accountId: cfg.accountId,
+    openaiDeviceId: cfg.openaiDeviceId,
+    openaiSessionId: cfg.openaiSessionId,
+    model: cfg.model,
+    prompt,
+    n,
+    quality,
+    background,
+    size,
+    format,
+  };
+
+  const resp = await fetch('/api/oauth/images', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error?.message || data.error || data.message || `HTTP ${resp.status}`);
+
+  const acc = getActiveAccount();
+  if (acc && acc.type === 'oauth') {
+    const updates = {};
+    if (data.openaiDeviceId && data.openaiDeviceId !== acc.openaiDeviceId) updates.openaiDeviceId = data.openaiDeviceId;
+    if (data.openaiSessionId && data.openaiSessionId !== acc.openaiSessionId) updates.openaiSessionId = data.openaiSessionId;
+    if (Object.keys(updates).length) updateAccount(acc.id, updates);
+  }
+
+  handleImagesResult(data, format);
 }
 
 // --- /v1/images/generations ---

@@ -1,6 +1,8 @@
 # AI Image Generator
 
-支持 OpenAI 兼容 API 的图片生成工具。
+支持 OpenAI 兼容 API 与 ChatGPT OAuth 的图片生成工具。
+
+Docker 镜像：`fogtape/image-gen:latest`
 
 ## 功能
 
@@ -42,6 +44,35 @@ netlify deploy --prod
 ```
 
 或在 Netlify 控制台拖拽上传项目文件夹。
+
+## Docker
+
+本地构建：
+
+```bash
+docker build -t image-gen:local .
+docker run --rm -p 3000:3000 image-gen:local
+```
+
+使用 Docker Compose：
+
+```bash
+docker compose up -d
+```
+
+以后推送到 `main` 后，GitHub Actions 会自动构建并推送 Docker Hub 镜像：
+
+```text
+fogtape/image-gen:latest
+fogtape/image-gen:sha-<commit>
+```
+
+GitHub 仓库需要配置 Secrets：
+
+```text
+DOCKERHUB_USERNAME
+DOCKERHUB_TOKEN
+```
 
 ## 代理说明
 

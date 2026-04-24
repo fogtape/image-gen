@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { handleOAuthImageRequestBody } from './openai-oauth-image.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -334,6 +335,30 @@ async function handleOAuthRefresh(req, res) {
   }
 }
 
+// --- OAuth image generation handler ---
+
+async function handleOAuthImages(req, res) {
+  let body = '';
+  for await (const chunk of req) body += chunk;
+
+  let parsed;
+  try { parsed = JSON.parse(body || '{}'); } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Invalid JSON' }));
+    return;
+  }
+
+  try {
+    const data = await handleOAuthImageRequestBody(parsed);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
+  } catch (e) {
+    const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: e.message || 'OAuth image generation failed' }));
+  }
+}
+
 // --- Main server ---
 
 const server = http.createServer((req, res) => {
@@ -354,6 +379,8 @@ const server = http.createServer((req, res) => {
     handleOAuthStatus(req, res, state);
   } else if (url.pathname === '/api/oauth/refresh' && req.method === 'POST') {
     handleOAuthRefresh(req, res);
+  } else if (url.pathname === '/api/oauth/images' && req.method === 'POST') {
+    handleOAuthImages(req, res);
   } else {
     serveStatic(req, res);
   }
