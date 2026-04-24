@@ -768,6 +768,10 @@ textarea { resize: vertical; }
   margin-bottom: 10px;
 }
 
+.oauth-manual-step2 {
+  margin-top: 14px;
+}
+
 .oauth-manual textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.78rem;

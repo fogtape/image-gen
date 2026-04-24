@@ -63,8 +63,14 @@
           </div>
           <div id="oauthManual" class="oauth-manual hidden">
             <div class="oauth-manual-title">完成 OpenAI 登录</div>
-            <div class="oauth-manual-desc">登录后如果浏览器跳到 localhost 无法打开，把地址栏里的完整回调链接粘贴到这里；也可以只粘贴 code 参数。</div>
-            <textarea id="oauthCallbackInput" rows="3" placeholder="http://localhost:1455/auth/callback?code=...&state=..."></textarea>
+            <div class="oauth-manual-desc">第一步：复制或打开下面的授权链接完成登录。不要依赖弹窗自动跳转，手机浏览器/内置浏览器可能会拦截。</div>
+            <textarea id="oauthAuthUrl" rows="3" readonly placeholder="授权链接会显示在这里"></textarea>
+            <div class="oauth-manual-actions">
+              <button id="oauthOpenBtn" class="btn btn-primary" type="button">打开授权页面</button>
+              <button id="oauthCopyBtn" class="btn btn-outline" type="button">复制授权链接</button>
+            </div>
+            <div class="oauth-manual-desc oauth-manual-step2">第二步：登录完成后，如果页面显示授权码，复制授权码；如果地址栏出现 localhost 回调链接，复制完整地址。然后粘贴到下面。</div>
+            <textarea id="oauthCallbackInput" rows="3" placeholder="粘贴授权码，或 http://localhost:1455/auth/callback?code=...&state=..."></textarea>
             <div class="oauth-manual-actions">
               <button id="oauthExchangeBtn" class="btn btn-primary" type="button">完成登录</button>
               <button id="oauthCancelBtn" class="btn btn-ghost" type="button">取消</button>

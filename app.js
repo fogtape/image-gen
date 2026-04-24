@@ -8,6 +8,7 @@ const state = {
   generating: false,
   dropdownOpen: false,
   oauthPendingState: null,
+  oauthAuthUrl: '',
 };
 
 // --- Data Layer ---
@@ -428,10 +429,48 @@ function addOAuthAccountFromResult(r) {
 
 function resetOAuthManual() {
   state.oauthPendingState = null;
+  state.oauthAuthUrl = '';
   const manualEl = $('#oauthManual');
   const inputEl = $('#oauthCallbackInput');
+  const authUrlEl = $('#oauthAuthUrl');
   if (manualEl) manualEl.classList.add('hidden');
   if (inputEl) inputEl.value = '';
+  if (authUrlEl) authUrlEl.value = '';
+}
+
+async function copyTextToClipboard(text) {
+  if (!text) return false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {}
+
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch {}
+  document.body.removeChild(ta);
+  return ok;
+}
+
+function openOAuthAuthUrl() {
+  if (!state.oauthAuthUrl) return;
+  window.open(state.oauthAuthUrl, '_blank', 'noopener,noreferrer');
+}
+
+async function copyOAuthAuthUrl() {
+  const statusEl = $('#oauthStatus');
+  const textEl = $('#oauthStatusText');
+  statusEl.classList.remove('hidden');
+  const ok = await copyTextToClipboard(state.oauthAuthUrl || $('#oauthAuthUrl').value);
+  textEl.textContent = ok ? '授权链接已复制，请到浏览器打开登录。' : '复制失败，请手动长按/全选复制授权链接。';
 }
 
 async function startOAuth() {
@@ -445,10 +484,12 @@ async function startOAuth() {
     const data = await resp.json();
     if (!data.authorizationUrl) throw new Error('未获取到授权地址');
 
-    window.open(data.authorizationUrl, '_blank', 'width=600,height=700');
     state.oauthPendingState = data.state;
+    state.oauthAuthUrl = data.authorizationUrl;
+    $('#oauthAuthUrl').value = data.authorizationUrl;
+    $('#oauthCallbackInput').value = '';
     $('#oauthManual').classList.remove('hidden');
-    textEl.textContent = '请在打开的页面完成登录；如果跳到 localhost 无法打开，把回调链接粘贴到下方完成登录。';
+    textEl.textContent = '授权链接已生成。请点击“打开授权页面”或复制链接到浏览器登录，完成后把授权码/回调链接粘贴回来。';
     pollOAuthStatus(data.state);
   } catch (e) {
     textEl.textContent = '发起失败: ' + e.message;
@@ -808,6 +849,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // OAuth login
   $('#oauthLoginBtn').onclick = startOAuth;
+  $('#oauthOpenBtn').onclick = openOAuthAuthUrl;
+  $('#oauthCopyBtn').onclick = copyOAuthAuthUrl;
   $('#oauthExchangeBtn').onclick = finishOAuthWithCode;
   $('#oauthCancelBtn').onclick = () => {
     resetOAuthManual();
