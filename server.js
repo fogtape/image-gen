@@ -15,6 +15,7 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 const OAUTH_LOOPBACK_PORT = 1455;
+const OAUTH_SESSION_FILE = path.join(__dirname, '.oauth-sessions.json');
 
 const MIME = {
   '.html': 'text/html',
@@ -31,19 +32,85 @@ const OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token';
 const OAUTH_SCOPES = 'openid email profile offline_access';
 const OAUTH_REDIRECT_URI = `http://localhost:${OAUTH_LOOPBACK_PORT}/auth/callback`;
 
-// --- OAuth session store (in-memory, 10 min TTL) ---
+// --- OAuth session store (sessionId -> session, state -> sessionId, persisted, 30 min TTL) ---
 
 const oauthSessions = new Map();
-const SESSION_TTL = 10 * 60 * 1000;
+const oauthStateIndex = new Map();
+const SESSION_TTL = 30 * 60 * 1000;
 
-function cleanSessions() {
-  const now = Date.now();
-  for (const [key, s] of oauthSessions) {
-    if (now - s.createdAt > SESSION_TTL) oauthSessions.delete(key);
+export function newOAuthSessionId() {
+  return crypto.randomBytes(16).toString('hex');
+}
+
+function indexOAuthSession(sessionId, session) {
+  if (session?.state) oauthStateIndex.set(session.state, sessionId);
+}
+
+export function setOAuthSession(sessionId, session) {
+  oauthSessions.set(sessionId, session);
+  indexOAuthSession(sessionId, session);
+  saveOAuthSessions();
+}
+
+export function getOAuthSessionById(sessionId) {
+  return sessionId ? oauthSessions.get(sessionId) || null : null;
+}
+
+export function getOAuthSessionByState(state) {
+  if (!state) return { sessionId: '', session: null };
+  const sessionId = oauthStateIndex.get(state) || '';
+  return { sessionId, session: sessionId ? getOAuthSessionById(sessionId) : null };
+}
+
+export function deleteOAuthSession(sessionId) {
+  const session = getOAuthSessionById(sessionId);
+  if (session?.state) oauthStateIndex.delete(session.state);
+  if (sessionId) oauthSessions.delete(sessionId);
+  saveOAuthSessions();
+}
+
+function saveOAuthSessions() {
+  try {
+    const data = [...oauthSessions.entries()].map(([sessionId, session]) => [sessionId, session]);
+    fs.writeFileSync(OAUTH_SESSION_FILE, JSON.stringify(data), { mode: 0o600 });
+  } catch (e) {
+    console.warn('Failed to save OAuth sessions:', e.message);
   }
 }
 
-setInterval(cleanSessions, 60_000);
+function loadOAuthSessions() {
+  try {
+    if (!fs.existsSync(OAUTH_SESSION_FILE)) return;
+    const parsed = JSON.parse(fs.readFileSync(OAUTH_SESSION_FILE, 'utf8'));
+    if (!Array.isArray(parsed)) return;
+    const now = Date.now();
+    for (const item of parsed) {
+      if (!Array.isArray(item) || item.length !== 2) continue;
+      const [sessionId, session] = item;
+      if (!sessionId || !session || now - Number(session.createdAt || 0) > SESSION_TTL) continue;
+      oauthSessions.set(sessionId, session);
+      indexOAuthSession(sessionId, session);
+    }
+  } catch (e) {
+    console.warn('Failed to load OAuth sessions:', e.message);
+  }
+}
+
+export function cleanSessions() {
+  const now = Date.now();
+  let changed = false;
+  for (const [sessionId, s] of oauthSessions) {
+    if (now - Number(s.createdAt || 0) > SESSION_TTL) {
+      if (s?.state) oauthStateIndex.delete(s.state);
+      oauthSessions.delete(sessionId);
+      changed = true;
+    }
+  }
+  if (changed) saveOAuthSessions();
+}
+
+loadOAuthSessions();
+setInterval(cleanSessions, 60_000).unref();
 
 // --- Loopback callback server ---
 
@@ -66,7 +133,7 @@ function ensureLoopbackServer() {
     const state = url.searchParams.get('state');
     const error = url.searchParams.get('error');
 
-    const session = state ? oauthSessions.get(state) : null;
+    const { sessionId, session } = getOAuthSessionByState(state);
 
     if (error || !code || !session) {
       if (session) {
@@ -81,12 +148,14 @@ function ensureLoopbackServer() {
     try {
       session.result = await exchangeOAuthCodeForResult(code, session);
       session.status = 'success';
+      saveOAuthSessions();
 
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end('<html><body><h2>登录成功</h2><p>可以关闭此窗口了。</p><script>window.close()</script></body></html>');
     } catch (e) {
       session.status = 'error';
       session.error = e.message;
+      saveOAuthSessions();
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end('<html><body><h2>登录失败</h2><p>' + e.message + '</p><script>window.close()</script></body></html>');
     }
@@ -207,7 +276,7 @@ async function exchangeOAuthCodeForResult(code, session) {
       client_id: OAUTH_CLIENT_ID,
       code,
       code_verifier: session.codeVerifier,
-      redirect_uri: OAUTH_REDIRECT_URI,
+      redirect_uri: session.redirectUri || OAUTH_REDIRECT_URI,
     }).toString(),
   });
 
@@ -224,9 +293,12 @@ async function handleOAuthStart(req, res) {
   const codeVerifier = makeOAuthCodeVerifier();
   const codeChallenge = makeOAuthCodeChallenge(codeVerifier);
   const state = crypto.randomBytes(24).toString('base64url');
+  const sessionId = newOAuthSessionId();
 
-  oauthSessions.set(state, {
+  setOAuthSession(sessionId, {
+    state,
     codeVerifier,
+    redirectUri: OAUTH_REDIRECT_URI,
     status: 'pending',
     result: null,
     error: null,
@@ -251,11 +323,17 @@ async function handleOAuthStart(req, res) {
   const authorizationUrl = `${OAUTH_AUTH_URL}?${params}`;
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ authorizationUrl, state }));
+  res.end(JSON.stringify({ authorizationUrl, sessionId, state, redirectUri: OAUTH_REDIRECT_URI }));
 }
 
-function handleOAuthStatus(req, res, state) {
-  const session = oauthSessions.get(state);
+function handleOAuthStatus(req, res, sessionKey) {
+  let sessionId = sessionKey;
+  let session = getOAuthSessionById(sessionId);
+  if (!session) {
+    const found = getOAuthSessionByState(sessionKey);
+    sessionId = found.sessionId;
+    session = found.session;
+  }
   if (!session) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Session not found' }));
@@ -265,10 +343,10 @@ function handleOAuthStatus(req, res, state) {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   if (session.status === 'success') {
     res.end(JSON.stringify({ status: 'success', result: session.result }));
-    oauthSessions.delete(state);
+    deleteOAuthSession(sessionId);
   } else if (session.status === 'error') {
     res.end(JSON.stringify({ status: 'error', error: session.error }));
-    oauthSessions.delete(state);
+    deleteOAuthSession(sessionId);
   } else {
     res.end(JSON.stringify({ status: 'pending' }));
   }
@@ -286,7 +364,9 @@ async function handleOAuthExchange(req, res) {
   }
 
   const callbackInput = parsed.callbackUrl || parsed.code || '';
-  const parsedCallback = parseOAuthCallbackInput(callbackInput, parsed.state || '');
+  const sessionId = String(parsed.sessionId || '').trim();
+  const sessionById = getOAuthSessionById(sessionId);
+  const parsedCallback = parseOAuthCallbackInput(callbackInput, parsed.state || sessionById?.state || '');
   const code = parsedCallback.code;
   const state = parsedCallback.state;
 
@@ -296,25 +376,35 @@ async function handleOAuthExchange(req, res) {
     return;
   }
 
-  const session = oauthSessions.get(state);
+  let resolvedSessionId = sessionId;
+  let session = sessionById;
+  if (!session) {
+    const found = getOAuthSessionByState(state);
+    resolvedSessionId = found.sessionId;
+    session = found.session;
+  }
   if (!session) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Session not found or expired' }));
     return;
   }
+  if (session.state && state && session.state !== state) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Invalid oauth state' }));
+    return;
+  }
 
   try {
     const result = await exchangeOAuthCodeForResult(code, session);
-    oauthSessions.delete(state);
+    deleteOAuthSession(resolvedSessionId);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'success', result }));
   } catch (e) {
-    session.status = 'error';
-    session.error = e.message || 'Token exchange failed';
-    oauthSessions.delete(state);
+    session.lastError = e.message || 'Token exchange failed';
+    saveOAuthSessions();
     const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
     res.writeHead(status, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: session.error }));
+    res.end(JSON.stringify({ error: session.lastError }));
   }
 }
 
@@ -398,7 +488,7 @@ async function handleOAuthImages(req, res) {
 
 // --- Main server ---
 
-const server = http.createServer((req, res) => {
+export const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -425,8 +515,10 @@ const server = http.createServer((req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
-  console.log('Proxy enabled at /api/proxy');
-  console.log('OAuth endpoints: /api/oauth/start, /api/oauth/status/:state, /api/oauth/refresh');
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  server.listen(PORT, () => {
+    console.log(`Server running at http://localhost:${PORT}`);
+    console.log('Proxy enabled at /api/proxy');
+    console.log('OAuth endpoints: /api/oauth/start, /api/oauth/status/:state, /api/oauth/refresh');
+  });
+}

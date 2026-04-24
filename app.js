@@ -7,6 +7,7 @@ const state = {
   refImageBase64: null,
   generating: false,
   dropdownOpen: false,
+  oauthPendingSessionId: null,
   oauthPendingState: null,
   oauthAuthUrl: '',
 };
@@ -428,6 +429,7 @@ function addOAuthAccountFromResult(r) {
 }
 
 function resetOAuthManual() {
+  state.oauthPendingSessionId = null;
   state.oauthPendingState = null;
   state.oauthAuthUrl = '';
   const manualEl = $('#oauthManual');
@@ -484,13 +486,14 @@ async function startOAuth() {
     const data = await resp.json();
     if (!data.authorizationUrl) throw new Error('未获取到授权地址');
 
+    state.oauthPendingSessionId = data.sessionId || data.state;
     state.oauthPendingState = data.state;
     state.oauthAuthUrl = data.authorizationUrl;
     $('#oauthAuthUrl').value = data.authorizationUrl;
     $('#oauthCallbackInput').value = '';
     $('#oauthManual').classList.remove('hidden');
     textEl.textContent = '授权链接已生成。请点击“打开授权页面”或复制链接到浏览器登录，完成后把授权码/回调链接粘贴回来。';
-    pollOAuthStatus(data.state);
+    pollOAuthStatus(state.oauthPendingSessionId);
   } catch (e) {
     textEl.textContent = '发起失败: ' + e.message;
     setTimeout(() => statusEl.classList.add('hidden'), 5000);
@@ -538,7 +541,7 @@ async function finishOAuthWithCode() {
   const textEl = $('#oauthStatusText');
   const inputEl = $('#oauthCallbackInput');
   const value = inputEl.value.trim();
-  if (!state.oauthPendingState || !value) {
+  if ((!state.oauthPendingSessionId && !state.oauthPendingState) || !value) {
     textEl.textContent = '请先发起登录，并粘贴回调链接或 code';
     statusEl.classList.remove('hidden');
     return;
@@ -551,7 +554,7 @@ async function finishOAuthWithCode() {
     const resp = await fetch('/api/oauth/exchange', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ state: state.oauthPendingState, callbackUrl: value }),
+      body: JSON.stringify({ sessionId: state.oauthPendingSessionId, state: state.oauthPendingState, callbackUrl: value }),
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || data.status !== 'success') {
