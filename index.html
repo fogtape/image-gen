@@ -127,14 +127,14 @@
           </div>
           <div class="form-group">
             <label for="editModel">模型</label>
-            <input type="text" id="editModel" value="gpt-image-2">
+            <input type="text" id="editModel" value="gpt-5.4">
           </div>
           <label class="switch-label">
             <span>流式模式（Responses API）</span>
-            <input type="checkbox" id="editStream">
+            <input type="checkbox" id="editStream" checked>
             <span class="switch"></span>
           </label>
-          <small class="section-hint">关闭时使用 /images/generations 和 /images/edits；开启后统一使用 /v1/responses</small>
+          <small class="section-hint">默认使用 /v1/responses + image_generation；失败时自动回退到 /images/generations 或 /images/edits</small>
           <div class="modal-footer">
             <button id="cancelEdit" class="btn btn-ghost">取消</button>
             <button id="saveEdit" class="btn btn-primary">保存</button>

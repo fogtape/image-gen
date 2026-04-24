@@ -6,6 +6,7 @@ import {
   buildConversationRequest,
   collectImagePointersFromText,
   normalizeBase64Image,
+  isChatChallengeRequired,
 } from '../openai-oauth-image.js';
 
 test('OAuth 生图请求使用 ChatGPT backend 头，而不是 Codex/OpenAI Images scope 头', () => {
@@ -64,4 +65,15 @@ test('能从 ChatGPT SSE/JSON 文本中提取图片指针和内联 base64 图片
 test('normalizeBase64Image 支持 data URL 并补齐 padding', () => {
   const raw = Buffer.from('png-data').toString('base64').replace(/=+$/, '');
   assert.equal(normalizeBase64Image(`data:image/png;base64,${raw}`), Buffer.from('png-data').toString('base64'));
+});
+
+
+test('ChatGPT challenge required parser does not treat string false as required', () => {
+  assert.equal(isChatChallengeRequired({ required: false }), false);
+  assert.equal(isChatChallengeRequired({ required: 'false' }), false);
+  assert.equal(isChatChallengeRequired({ required: '0' }), false);
+  assert.equal(isChatChallengeRequired({ required: null }), false);
+  assert.equal(isChatChallengeRequired({ required: true }), true);
+  assert.equal(isChatChallengeRequired({ required: 'true' }), true);
+  assert.equal(isChatChallengeRequired({ required: 'required' }), true);
 });

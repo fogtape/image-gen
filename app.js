@@ -1,6 +1,7 @@
 const $ = (s) => document.querySelector(s);
 const ACCOUNTS_KEY = 'img-gen-accounts';
 const OLD_KEY = 'img-gen-settings';
+const DEFAULT_MODEL = 'gpt-5.4';
 
 const state = {
   data: { activeId: null, accounts: [], useProxy: false },
@@ -40,8 +41,8 @@ function migrateOldSettings() {
         type: 'manual',
         apiUrl: old.apiUrl || '',
         apiKey: old.apiKey || '',
-        model: old.model || 'gpt-image-2',
-        streamMode: !!old.streamMode,
+        model: old.model || DEFAULT_MODEL,
+        streamMode: old.streamMode !== false,
         createdAt: Date.now(),
       };
       state.data.accounts.push(acc);
@@ -92,8 +93,8 @@ function getEffective() {
   return {
     apiUrl: tu || (acc ? acc.apiUrl : ''),
     apiKey: tk || (acc ? acc.apiKey : ''),
-    model: tm || (acc ? acc.model : 'gpt-image-2'),
-    streamMode: acc ? acc.streamMode : false,
+    model: tm || (acc ? acc.model : DEFAULT_MODEL),
+    streamMode: acc ? acc.streamMode !== false : true,
     useProxy: state.data.useProxy,
     isOAuth: acc ? acc.type === 'oauth' : false,
     accountId: acc ? (acc.accountId || '') : '',
@@ -376,8 +377,8 @@ function openEditModal(acc) {
   $('#editName').value = acc ? (acc.name || '') : '';
   $('#editUrl').value = acc ? (acc.apiUrl || '') : '';
   $('#editKey').value = acc ? (acc.apiKey || '') : '';
-  $('#editModel').value = acc ? (acc.model || 'gpt-image-2') : 'gpt-image-2';
-  $('#editStream').checked = acc ? !!acc.streamMode : false;
+  $('#editModel').value = acc ? (acc.model || DEFAULT_MODEL) : DEFAULT_MODEL;
+  $('#editStream').checked = acc ? acc.streamMode !== false : true;
   $('#editOverlay').classList.remove('hidden');
 }
 
@@ -391,7 +392,7 @@ function saveEditModal() {
     name: $('#editName').value.trim() || '未命名',
     apiUrl: $('#editUrl').value.trim().replace(/\/+$/, ''),
     apiKey: $('#editKey').value.trim(),
-    model: $('#editModel').value.trim() || 'gpt-image-2',
+    model: $('#editModel').value.trim() || DEFAULT_MODEL,
     streamMode: $('#editStream').checked,
   };
   if (id) {
@@ -414,11 +415,13 @@ function addOAuthAccountFromResult(r) {
     type: 'oauth',
     apiUrl: 'https://api.openai.com',
     apiKey: r.accessToken,
-    model: 'gpt-image-2',
-    streamMode: false,
+    model: DEFAULT_MODEL,
+    streamMode: true,
     email: r.email || '',
     accountId: r.accountId || '',
     planType: r.planType || '',
+    openaiDeviceId: r.openaiDeviceId || genId(),
+    openaiSessionId: r.openaiSessionId || genId(),
     refreshToken: r.refreshToken || null,
     tokenExpiresAt: Date.now() + (r.expiresIn || 3600) * 1000,
     createdAt: Date.now(),
@@ -659,7 +662,7 @@ async function generate() {
       }
       await genOAuthImages(cfg, prompt, quality, background, size, n, format);
     } else if (cfg.streamMode) {
-      await genResponses(cfg, prompt, quality, background, size, n, format, hasRef);
+      await genResponsesWithFallback(cfg, prompt, quality, background, size, n, format, hasRef);
     } else if (hasRef) {
       await genEdits(cfg, prompt, quality, background, size, n, format);
     } else {
@@ -765,6 +768,16 @@ function handleImagesResult(data, format) {
 
 // --- /v1/responses (streaming) ---
 
+async function genResponsesWithFallback(cfg, prompt, quality, background, size, n, format, hasRef) {
+  try {
+    await genResponses(cfg, prompt, quality, background, size, n, format, hasRef);
+  } catch (e) {
+    console.warn('Responses API failed, falling back to Images API:', e);
+    if (hasRef) await genEdits(cfg, prompt, quality, background, size, n, format);
+    else await genImages(cfg, prompt, quality, background, size, n, format);
+  }
+}
+
 async function genResponses(cfg, prompt, quality, background, size, n, format, hasRef) {
   let input;
   if (hasRef) {
@@ -776,9 +789,21 @@ async function genResponses(cfg, prompt, quality, background, size, n, format, h
     input = prompt;
   }
 
+  const imageTool = {
+    type: 'image_generation',
+    action: hasRef ? 'edit' : 'generate',
+    quality: quality || 'medium',
+    size: size === 'auto' ? 'auto' : size,
+    background: background || 'auto',
+    output_format: format,
+  };
+
   const body = {
-    model: cfg.model, input, stream: true,
-    tools: [{ type: 'image_generation', quality: quality || 'medium', size: size === 'auto' ? undefined : size, background: background || 'auto', output_format: format }],
+    model: cfg.model || DEFAULT_MODEL,
+    input,
+    stream: true,
+    tool_choice: 'required',
+    tools: [imageTool],
   };
 
   const resp = await smartFetch(`${cfg.apiUrl}/v1/responses`, {

@@ -44,6 +44,20 @@ function timezoneName() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 }
 
+
+export function isChatChallengeRequired(challenge) {
+  if (!challenge || typeof challenge !== 'object') return false;
+  const required = challenge.required;
+  if (required === true || required === 1) return true;
+  if (required === false || required === 0 || required == null) return false;
+  if (typeof required === 'string') {
+    const text = required.trim().toLowerCase();
+    if (!text || text === 'false' || text === '0' || text === 'no' || text === 'none') return false;
+    return text === 'true' || text === '1' || text === 'yes' || text === 'required';
+  }
+  return false;
+}
+
 export function buildChatGPTBackendHeaders({ accessToken, accountId, deviceId, sessionId, userAgent } = {}) {
   if (!String(accessToken || '').trim()) throw new Error('Missing OAuth access token');
   const headers = {
@@ -625,11 +639,11 @@ export async function generateOAuthImage(input = {}) {
 
   await bootstrap(headers).catch(() => {});
   const chatReqs = await fetchChatRequirements(headers);
-  if (chatReqs?.arkose?.required) {
-    throw new Error('ChatGPT 要求人机验证（arkose），当前 OAuth 生图代理无法自动完成，请稍后重试或换账号。');
+  if (isChatChallengeRequired(chatReqs?.arkose)) {
+    throw new Error('ChatGPT 要求人机验证（arkose），当前 OAuth 生图代理无法自动完成。请先在官方 ChatGPT 网页端使用同一账号完成一次消息/图片请求后再重试，或更换网络/账号。');
   }
-  if (chatReqs?.turnstile?.required) {
-    throw new Error('ChatGPT 要求人机验证（turnstile），当前 OAuth 生图代理无法自动完成，请稍后重试或换账号。');
+  if (isChatChallengeRequired(chatReqs?.turnstile)) {
+    throw new Error('ChatGPT 要求人机验证（turnstile），当前 OAuth 生图代理无法自动完成。请先在官方 ChatGPT 网页端使用同一账号完成一次消息/图片请求后再重试，或更换网络/账号。');
   }
 
   const count = Math.max(1, Math.min(4, Number.parseInt(input.n || 1, 10) || 1));
