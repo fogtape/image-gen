@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Image Studio</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎨</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Top Bar -->
+    <nav class="topbar">
+      <div class="topbar-left">
+        <div class="logo">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          <span>AI Image Studio</span>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="account-switcher" id="accountSwitcher">
+          <button class="switcher-btn" id="switcherBtn">
+            <span class="switcher-dot" id="switcherDot"></span>
+            <span class="switcher-name" id="switcherName">未配置</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <div class="switcher-dropdown hidden" id="switcherDropdown">
+            <div class="dropdown-list" id="dropdownList"></div>
+            <div class="dropdown-divider"></div>
+            <button class="dropdown-item dropdown-manage" id="dropdownManage">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+              管理账号
+            </button>
+          </div>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Account Management Overlay -->
+    <div id="accountOverlay" class="overlay hidden">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <h2>账号管理</h2>
+          <button id="closeAccount" class="close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <!-- Action buttons -->
+          <div class="account-actions">
+            <button id="addManualBtn" class="btn btn-outline">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              手动添加
+            </button>
+            <button id="oauthLoginBtn" class="btn btn-oauth">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+              OpenAI 登录
+            </button>
+          </div>
+
+          <!-- OAuth status -->
+          <div id="oauthStatus" class="oauth-status hidden">
+            <span class="spinner"></span>
+            <span id="oauthStatusText">等待登录...</span>
+          </div>
+
+          <!-- Account list -->
+          <div id="accountList" class="account-list"></div>
+
+          <!-- Global settings -->
+          <div class="global-settings">
+            <h3>全局设置</h3>
+            <label class="switch-label">
+              <span>强制代理</span>
+              <input type="checkbox" id="useProxy">
+              <span class="switch"></span>
+            </label>
+            <small class="section-hint">CORS 失败时会自动回退代理，通常无需手动开启</small>
+            <div class="modal-footer">
+              <button id="testConnection" class="btn btn-outline">测试连接</button>
+            </div>
+            <div id="testResult" class="toast hidden"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add/Edit Account Modal -->
+    <div id="editOverlay" class="overlay hidden">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 id="editTitle">添加账号</h2>
+          <button id="closeEdit" class="close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="editId">
+          <div class="form-group">
+            <label for="editName">名称</label>
+            <input type="text" id="editName" placeholder="我的 API">
+          </div>
+          <div class="form-group">
+            <label for="editUrl">API 地址</label>
+            <input type="url" id="editUrl" placeholder="https://api.openai.com">
+            <small>兼容 OpenAI 格式的 API 地址（不含 /v1 路径）</small>
+          </div>
+          <div class="form-group">
+            <label for="editKey">API Key</label>
+            <div class="input-row">
+              <input type="password" id="editKey" placeholder="sk-...">
+              <button id="toggleEditKey" class="icon-btn-sm" title="显示/隐藏">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="editModel">模型</label>
+            <input type="text" id="editModel" value="gpt-image-2">
+          </div>
+          <label class="switch-label">
+            <span>流式模式（Responses API）</span>
+            <input type="checkbox" id="editStream">
+            <span class="switch"></span>
+          </label>
+          <small class="section-hint">关闭时使用 /images/generations 和 /images/edits；开启后统一使用 /v1/responses</small>
+          <div class="modal-footer">
+            <button id="cancelEdit" class="btn btn-ghost">取消</button>
+            <button id="saveEdit" class="btn btn-primary">保存</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="workspace">
+        <!-- Input Area -->
+        <div class="input-card">
+          <textarea id="prompt" placeholder="描述你想生成的图片..." rows="3"></textarea>
+          <div class="input-toolbar">
+            <div class="toolbar-left">
+              <label class="tool-btn" id="uploadLabel" title="上传参考图">
+                <input type="file" id="refImage" accept="image/*" hidden>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+              </label>
+              <div id="refPreview" class="ref-preview hidden">
+                <img id="refPreviewImg" alt="参考图">
+                <button id="removeRef" class="ref-remove">&times;</button>
+              </div>
+            </div>
+            <div class="toolbar-right">
+              <span class="hint">Ctrl+Enter 发送</span>
+              <button id="generateBtn" class="btn btn-primary btn-send">
+                <span class="btn-text">生成</span>
+                <span class="btn-loading hidden"><span class="spinner"></span></span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Options Bar -->
+        <div class="options-bar">
+          <div class="opt">
+            <label>质量</label>
+            <div class="seg" data-field="quality">
+              <button data-value="low">低</button>
+              <button data-value="medium" class="active">中</button>
+              <button data-value="high">高</button>
+            </div>
+          </div>
+          <div class="opt">
+            <label>尺寸</label>
+            <select id="sizeSelect">
+              <option value="auto">自动</option>
+              <option value="1024x1024" selected>1024 × 1024</option>
+              <option value="1536x1024">1536 × 1024</option>
+              <option value="1024x1536">1024 × 1536</option>
+              <option value="1792x1024">1792 × 1024</option>
+              <option value="1024x1792">1024 × 1792</option>
+              <option value="512x512">512 × 512</option>
+              <option value="256x256">256 × 256</option>
+            </select>
+          </div>
+          <div class="opt">
+            <label>背景</label>
+            <div class="seg" data-field="background">
+              <button data-value="auto" class="active">自动</button>
+              <button data-value="opaque">不透明</button>
+              <button data-value="transparent">透明</button>
+            </div>
+          </div>
+          <div class="opt">
+            <label>数量</label>
+            <select id="numSelect">
+              <option value="1" selected>1</option>
+              <option value="2">2</option>
+              <option value="4">4</option>
+            </select>
+          </div>
+          <div class="opt">
+            <label>格式</label>
+            <select id="formatSelect">
+              <option value="png" selected>PNG</option>
+              <option value="webp">WebP</option>
+              <option value="jpeg">JPEG</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Temp Override -->
+        <details class="override-panel">
+          <summary>临时覆盖</summary>
+          <div class="override-grid">
+            <div class="form-group"><label>API 地址</label><input type="url" id="tempUrl" placeholder="留空用当前账号"></div>
+            <div class="form-group"><label>API Key</label><input type="password" id="tempKey" placeholder="留空用当前账号"></div>
+            <div class="form-group"><label>模型</label><input type="text" id="tempModel" placeholder="留空用当前账号"></div>
+          </div>
+        </details>
+      </div>
+
+      <!-- Results -->
+      <div id="results" class="gallery"></div>
+
+      <!-- Error -->
+      <div id="errorMsg" class="error-bar hidden"></div>
+    </main>
+
+    <!-- Lightbox -->
+    <div id="lightbox" class="lightbox hidden">
+      <img id="lightboxImg" alt="预览">
+      <button id="lightboxClose" class="lightbox-close">&times;</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
