@@ -91,13 +91,10 @@ function deleteAccount(id) {
 
 function getEffective() {
   const acc = getActiveAccount();
-  const tu = $('#tempUrl').value.replace(/\/+$/, '');
-  const tk = $('#tempKey').value;
-  const tm = $('#tempModel').value;
   return {
-    apiUrl: tu || (acc ? acc.apiUrl : ''),
-    apiKey: tk || (acc ? acc.apiKey : ''),
-    model: tm || (acc ? acc.model : DEFAULT_MODEL),
+    apiUrl: acc ? acc.apiUrl : '',
+    apiKey: acc ? acc.apiKey : '',
+    model: acc ? acc.model : DEFAULT_MODEL,
     streamMode: acc ? acc.streamMode !== false : true,
     useProxy: state.data.useProxy,
     isOAuth: acc ? acc.type === 'oauth' : false,
@@ -666,10 +663,15 @@ async function generate() {
 
   const quality = getActiveValue('quality');
   const background = getActiveValue('background');
-  const size = $('#sizeSelect').value;
-  const n = parseInt($('#numSelect').value);
+  const size = $('#sizeSelect').dataset.value;
   const format = $('#formatSelect').value;
+  const style = $('#styleSelect').value;
+  const type = $('#typeSelect').value;
   const hasRef = !!state.refImageBase64;
+
+  let finalPrompt = prompt;
+  const tags = [style, type].filter(Boolean);
+  if (tags.length) finalPrompt = `${tags.join(', ')} style. ${prompt}`;
 
   setLoading(true);
   $('#errorMsg').classList.add('hidden');
@@ -679,13 +681,13 @@ async function generate() {
       if (hasRef) {
         throw new Error('OAuth 登录生图已改走 ChatGPT 后端通道；当前先支持文字生图，参考图请暂用 API Key 账号。');
       }
-      await genOAuthImages(cfg, prompt, quality, background, size, n, format);
+      await genOAuthImages(cfg, finalPrompt, quality, background, size, format);
     } else if (cfg.streamMode) {
-      await genResponsesWithFallback(cfg, prompt, quality, background, size, n, format, hasRef);
+      await genResponsesWithFallback(cfg, finalPrompt, quality, background, size, format, hasRef);
     } else if (hasRef) {
-      await genEdits(cfg, prompt, quality, background, size, n, format);
+      await genEdits(cfg, finalPrompt, quality, background, size, format);
     } else {
-      await genImages(cfg, prompt, quality, background, size, n, format);
+      await genImages(cfg, finalPrompt, quality, background, size, format);
     }
   } catch (e) {
     showError(e);
@@ -695,7 +697,7 @@ async function generate() {
 }
 
 // --- OAuth ChatGPT backend image generation ---
-async function genOAuthImages(cfg, prompt, quality, background, size, n, format) {
+async function genOAuthImages(cfg, prompt, quality, background, size, format) {
   const body = {
     accessToken: cfg.apiKey,
     accountId: cfg.accountId,
@@ -703,7 +705,7 @@ async function genOAuthImages(cfg, prompt, quality, background, size, n, format)
     openaiSessionId: cfg.openaiSessionId,
     model: cfg.model,
     prompt,
-    n,
+    n: 1,
     quality,
     background,
     size,
@@ -731,8 +733,8 @@ async function genOAuthImages(cfg, prompt, quality, background, size, n, format)
 
 // --- /v1/images/generations ---
 
-async function genImages(cfg, prompt, quality, background, size, n, format) {
-  const body = { model: cfg.model, prompt, n, response_format: 'b64_json' };
+async function genImages(cfg, prompt, quality, background, size, format) {
+  const body = { model: cfg.model, prompt, n: 1, response_format: 'b64_json' };
   if (quality) body.quality = quality;
   if (background && background !== 'auto') body.background = background;
   if (size && size !== 'auto') body.size = size;
@@ -752,9 +754,9 @@ async function genImages(cfg, prompt, quality, background, size, n, format) {
 
 // --- /v1/images/edits ---
 
-async function genEdits(cfg, prompt, quality, background, size, n, format) {
+async function genEdits(cfg, prompt, quality, background, size, format) {
   const body = {
-    model: cfg.model, prompt, n, response_format: 'b64_json',
+    model: cfg.model, prompt, n: 1, response_format: 'b64_json',
     image: [{ type: 'base64', data: state.refImageBase64 }],
   };
   if (quality) body.quality = quality;
@@ -787,18 +789,18 @@ function handleImagesResult(data, format) {
 
 // --- /v1/responses (streaming) ---
 
-async function genResponsesWithFallback(cfg, prompt, quality, background, size, n, format, hasRef) {
+async function genResponsesWithFallback(cfg, prompt, quality, background, size, format, hasRef) {
   try {
-    await genResponses(cfg, prompt, quality, background, size, n, format, hasRef);
+    await genResponses(cfg, prompt, quality, background, size, format, hasRef);
   } catch (e) {
     if (normalizeGenerationError(e) === POLICY_VIOLATION_MESSAGE) throw e;
     console.warn('Responses API failed, falling back to Images API:', e);
-    if (hasRef) await genEdits(cfg, prompt, quality, background, size, n, format);
-    else await genImages(cfg, prompt, quality, background, size, n, format);
+    if (hasRef) await genEdits(cfg, prompt, quality, background, size, format);
+    else await genImages(cfg, prompt, quality, background, size, format);
   }
 }
 
-async function genResponses(cfg, prompt, quality, background, size, n, format, hasRef) {
+async function genResponses(cfg, prompt, quality, background, size, format, hasRef) {
   let input;
   if (hasRef) {
     input = [{ role: 'user', content: [
@@ -940,6 +942,25 @@ document.addEventListener('DOMContentLoaded', () => {
   // Lightbox
   $('#lightboxClose').onclick = () => $('#lightbox').classList.add('hidden');
   $('#lightbox').onclick = (e) => { if (e.target === $('#lightbox')) $('#lightbox').classList.add('hidden'); };
+
+  // Custom size select
+  const csEl = $('#sizeSelect');
+  const csTrigger = csEl.querySelector('.cs-trigger');
+  const csDropdown = csEl.querySelector('.cs-dropdown');
+  csTrigger.onclick = (e) => { e.stopPropagation(); csDropdown.classList.toggle('hidden'); };
+  csEl.querySelectorAll('.cs-item').forEach((item) => {
+    item.onclick = () => {
+      csEl.dataset.value = item.dataset.value;
+      csTrigger.textContent = item.dataset.label;
+      csEl.querySelectorAll('.cs-item').forEach((i) => i.classList.remove('active'));
+      item.classList.add('active');
+      csDropdown.classList.add('hidden');
+    };
+    if (item.dataset.value === csEl.dataset.value) item.classList.add('active');
+  });
+  document.addEventListener('click', (e) => {
+    if (!csEl.contains(e.target)) csDropdown.classList.add('hidden');
+  });
 
   // Ctrl+Enter
   $('#prompt').addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') generate(); });

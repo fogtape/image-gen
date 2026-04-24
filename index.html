@@ -182,16 +182,25 @@
           </div>
           <div class="opt">
             <label>尺寸</label>
-            <select id="sizeSelect">
-              <option value="auto">自动</option>
-              <option value="1024x1024" selected>1024 × 1024</option>
-              <option value="1536x1024">1536 × 1024</option>
-              <option value="1024x1536">1024 × 1536</option>
-              <option value="1792x1024">1792 × 1024</option>
-              <option value="1024x1792">1024 × 1792</option>
-              <option value="512x512">512 × 512</option>
-              <option value="256x256">256 × 256</option>
-            </select>
+            <div class="custom-select" id="sizeSelect" data-value="1024x1024">
+              <button class="cs-trigger" type="button">1024×1024</button>
+              <div class="cs-dropdown hidden">
+                <div class="cs-item" data-value="auto" data-label="自动">自动</div>
+                <div class="cs-divider"></div>
+                <div class="cs-item" data-value="1024x1024" data-label="1024×1024">1:1 正方形 1024×1024</div>
+                <div class="cs-item" data-value="512x512" data-label="512×512">1:1 小图 512×512</div>
+                <div class="cs-divider"></div>
+                <div class="cs-item" data-value="1536x864" data-label="1536×864">16:9 横版 1536×864</div>
+                <div class="cs-item" data-value="1536x1024" data-label="1536×1024">3:2 横版 1536×1024</div>
+                <div class="cs-item" data-value="1408x1056" data-label="1408×1056">4:3 横版 1408×1056</div>
+                <div class="cs-item" data-value="1792x1024" data-label="1792×1024">7:4 横版 1792×1024</div>
+                <div class="cs-divider"></div>
+                <div class="cs-item" data-value="864x1536" data-label="864×1536">9:16 竖版 864×1536</div>
+                <div class="cs-item" data-value="1024x1536" data-label="1024×1536">2:3 竖版 1024×1536</div>
+                <div class="cs-item" data-value="1056x1408" data-label="1056×1408">3:4 竖版 1056×1408</div>
+                <div class="cs-item" data-value="1024x1792" data-label="1024×1792">4:7 竖版 1024×1792</div>
+              </div>
+            </div>
           </div>
           <div class="opt">
             <label>背景</label>
@@ -200,14 +209,6 @@
               <button data-value="opaque">不透明</button>
               <button data-value="transparent">透明</button>
             </div>
-          </div>
-          <div class="opt">
-            <label>数量</label>
-            <select id="numSelect">
-              <option value="1" selected>1</option>
-              <option value="2">2</option>
-              <option value="4">4</option>
-            </select>
           </div>
           <div class="opt">
             <label>格式</label>
@@ -219,13 +220,37 @@
           </div>
         </div>
 
-        <!-- Temp Override -->
-        <details class="override-panel">
-          <summary>临时覆盖</summary>
-          <div class="override-grid">
-            <div class="form-group"><label>API 地址</label><input type="url" id="tempUrl" placeholder="留空用当前账号"></div>
-            <div class="form-group"><label>API Key</label><input type="password" id="tempKey" placeholder="留空用当前账号"></div>
-            <div class="form-group"><label>模型</label><input type="text" id="tempModel" placeholder="留空用当前账号"></div>
+        <!-- Advanced Options -->
+        <details class="advanced-panel">
+          <summary>高级选项</summary>
+          <div class="advanced-grid">
+            <div class="adv-group">
+              <label>风格</label>
+              <select id="styleSelect">
+                <option value="">默认</option>
+                <option value="natural">自然</option>
+                <option value="vivid">鲜明</option>
+                <option value="cinematic">电影感</option>
+                <option value="anime">动漫</option>
+                <option value="watercolor">水彩</option>
+                <option value="oil-painting">油画</option>
+                <option value="pixel-art">像素风</option>
+                <option value="3d-render">3D 渲染</option>
+              </select>
+            </div>
+            <div class="adv-group">
+              <label>类型</label>
+              <select id="typeSelect">
+                <option value="">默认</option>
+                <option value="photo">照片</option>
+                <option value="illustration">插画</option>
+                <option value="icon">图标</option>
+                <option value="logo">Logo</option>
+                <option value="poster">海报</option>
+                <option value="texture">纹理</option>
+                <option value="concept-art">概念艺术</option>
+              </select>
+            </div>
           </div>
         </details>
       </div>
