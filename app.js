@@ -1,3 +1,5 @@
+import { IDLE_GENERATION_HINT, POLICY_VIOLATION_MESSAGE, getGeneratingHint, isPolicyViolationText, normalizeGenerationError } from './ui-feedback.js';
+
 const $ = (s) => document.querySelector(s);
 const ACCOUNTS_KEY = 'img-gen-accounts';
 const OLD_KEY = 'img-gen-settings';
@@ -11,6 +13,8 @@ const state = {
   oauthPendingSessionId: null,
   oauthPendingState: null,
   oauthAuthUrl: '',
+  generationHintTimer: null,
+  generationHintStep: 0,
 };
 
 // --- Data Layer ---
@@ -195,7 +199,7 @@ async function ensureValidToken(cfg) {
 
 function showError(msg) {
   const el = $('#errorMsg');
-  el.textContent = msg;
+  el.textContent = normalizeGenerationError(msg);
   el.classList.remove('hidden');
   setTimeout(() => el.classList.add('hidden'), 10000);
 }
@@ -205,6 +209,21 @@ function setLoading(on) {
   $('#generateBtn .btn-text').classList.toggle('hidden', on);
   $('#generateBtn .btn-loading').classList.toggle('hidden', !on);
   $('#generateBtn').disabled = on;
+  const hintEl = $('#generationHint') || $('.toolbar-right .hint');
+  if (!hintEl) return;
+  if (state.generationHintTimer) {
+    clearInterval(state.generationHintTimer);
+    state.generationHintTimer = null;
+  }
+  if (on) {
+    state.generationHintStep = 0;
+    hintEl.textContent = getGeneratingHint(state.generationHintStep++);
+    state.generationHintTimer = setInterval(() => {
+      hintEl.textContent = getGeneratingHint(state.generationHintStep++);
+    }, 2500);
+  } else {
+    hintEl.textContent = IDLE_GENERATION_HINT;
+  }
 }
 
 function addResultCard(b64, format) {
@@ -669,7 +688,7 @@ async function generate() {
       await genImages(cfg, prompt, quality, background, size, n, format);
     }
   } catch (e) {
-    showError(e.message);
+    showError(e);
   } finally {
     setLoading(false);
   }
@@ -697,7 +716,7 @@ async function genOAuthImages(cfg, prompt, quality, background, size, n, format)
     body: JSON.stringify(body),
   });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.error?.message || data.error || data.message || `HTTP ${resp.status}`);
+  if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.error || data.message || `HTTP ${resp.status}`));
 
   const acc = getActiveAccount();
   if (acc && acc.type === 'oauth') {
@@ -727,7 +746,7 @@ async function genImages(cfg, prompt, quality, background, size, n, format) {
     _forceProxy: cfg.isOAuth,
   });
   const data = await resp.json();
-  if (!resp.ok) throw new Error(data.error?.message || data.message || `HTTP ${resp.status}`);
+  if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
   handleImagesResult(data, format);
 }
 
@@ -751,7 +770,7 @@ async function genEdits(cfg, prompt, quality, background, size, n, format) {
     _forceProxy: cfg.isOAuth,
   });
   const data = await resp.json();
-  if (!resp.ok) throw new Error(data.error?.message || data.message || `HTTP ${resp.status}`);
+  if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
   handleImagesResult(data, format);
 }
 
@@ -772,6 +791,7 @@ async function genResponsesWithFallback(cfg, prompt, quality, background, size, 
   try {
     await genResponses(cfg, prompt, quality, background, size, n, format, hasRef);
   } catch (e) {
+    if (normalizeGenerationError(e) === POLICY_VIOLATION_MESSAGE) throw e;
     console.warn('Responses API failed, falling back to Images API:', e);
     if (hasRef) await genEdits(cfg, prompt, quality, background, size, n, format);
     else await genImages(cfg, prompt, quality, background, size, n, format);
@@ -819,7 +839,7 @@ async function genResponses(cfg, prompt, quality, background, size, n, format, h
 
   try {
     const data = JSON.parse(rawText);
-    if (!resp.ok) throw new Error(data.error?.message || data.message || `HTTP ${resp.status}`);
+    if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
     for (const item of (data.output || [])) {
       if (item.type === 'image_generation_call' && item.result) { addResultCard(item.result, format); found = true; }
     }
@@ -835,12 +855,13 @@ async function genResponses(cfg, prompt, quality, background, size, n, format, h
     try {
       const ev = JSON.parse(s);
       if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call' && ev.item.result) { addResultCard(ev.item.result, format); found = true; }
-      if (ev.error) throw new Error(ev.error.message || JSON.stringify(ev.error));
+      if (ev.error) throw new Error(normalizeGenerationError(ev.error.message || JSON.stringify(ev.error)));
     } catch (e) {
       if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;
     }
   }
 
+  if (isPolicyViolationText(rawText)) throw new Error(normalizeGenerationError(rawText));
   if (!found) throw new Error('未能从响应中提取到图片');
 }
 

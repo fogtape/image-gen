@@ -5,7 +5,7 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 COPY package.json ./
-COPY index.html app.js style.css server.js openai-oauth-image.js oauth-flow.js ./
+COPY index.html app.js style.css server.js openai-oauth-image.js oauth-flow.js ui-feedback.js ./
 COPY api ./api
 COPY netlify ./netlify
 

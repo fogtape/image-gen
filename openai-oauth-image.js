@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { isPolicyViolationText, normalizeGenerationError } from './ui-feedback.js';
 
 const CHATGPT_BASE = 'https://chatgpt.com';
 const CHATGPT_START_URL = `${CHATGPT_BASE}/`;
@@ -185,6 +186,7 @@ async function statusError(resp, label) {
     message = body.slice(0, 300);
   }
   message = sanitizeErrorText(message);
+  message = normalizeGenerationError(message, message);
   const suffix = message ? `: ${message}` : '';
   const err = new Error(`${label} (${resp.status})${suffix}`);
   err.status = resp.status;
@@ -600,7 +602,10 @@ async function generateOneImage({ headers, prompt, chatReqs }) {
     pointers = mergePointers(pointers, polled);
   }
   pointers = preferFileServicePointers(pointers);
-  if (!pointers.length) throw new Error('ChatGPT image conversation returned no downloadable images');
+  if (!pointers.length) {
+    if (isPolicyViolationText(rawText)) throw new Error(normalizeGenerationError(rawText));
+    throw new Error('ChatGPT image conversation returned no downloadable images');
+  }
 
   const data = [];
   for (const pointer of pointers) {
