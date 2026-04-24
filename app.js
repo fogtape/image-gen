@@ -7,6 +7,7 @@ const state = {
   refImageBase64: null,
   generating: false,
   dropdownOpen: false,
+  oauthPendingState: null,
 };
 
 // --- Data Layer ---
@@ -169,6 +170,9 @@ async function refreshOAuthToken(acc) {
       refreshToken: data.refreshToken || acc.refreshToken,
       tokenExpiresAt: Date.now() + (data.expiresIn || 3600) * 1000,
       email: data.email || acc.email,
+      name: data.name || acc.name,
+      accountId: data.accountId || acc.accountId,
+      planType: data.planType || acc.planType,
     });
     return true;
   } catch { return false; }
@@ -401,6 +405,35 @@ function saveEditModal() {
 
 // --- OAuth Flow ---
 
+function addOAuthAccountFromResult(r) {
+  addAccount({
+    id: genId(),
+    name: r.name || r.email || 'OpenAI',
+    type: 'oauth',
+    apiUrl: 'https://api.openai.com',
+    apiKey: r.accessToken,
+    model: 'gpt-image-2',
+    streamMode: false,
+    email: r.email || '',
+    accountId: r.accountId || '',
+    planType: r.planType || '',
+    refreshToken: r.refreshToken || null,
+    tokenExpiresAt: Date.now() + (r.expiresIn || 3600) * 1000,
+    createdAt: Date.now(),
+  });
+  renderAccountList();
+  renderSwitcher();
+  renderDropdown();
+}
+
+function resetOAuthManual() {
+  state.oauthPendingState = null;
+  const manualEl = $('#oauthManual');
+  const inputEl = $('#oauthCallbackInput');
+  if (manualEl) manualEl.classList.add('hidden');
+  if (inputEl) inputEl.value = '';
+}
+
 async function startOAuth() {
   const statusEl = $('#oauthStatus');
   const textEl = $('#oauthStatusText');
@@ -413,7 +446,9 @@ async function startOAuth() {
     if (!data.authorizationUrl) throw new Error('未获取到授权地址');
 
     window.open(data.authorizationUrl, '_blank', 'width=600,height=700');
-    textEl.textContent = '等待浏览器登录...';
+    state.oauthPendingState = data.state;
+    $('#oauthManual').classList.remove('hidden');
+    textEl.textContent = '请在打开的页面完成登录；如果跳到 localhost 无法打开，把回调链接粘贴到下方完成登录。';
     pollOAuthStatus(data.state);
   } catch (e) {
     textEl.textContent = '发起失败: ' + e.message;
@@ -438,25 +473,9 @@ async function pollOAuthStatus(oauthState) {
       const data = await resp.json();
       if (data.status === 'success') {
         const r = data.result;
-        addAccount({
-          id: genId(),
-          name: r.name || r.email || 'OpenAI',
-          type: 'oauth',
-          apiUrl: 'https://api.openai.com',
-          apiKey: r.accessToken,
-          model: 'gpt-image-2',
-          streamMode: false,
-          email: r.email || '',
-          accountId: r.accountId || '',
-          planType: r.planType || '',
-          refreshToken: r.refreshToken || null,
-          tokenExpiresAt: Date.now() + (r.expiresIn || 3600) * 1000,
-          createdAt: Date.now(),
-        });
+        addOAuthAccountFromResult(r);
+        resetOAuthManual();
         textEl.textContent = '登录成功: ' + (r.email || r.name || '');
-        renderAccountList();
-        renderSwitcher();
-        renderDropdown();
         setTimeout(() => statusEl.classList.add('hidden'), 2000);
         return;
       }
@@ -471,6 +490,42 @@ async function pollOAuthStatus(oauthState) {
     }
   };
   poll();
+}
+
+async function finishOAuthWithCode() {
+  const statusEl = $('#oauthStatus');
+  const textEl = $('#oauthStatusText');
+  const inputEl = $('#oauthCallbackInput');
+  const value = inputEl.value.trim();
+  if (!state.oauthPendingState || !value) {
+    textEl.textContent = '请先发起登录，并粘贴回调链接或 code';
+    statusEl.classList.remove('hidden');
+    return;
+  }
+
+  statusEl.classList.remove('hidden');
+  textEl.textContent = '正在完成登录...';
+  $('#oauthExchangeBtn').disabled = true;
+  try {
+    const resp = await fetch('/api/oauth/exchange', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state: state.oauthPendingState, callbackUrl: value }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || data.status !== 'success') {
+      throw new Error(data.error || data.message || `HTTP ${resp.status}`);
+    }
+    const r = data.result;
+    addOAuthAccountFromResult(r);
+    resetOAuthManual();
+    textEl.textContent = '登录成功: ' + (r.email || r.name || '');
+    setTimeout(() => statusEl.classList.add('hidden'), 2000);
+  } catch (e) {
+    textEl.textContent = '登录失败: ' + e.message;
+  } finally {
+    $('#oauthExchangeBtn').disabled = false;
+  }
 }
 
 // --- Test Connection ---
@@ -753,6 +808,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // OAuth login
   $('#oauthLoginBtn').onclick = startOAuth;
+  $('#oauthExchangeBtn').onclick = finishOAuthWithCode;
+  $('#oauthCancelBtn').onclick = () => {
+    resetOAuthManual();
+    $('#oauthStatus').classList.add('hidden');
+  };
 
   // Edit modal
   $('#saveEdit').onclick = saveEditModal;

@@ -61,6 +61,15 @@
             <span class="spinner"></span>
             <span id="oauthStatusText">等待登录...</span>
           </div>
+          <div id="oauthManual" class="oauth-manual hidden">
+            <div class="oauth-manual-title">完成 OpenAI 登录</div>
+            <div class="oauth-manual-desc">登录后如果浏览器跳到 localhost 无法打开，把地址栏里的完整回调链接粘贴到这里；也可以只粘贴 code 参数。</div>
+            <textarea id="oauthCallbackInput" rows="3" placeholder="http://localhost:1455/auth/callback?code=...&state=..."></textarea>
+            <div class="oauth-manual-actions">
+              <button id="oauthExchangeBtn" class="btn btn-primary" type="button">完成登录</button>
+              <button id="oauthCancelBtn" class="btn btn-ghost" type="button">取消</button>
+            </div>
+          </div>
 
           <!-- Account list -->
           <div id="accountList" class="account-list"></div>

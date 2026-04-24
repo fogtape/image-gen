@@ -745,6 +745,40 @@ textarea { resize: vertical; }
   border-top-color: var(--primary);
 }
 
+.oauth-manual {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  margin-bottom: 16px;
+}
+
+.oauth-manual.hidden { display: none; }
+
+.oauth-manual-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 6px;
+}
+
+.oauth-manual-desc {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text-2);
+  margin-bottom: 10px;
+}
+
+.oauth-manual textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.oauth-manual-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 /* Account List */
 .account-list {
   display: flex;

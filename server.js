@@ -4,6 +4,13 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { handleOAuthImageRequestBody } from './openai-oauth-image.js';
+import {
+  generateCodeVerifier as makeOAuthCodeVerifier,
+  generateCodeChallenge as makeOAuthCodeChallenge,
+  parseOAuthCallbackInput,
+  extractOpenAIUserInfo,
+  formatOAuthTokenError,
+} from './oauth-flow.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -23,26 +30,6 @@ const OAUTH_AUTH_URL = 'https://auth.openai.com/oauth/authorize';
 const OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token';
 const OAUTH_SCOPES = 'openid email profile offline_access';
 const OAUTH_REDIRECT_URI = `http://localhost:${OAUTH_LOOPBACK_PORT}/auth/callback`;
-
-// --- PKCE helpers ---
-
-function generateCodeVerifier() {
-  return crypto.randomBytes(48).toString('base64url');
-}
-
-async function generateCodeChallenge(verifier) {
-  const hash = crypto.createHash('sha256').update(verifier).digest();
-  return hash.toString('base64url');
-}
-
-function decodeJwtPayload(token) {
-  try {
-    const parts = token.split('.');
-    if (parts.length < 2) return {};
-    const payload = Buffer.from(parts[1], 'base64url').toString('utf8');
-    return JSON.parse(payload);
-  } catch { return {}; }
-}
 
 // --- OAuth session store (in-memory, 10 min TTL) ---
 
@@ -92,41 +79,8 @@ function ensureLoopbackServer() {
     }
 
     try {
-      const tokenResp = await fetch(OAUTH_TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          client_id: OAUTH_CLIENT_ID,
-          code,
-          code_verifier: session.codeVerifier,
-          redirect_uri: OAUTH_REDIRECT_URI,
-        }).toString(),
-      });
-
-      const tokenData = await tokenResp.json();
-
-      if (!tokenResp.ok || !tokenData.access_token) {
-        session.status = 'error';
-        session.error = tokenData.error_description || tokenData.error || 'Token exchange failed';
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end('<html><body><h2>登录失败</h2><p>' + session.error + '</p><script>window.close()</script></body></html>');
-        return;
-      }
-
-      const idPayload = tokenData.id_token ? decodeJwtPayload(tokenData.id_token) : {};
-
+      session.result = await exchangeOAuthCodeForResult(code, session);
       session.status = 'success';
-      session.result = {
-        accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token || null,
-        expiresIn: tokenData.expires_in || 3600,
-        email: idPayload.email || '',
-        name: idPayload.name || idPayload.email || '',
-        sub: idPayload.sub || '',
-        accountId: idPayload.chatgpt_account_id || '',
-        planType: idPayload.chatgpt_plan_type || '',
-      };
 
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end('<html><body><h2>登录成功</h2><p>可以关闭此窗口了。</p><script>window.close()</script></body></html>');
@@ -160,7 +114,7 @@ function ensureLoopbackServer() {
 function serveStatic(req, res) {
   let filePath = path.join(__dirname, req.url === '/' ? 'index.html' : req.url);
   const ext = path.extname(filePath);
-  if (!fs.existsSync(filePath)) {
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
     res.writeHead(404);
     res.end('Not Found');
     return;
@@ -230,9 +184,45 @@ async function handleProxy(req, res) {
 
 // --- OAuth route handlers ---
 
+function buildOAuthResult(tokenData, fallbackRefreshToken = null) {
+  const userInfo = tokenData.id_token ? extractOpenAIUserInfo(tokenData.id_token) : {};
+  return {
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token || fallbackRefreshToken,
+    expiresIn: tokenData.expires_in || 3600,
+    email: userInfo.email || '',
+    name: userInfo.name || userInfo.email || '',
+    sub: userInfo.sub || '',
+    accountId: userInfo.accountId || '',
+    planType: userInfo.planType || '',
+  };
+}
+
+async function exchangeOAuthCodeForResult(code, session) {
+  const tokenResp = await fetch(OAUTH_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: OAUTH_CLIENT_ID,
+      code,
+      code_verifier: session.codeVerifier,
+      redirect_uri: OAUTH_REDIRECT_URI,
+    }).toString(),
+  });
+
+  const tokenData = await tokenResp.json().catch(() => ({}));
+  if (!tokenResp.ok || !tokenData.access_token) {
+    const err = new Error(formatOAuthTokenError(tokenData, 'Token exchange failed'));
+    err.status = tokenResp.status || 400;
+    throw err;
+  }
+  return buildOAuthResult(tokenData, null);
+}
+
 async function handleOAuthStart(req, res) {
-  const codeVerifier = generateCodeVerifier();
-  const codeChallenge = await generateCodeChallenge(codeVerifier);
+  const codeVerifier = makeOAuthCodeVerifier();
+  const codeChallenge = makeOAuthCodeChallenge(codeVerifier);
   const state = crypto.randomBytes(24).toString('base64url');
 
   oauthSessions.set(state, {
@@ -284,6 +274,50 @@ function handleOAuthStatus(req, res, state) {
   }
 }
 
+async function handleOAuthExchange(req, res) {
+  let body = '';
+  for await (const chunk of req) body += chunk;
+
+  let parsed;
+  try { parsed = JSON.parse(body || '{}'); } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Invalid JSON' }));
+    return;
+  }
+
+  const callbackInput = parsed.callbackUrl || parsed.code || '';
+  const parsedCallback = parseOAuthCallbackInput(callbackInput, parsed.state || '');
+  const code = parsedCallback.code;
+  const state = parsedCallback.state;
+
+  if (!code || !state) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Missing authorization code or state' }));
+    return;
+  }
+
+  const session = oauthSessions.get(state);
+  if (!session) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Session not found or expired' }));
+    return;
+  }
+
+  try {
+    const result = await exchangeOAuthCodeForResult(code, session);
+    oauthSessions.delete(state);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'success', result }));
+  } catch (e) {
+    session.status = 'error';
+    session.error = e.message || 'Token exchange failed';
+    oauthSessions.delete(state);
+    const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: session.error }));
+  }
+}
+
 async function handleOAuthRefresh(req, res) {
   let body = '';
   for await (const chunk of req) body += chunk;
@@ -316,18 +350,21 @@ async function handleOAuthRefresh(req, res) {
     const data = await resp.json();
     if (!resp.ok || !data.access_token) {
       res.writeHead(resp.status, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: data.error_description || data.error || 'Refresh failed' }));
+      res.end(JSON.stringify({ error: formatOAuthTokenError(data, 'Refresh failed') }));
       return;
     }
 
-    const idPayload = data.id_token ? decodeJwtPayload(data.id_token) : {};
+    const userInfo = data.id_token ? extractOpenAIUserInfo(data.id_token) : {};
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       accessToken: data.access_token,
       refreshToken: data.refresh_token || refreshToken,
       expiresIn: data.expires_in || 3600,
-      email: idPayload.email || '',
+      email: userInfo.email || '',
+      name: userInfo.name || userInfo.email || '',
+      accountId: userInfo.accountId || '',
+      planType: userInfo.planType || '',
     }));
   } catch (e) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -377,6 +414,8 @@ const server = http.createServer((req, res) => {
   } else if (url.pathname.startsWith('/api/oauth/status/') && req.method === 'GET') {
     const state = url.pathname.split('/api/oauth/status/')[1];
     handleOAuthStatus(req, res, state);
+  } else if (url.pathname === '/api/oauth/exchange' && req.method === 'POST') {
+    handleOAuthExchange(req, res);
   } else if (url.pathname === '/api/oauth/refresh' && req.method === 'POST') {
     handleOAuthRefresh(req, res);
   } else if (url.pathname === '/api/oauth/images' && req.method === 'POST') {
