@@ -57,6 +57,38 @@ export function newOAuthSessionId() {
   return crypto.randomBytes(16).toString('hex');
 }
 
+export function makeStatelessOAuthSessionId(session) {
+  const payload = {
+    state: session?.state || '',
+    codeVerifier: session?.codeVerifier || '',
+    redirectUri: session?.redirectUri || OAUTH_REDIRECT_URI,
+    createdAt: Number(session?.createdAt || Date.now()),
+  };
+  return `pkce_${Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')}`;
+}
+
+export function getOAuthSessionFromStatelessId(sessionId) {
+  if (!sessionId || !String(sessionId).startsWith('pkce_')) return null;
+  try {
+    const raw = Buffer.from(String(sessionId).slice(5), 'base64url').toString('utf8');
+    const payload = JSON.parse(raw);
+    const createdAt = Number(payload.createdAt || 0);
+    if (!payload.state || !payload.codeVerifier || !createdAt) return null;
+    if (Date.now() - createdAt > SESSION_TTL) return null;
+    return {
+      state: String(payload.state),
+      codeVerifier: String(payload.codeVerifier),
+      redirectUri: String(payload.redirectUri || OAUTH_REDIRECT_URI),
+      status: 'pending',
+      result: null,
+      error: null,
+      createdAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function indexOAuthSession(sessionId, session) {
   if (session?.state) oauthStateIndex.set(session.state, sessionId);
 }
@@ -130,6 +162,10 @@ setInterval(cleanSessions, 60_000).unref();
 // --- Loopback callback server ---
 
 let loopbackServer = null;
+
+function shouldStartOAuthLoopbackServer() {
+  return !process.env.VERCEL;
+}
 
 function ensureLoopbackServer() {
   if (loopbackServer) return Promise.resolve();
@@ -308,19 +344,21 @@ async function handleOAuthStart(req, res) {
   const codeVerifier = makeOAuthCodeVerifier();
   const codeChallenge = makeOAuthCodeChallenge(codeVerifier);
   const state = crypto.randomBytes(24).toString('base64url');
-  const sessionId = newOAuthSessionId();
-
-  setOAuthSession(sessionId, {
+  const createdAt = Date.now();
+  const session = {
     state,
     codeVerifier,
     redirectUri: OAUTH_REDIRECT_URI,
     status: 'pending',
     result: null,
     error: null,
-    createdAt: Date.now(),
-  });
+    createdAt,
+  };
+  const sessionId = makeStatelessOAuthSessionId(session);
 
-  await ensureLoopbackServer();
+  setOAuthSession(sessionId, session);
+
+  if (shouldStartOAuthLoopbackServer()) await ensureLoopbackServer();
 
   const params = new URLSearchParams({
     client_id: OAUTH_CLIENT_ID,
@@ -348,6 +386,10 @@ function handleOAuthStatus(req, res, sessionKey) {
     const found = getOAuthSessionByState(sessionKey);
     sessionId = found.sessionId;
     session = found.session;
+  }
+  if (!session) {
+    session = getOAuthSessionFromStatelessId(sessionKey);
+    if (session) sessionId = sessionKey;
   }
   if (!session) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -380,7 +422,7 @@ async function handleOAuthExchange(req, res) {
 
   const callbackInput = parsed.callbackUrl || parsed.code || '';
   const sessionId = String(parsed.sessionId || '').trim();
-  const sessionById = getOAuthSessionById(sessionId);
+  const sessionById = getOAuthSessionById(sessionId) || getOAuthSessionFromStatelessId(sessionId);
   const parsedCallback = parseOAuthCallbackInput(callbackInput, parsed.state || sessionById?.state || '');
   const code = parsedCallback.code;
   const state = parsedCallback.state;

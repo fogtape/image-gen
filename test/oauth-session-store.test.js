@@ -8,6 +8,8 @@ import {
   deleteOAuthSession,
   cleanSessions,
   formatSseEvent,
+  makeStatelessOAuthSessionId,
+  getOAuthSessionFromStatelessId,
 } from '../server.js';
 
 test('OAuth session store resolves by sessionId and state', () => {
@@ -43,6 +45,24 @@ test('OAuth session cleanup removes expired sessions and state index', () => {
   cleanSessions();
   assert.equal(getOAuthSessionById(sessionId), null);
   assert.equal(getOAuthSessionByState(state).session, null);
+});
+
+test('stateless OAuth session id carries PKCE data for serverless exchange fallback', () => {
+  const createdAt = Date.now();
+  const sessionId = makeStatelessOAuthSessionId({
+    state: 'state-serverless',
+    codeVerifier: 'verifier-serverless',
+    redirectUri: 'http://localhost:1455/auth/callback',
+    createdAt,
+  });
+
+  assert.match(sessionId, /^pkce_/);
+  const session = getOAuthSessionFromStatelessId(sessionId);
+  assert.equal(session.state, 'state-serverless');
+  assert.equal(session.codeVerifier, 'verifier-serverless');
+  assert.equal(session.redirectUri, 'http://localhost:1455/auth/callback');
+  assert.equal(session.status, 'pending');
+  assert.equal(session.createdAt, createdAt);
 });
 
 test('formatSseEvent serializes named events as SSE chunks', () => {
