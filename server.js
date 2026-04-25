@@ -880,6 +880,7 @@ async function runImageJob(payload, onProgress) {
       background: payload.background,
       size: payload.size,
       format: payload.format,
+      refImagesBase64: normalizeRefImages(payload),
       onProgress: (event) => onProgress(event.phase || event.type || 'progress', event.message || '处理中', event),
     });
     return await persistJobResultIfEnabled(result, payload, onProgress);

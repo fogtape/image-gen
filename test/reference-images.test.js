@@ -33,3 +33,11 @@ test('后端图片任务支持最多三张参考图，并向 Images edits 提供
 test('前端直连 Images edits 也提供 images[].image_url，避免云平台回退时 image_url 缺失', () => {
   assert.match(app, /images:\s*state\.refImagesBase64\.map\(\(data\) => \(\{ image_url: toImageDataUrl\(data\) \}\)\)/);
 });
+
+test('OAuth 直连后端也会提交参考图数组，支持 OAuth 图生图', () => {
+  const start = app.indexOf('async function genOAuthImages');
+  const end = app.indexOf('setGenerationStatus', start);
+  assert.ok(start > 0 && end > start, 'genOAuthImages body block should be found');
+  const bodyBlock = app.slice(start, end);
+  assert.match(bodyBlock, /refImagesBase64:\s*state\.refImagesBase64\.length \? state\.refImagesBase64 : undefined/);
+});

@@ -9,8 +9,12 @@ const CHATGPT_CONVERSATION_URL = `${CHATGPT_BASE}/backend-api/f/conversation`;
 const CHATGPT_CONVERSATION_PREPARE_URL = `${CHATGPT_BASE}/backend-api/f/conversation/prepare`;
 const CHATGPT_CHAT_REQUIREMENTS_URL = `${CHATGPT_BASE}/backend-api/sentinel/chat-requirements`;
 const IMAGE_BACKEND_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const CODEX_CLIENT_VERSION = '0.125.0';
+const CODEX_CLIENT_USER_AGENT = `codex_cli_rs/${CODEX_CLIENT_VERSION}`;
+const CHATGPT_CODEX_RESPONSES_URL = `${CHATGPT_BASE}/backend-api/codex/responses`;
 const REQUIREMENTS_DIFF = '0fffff';
 const MAX_DOWNLOAD_BYTES = 20 << 20;
+const MAX_REF_IMAGES = 3;
 
 function randomUUID() {
   return crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
@@ -88,6 +92,85 @@ export function buildChatGPTBackendHeaders({ accessToken, accountId, deviceId, s
   }
   if (String(sessionId || '').trim()) headers['oai-session-id'] = String(sessionId).trim();
   return headers;
+}
+
+export function buildOAuthCodexHeaders({ accessToken, apiKey, accountId, sessionId } = {}, extra = {}) {
+  const token = String(accessToken || apiKey || '').trim();
+  if (!token) throw new Error('Missing OAuth access token');
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: 'text/event-stream',
+    'OpenAI-Beta': 'responses=experimental',
+    Originator: 'codex_cli_rs',
+    Version: CODEX_CLIENT_VERSION,
+    'User-Agent': CODEX_CLIENT_USER_AGENT,
+    session_id: String(sessionId || '').trim() || randomUUID(),
+    ...extra,
+  };
+  const chatgptAccountId = String(accountId || '').trim();
+  if (chatgptAccountId) headers['chatgpt-account-id'] = chatgptAccountId;
+  return headers;
+}
+
+export function toImageDataUrl(data, mime = 'image/png') {
+  const value = String(data || '').trim();
+  if (/^data:image\/[^;]+;base64,/i.test(value)) return value;
+  return `data:${mime};base64,${value}`;
+}
+
+function normalizeRefImages(input = {}) {
+  const raw = Array.isArray(input.refImagesBase64)
+    ? input.refImagesBase64
+    : (input.refImageBase64 ? [input.refImageBase64] : []);
+  if (raw.length > MAX_REF_IMAGES) throw new Error('最多只能上传 3 张参考图');
+  return raw.filter((item) => typeof item === 'string' && item.trim()).slice(0, MAX_REF_IMAGES);
+}
+
+function imageToolModel(input = {}) {
+  const model = String(input.model || input.cfg?.model || '').trim();
+  return /^gpt-image-/i.test(model) ? model : 'gpt-image-2';
+}
+
+function imageToolOptions(input = {}) {
+  const out = {};
+  if (input.size && input.size !== 'auto') out.size = input.size;
+  if (input.quality) out.quality = input.quality;
+  if (input.background && input.background !== 'auto') out.background = input.background;
+  const format = String(input.format || input.output_format || '').trim();
+  if (format) out.output_format = format;
+  return out;
+}
+
+export function buildOAuthCodexImagesRequest(input = {}, requestOptions = {}) {
+  const prompt = String(input.prompt || '').trim();
+  const refImages = normalizeRefImages(input);
+  const hasRef = refImages.length > 0;
+  const tool = {
+    type: 'image_generation',
+    action: hasRef ? 'edit' : 'generate',
+    model: imageToolModel(input),
+    ...imageToolOptions(input),
+  };
+
+  return {
+    instructions: '',
+    stream: true,
+    reasoning: { effort: 'medium', summary: 'auto' },
+    parallel_tool_calls: true,
+    include: ['reasoning.encrypted_content'],
+    model: 'gpt-5.4-mini',
+    store: false,
+    tool_choice: requestOptions.relaxedToolChoice ? 'auto' : { type: 'image_generation' },
+    input: [{
+      type: 'message',
+      role: 'user',
+      content: [
+        { type: 'input_text', text: prompt },
+        ...refImages.map((data) => ({ type: 'input_image', image_url: toImageDataUrl(data) })),
+      ],
+    }],
+    tools: [tool],
+  };
 }
 
 export function buildConversationRequest({ prompt, parentMessageId, messageId } = {}) {
@@ -571,6 +654,124 @@ async function resolvePointerBytes(headers, conversationId, pointer) {
   return downloadBytes(headers, downloadURL);
 }
 
+function extractOAuthCodexImagesFromText(rawText, format = 'png') {
+  const found = [];
+  const addResult = (result, extra = {}) => {
+    const b64 = normalizeBase64Image(result);
+    if (b64) found.push({ b64_json: b64, ...extra });
+  };
+  const collectResponseOutput = (response) => {
+    for (const item of (response?.output || [])) {
+      if (item?.type === 'image_generation_call' && item.result) {
+        addResult(item.result, {
+          revised_prompt: item.revised_prompt,
+          output_format: item.output_format,
+        });
+      }
+    }
+  };
+
+  const parseEvent = (payload) => {
+    if (!payload || payload === '[DONE]') return;
+    const ev = JSON.parse(payload);
+    if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call' && ev.item.result) {
+      addResult(ev.item.result, {
+        revised_prompt: ev.item.revised_prompt,
+        output_format: ev.item.output_format,
+      });
+    }
+    if (ev.type === 'response.completed') collectResponseOutput(ev.response);
+    collectResponseOutput(ev);
+    collectResponseOutput(ev.response);
+    if (ev.error) throw new Error(normalizeGenerationError(ev.error.message || JSON.stringify(ev.error)));
+  };
+
+  try {
+    const data = JSON.parse(String(rawText || ''));
+    collectResponseOutput(data);
+    collectResponseOutput(data.response);
+  } catch {}
+
+  for (const line of String(rawText || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) continue;
+    const payload = trimmed.slice(5).trim();
+    try {
+      parseEvent(payload);
+    } catch (e) {
+      if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;
+    }
+  }
+
+  if (found.length) return { created: Math.floor(Date.now() / 1000), data: found };
+  if (isPolicyViolationText(rawText)) throw new Error(normalizeGenerationError(rawText));
+  if (/^\s*<!doctype html|^\s*<html|^\s*</i.test(String(rawText || ''))) {
+    throw new Error('ChatGPT Codex 上游返回了 HTML 错误页面，通常是网络地区、WAF 或登录态被拦截，不是图片结果。');
+  }
+  throw new Error(`未能从 ${format || '图片'} 响应中提取到图片`);
+}
+
+function isOAuthImageToolChoiceMismatch(rawText = '') {
+  return /tool choice ['"]?image_generation['"]? not found in ['"]?tools['"]? parameter/i.test(String(rawText || ''));
+}
+
+async function runOAuthCodexImagesJob(input = {}) {
+  const accessToken = String(input.accessToken || input.apiKey || input.cfg?.apiKey || '').trim();
+  const prompt = String(input.prompt || '').trim();
+  if (!accessToken) {
+    const err = new Error('Missing OAuth access token');
+    err.status = 400;
+    throw err;
+  }
+  if (!prompt) {
+    const err = new Error('Missing prompt');
+    err.status = 400;
+    throw err;
+  }
+
+  const onProgress = input.onProgress;
+  const format = input.format || 'png';
+  const cfg = {
+    apiKey: accessToken,
+    accountId: input.accountId || input.cfg?.accountId,
+    model: input.model || input.cfg?.model || 'gpt-image-2',
+  };
+
+  const sendRequest = async (requestOptions = {}) => {
+    const body = buildOAuthCodexImagesRequest({ ...input, model: cfg.model }, requestOptions);
+    return fetchWithTimeout(CHATGPT_CODEX_RESPONSES_URL, {
+      method: 'POST',
+      headers: buildOAuthCodexHeaders(cfg, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+      timeoutMs: 180_000,
+    });
+  };
+
+  reportOAuthProgress(onProgress, 'oauth:codex_send', '正在提交 OAuth Codex 图片请求');
+  let resp = await sendRequest();
+  reportOAuthProgress(onProgress, 'oauth:codex_accepted', 'ChatGPT Codex 已接收请求');
+  let rawText = await readResponseText(resp);
+  if (!resp.ok && isOAuthImageToolChoiceMismatch(rawText)) {
+    reportOAuthProgress(onProgress, 'oauth:codex_retry', '上游不接受强制图片工具，正在改用自动工具选择重试');
+    resp = await sendRequest({ relaxedToolChoice: true });
+    reportOAuthProgress(onProgress, 'oauth:codex_accepted', 'ChatGPT Codex 已接收重试请求');
+    rawText = await readResponseText(resp);
+  }
+  if (!resp.ok) {
+    try {
+      const data = JSON.parse(rawText || '{}');
+      throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
+    } catch (e) {
+      if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;
+      throw await statusError(new Response(rawText, { status: resp.status, headers: resp.headers }), 'OAuth Codex image request failed');
+    }
+  }
+
+  const result = extractOAuthCodexImagesFromText(rawText, format);
+  reportOAuthProgress(onProgress, 'oauth:done', '图片已生成，正在返回页面');
+  return result;
+}
+
 async function generateOneImage({ headers, prompt, chatReqs, onProgress }) {
   const parentMessageId = randomUUID();
   const proofToken = generateProofToken({
@@ -724,5 +925,5 @@ export async function testOAuthAccessToken(input = {}) {
 }
 
 export async function handleOAuthImageRequestBody(body = {}) {
-  return generateOAuthImage(body);
+  return runOAuthCodexImagesJob(body);
 }
