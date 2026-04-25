@@ -61,9 +61,7 @@ test('getSseProgressMessage handles named SSE events as well as default message 
   assert.equal(getSseProgressMessage('message', { type: 'response.completed' }), '生成完成，正在渲染结果');
 });
 
-test('getWaitingProgressMessage gives truthful fallback text when upstream has no granular stream events', () => {
-  assert.equal(getWaitingProgressMessage(0), '后端已接收请求，正在等待模型处理');
-  assert.equal(getWaitingProgressMessage(1), '模型可能正在排队或生成图片');
-  assert.equal(getWaitingProgressMessage(2), '接口暂未返回更细进度，继续等待图片结果');
-  assert.equal(getWaitingProgressMessage(3), '后端已接收请求，正在等待模型处理');
+test('getWaitingProgressMessage stays stable instead of cycling through noisy copy', () => {
+  assert.equal(getWaitingProgressMessage(), '仍在生成，请耐心等待');
+  assert.equal(getWaitingProgressMessage(99), '仍在生成，请耐心等待');
 });

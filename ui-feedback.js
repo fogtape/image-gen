@@ -31,11 +31,7 @@ export const GENERATING_HINTS = [
   '正在接收图片数据',
 ];
 
-export const WAITING_PROGRESS_MESSAGES = [
-  '后端已接收请求，正在等待模型处理',
-  '模型可能正在排队或生成图片',
-  '接口暂未返回更细进度，继续等待图片结果',
-];
+export const LONG_WAIT_PROGRESS_MESSAGE = '仍在生成，请耐心等待';
 
 function toReadableText(value) {
   if (value == null) return '';
@@ -103,9 +99,8 @@ export function getSseProgressMessage(event = 'message', data = {}) {
   return '';
 }
 
-export function getWaitingProgressMessage(step = 0) {
-  const idx = Math.abs(Number.parseInt(step, 10) || 0) % WAITING_PROGRESS_MESSAGES.length;
-  return WAITING_PROGRESS_MESSAGES[idx];
+export function getWaitingProgressMessage() {
+  return LONG_WAIT_PROGRESS_MESSAGE;
 }
 
 export function getGeneratingHint(step = 0) {

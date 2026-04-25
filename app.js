@@ -27,7 +27,7 @@ const state = {
   generationHintTimer: null,
   generationHintStep: 0,
   waitingStatusTimer: null,
-  waitingStatusStep: 0,
+  lastProgressKey: '',
 };
 
 // --- Data Layer ---
@@ -280,22 +280,22 @@ function setGenerationStatus(phaseOrMessage, message) {
 
 function stopWaitingStatusSequence() {
   if (state.waitingStatusTimer) {
-    clearInterval(state.waitingStatusTimer);
+    clearTimeout(state.waitingStatusTimer);
     state.waitingStatusTimer = null;
   }
 }
 
-function startWaitingStatusSequence() {
+function startWaitingStatusSequence(delayMs = 30000) {
   stopWaitingStatusSequence();
-  state.waitingStatusStep = 0;
-  setGenerationStatus(getWaitingProgressMessage(state.waitingStatusStep++));
-  state.waitingStatusTimer = setInterval(() => {
-    setGenerationStatus(getWaitingProgressMessage(state.waitingStatusStep++));
-  }, 4500);
+  state.waitingStatusTimer = setTimeout(() => {
+    state.waitingStatusTimer = null;
+    if (state.generating) setGenerationStatus(getWaitingProgressMessage());
+  }, delayMs);
 }
 
 function setLoading(on) {
   state.generating = on;
+  if (on) state.lastProgressKey = '';
   $('#generateBtn .btn-text').classList.toggle('hidden', on);
   $('#generateBtn .btn-loading').classList.toggle('hidden', !on);
   $('#generateBtn').disabled = on;
@@ -818,7 +818,14 @@ async function fetchBackgroundJob(jobId) {
 
 function applyJobProgress(job) {
   const last = Array.isArray(job.progress) ? job.progress.at(-1) : null;
-  if (last?.message) setGenerationStatus(last.phase || last.message, last.message);
+  if (!last?.message) return;
+
+  const progressKey = `${last.phase || ''}:${last.message}`;
+  if (progressKey === state.lastProgressKey) return;
+  state.lastProgressKey = progressKey;
+  stopWaitingStatusSequence();
+  setGenerationStatus(last.phase || last.message, last.message);
+  startWaitingStatusSequence();
 }
 
 async function pollBackgroundJob(jobId, format, isOAuth) {
