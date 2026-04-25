@@ -331,9 +331,16 @@ textarea { resize: vertical; }
 }
 
 .toolbar-left { display: flex; align-items: center; gap: 8px; }
-.toolbar-right { display: flex; align-items: center; gap: 12px; }
+.toolbar-right { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
-.hint { font-size: 0.72rem; color: var(--text-3); }
+.hint {
+  font-size: 0.72rem;
+  color: var(--text-3);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .tool-btn {
   width: 34px; height: 34px;
@@ -370,9 +377,18 @@ textarea { resize: vertical; }
   padding: 8px 22px;
   border-radius: 980px;
   font-size: 0.88rem;
+  min-width: 72px;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
+.btn-text.hidden,
 .btn-loading.hidden { display: none; }
+
+.btn-loading {
+  min-width: 28px;
+  justify-content: center;
+}
 
 .spinner {
   display: inline-block;
