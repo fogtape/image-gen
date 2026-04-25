@@ -38,7 +38,6 @@ const DEFAULT_APP_SETTINGS = {
     model: '',
     mode: 'balanced',
     language: 'auto',
-    output: 'replace',
   },
 };
 
@@ -196,9 +195,11 @@ function renderWatermarkPreview() {
   preview.innerHTML = lines.map((line, i) => `<span class="wm-line${i ? ' small' : ''}" style="color:${wm.color};opacity:${wm.opacity};font-size:${i ? Math.max(11, wm.fontSize * 0.75) : wm.fontSize}px;${wm.background ? '' : 'background:transparent;'}${wm.shadow ? '' : 'text-shadow:none;'}">${line.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</span>`).join('');
 }
 
-function togglePromptEnhancementOptions() {
-  const enabled = !!$('#promptEnhancementEnabled')?.checked;
-  $('#promptEnhancementOptions')?.classList.toggle('hidden', !enabled);
+function syncPromptEnhancementUi(source = 'state') {
+  const formEnabled = !!$('#promptEnhancementEnabled')?.checked;
+  $('#promptEnhancementOptions')?.classList.toggle('hidden', !formEnabled);
+  const enabled = source === 'form' ? formEnabled : !!state.appSettings.promptEnhancement?.enabled;
+  $('#enhancePromptBtn')?.classList.toggle('hidden', !enabled);
 }
 
 function readPromptEnhancementForm() {
@@ -207,7 +208,6 @@ function readPromptEnhancementForm() {
     model: ($('#promptEnhancementModel')?.value || '').trim(),
     mode: $('#promptEnhancementMode')?.value || 'balanced',
     language: $('#promptEnhancementLanguage')?.value || 'auto',
-    output: $('#promptEnhancementOutput')?.value || 'replace',
   };
 }
 
@@ -250,8 +250,7 @@ function fillSettingsForm() {
   setInputValue('promptEnhancementModel', pe.model || '');
   setSelectValue('promptEnhancementMode', pe.mode);
   setSelectValue('promptEnhancementLanguage', pe.language);
-  setSelectValue('promptEnhancementOutput', pe.output);
-  togglePromptEnhancementOptions();
+  syncPromptEnhancementUi();
   setChecked('storageEnabled', settings.storage.enabled);
   renderWatermarkPreview();
 }
@@ -274,6 +273,7 @@ function saveSettingsFromForm() {
   state.appSettings = readSettingsForm();
   saveAppSettings();
   applyGenerationDefaultsToControls();
+  syncPromptEnhancementUi();
   $('#settingsOverlay').classList.add('hidden');
 }
 
@@ -332,7 +332,6 @@ function migrateOldSettings() {
         apiUrl: old.apiUrl || '',
         apiKey: old.apiKey || '',
         model: old.model || DEFAULT_MODEL,
-        promptModel: old.promptModel || '',
         streamMode: old.streamMode !== false,
         createdAt: Date.now(),
       };
@@ -382,7 +381,6 @@ function getEffective() {
     apiUrl: acc ? acc.apiUrl : '',
     apiKey: acc ? acc.apiKey : '',
     model: acc ? acc.model : DEFAULT_MODEL,
-    promptModel: acc ? (acc.promptModel || '') : '',
     streamMode: acc ? acc.streamMode !== false : true,
     useProxy: state.data.useProxy,
     isOAuth: acc ? acc.type === 'oauth' : false,
@@ -744,7 +742,6 @@ function openEditModal(acc) {
   $('#editUrl').value = acc ? (acc.apiUrl || '') : '';
   $('#editKey').value = acc ? (acc.apiKey || '') : '';
   $('#editModel').value = acc ? (acc.model || DEFAULT_MODEL) : DEFAULT_MODEL;
-  $('#editPromptModel').value = acc ? (acc.promptModel || '') : '';
   $('#editStream').checked = acc ? acc.streamMode !== false : true;
   $('#editOverlay').classList.remove('hidden');
 }
@@ -760,7 +757,6 @@ function saveEditModal() {
     apiUrl: $('#editUrl').value.trim().replace(/\/+$/, ''),
     apiKey: $('#editKey').value.trim(),
     model: $('#editModel').value.trim() || DEFAULT_MODEL,
-    promptModel: $('#editPromptModel').value.trim(),
     streamMode: $('#editStream').checked,
   };
   if (id) {
@@ -784,7 +780,6 @@ function addOAuthAccountFromResult(r) {
     apiUrl: 'https://api.openai.com',
     apiKey: r.accessToken,
     model: DEFAULT_MODEL,
-    promptModel: '',
     streamMode: true,
     email: r.email || '',
     accountId: r.accountId || '',
@@ -1020,7 +1015,6 @@ function publicPromptCfg(cfg) {
     apiUrl: cfg.apiUrl,
     apiKey: cfg.apiKey,
     model: cfg.model,
-    promptModel: cfg.promptModel,
     isOAuth: cfg.isOAuth,
     accountId: cfg.accountId,
   };
@@ -1107,15 +1101,6 @@ async function generate() {
   $('#errorMsg').classList.add('hidden');
 
   try {
-    if (state.appSettings.promptEnhancement?.enabled) {
-      setGenerationStatus('prompt:enhance:send');
-      const enhanced = await requestPromptEnhancement(cfg, prompt, style, type, promptEnhancementSettingsForRequest(false));
-      finalPrompt = enhanced;
-      state.lastEnhancedSource = prompt;
-      state.lastEnhancedPrompt = enhanced;
-      if (state.appSettings.promptEnhancement.output !== 'temporary') $('#prompt').value = enhanced;
-      setGenerationStatus('prompt:enhance:done');
-    }
     if (cfg.isOAuth && hasRef) {
       throw new Error('OAuth 登录生图已改走 ChatGPT 后端通道；当前先支持文字生图，参考图请暂用 API Key 账号。');
     }
@@ -1548,7 +1533,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const el = $(`#${id}`);
     if (el) el.oninput = el.onchange = renderWatermarkPreview;
   });
-  $('#promptEnhancementEnabled').onchange = togglePromptEnhancementOptions;
+  $('#promptEnhancementEnabled').onchange = () => syncPromptEnhancementUi('form');
   $('#clearConversationData').onclick = async () => { try { await clearStorageData('conversations'); } catch (e) { showError(e); } };
   $('#clearImageData').onclick = async () => { if (!confirm('确定清理已保存的图片？账号不会删除。')) return; try { await clearStorageData('images'); } catch (e) { showError(e); } };
   $('#clearAllData').onclick = async () => { if (!confirm('确定清理对话和图片数据？账号不会删除。')) return; try { await clearStorageData('all'); clearActiveJob(); $('#prompt').value = ''; } catch (e) { showError(e); } };
@@ -1627,6 +1612,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#prompt').addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') generate(); });
 
   applyGenerationDefaultsToControls();
+  syncPromptEnhancementUi();
   loadStorageStats();
   resumeActiveJobIfAny();
 });

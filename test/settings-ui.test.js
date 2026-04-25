@@ -44,26 +44,29 @@ test('设置会参与后台生成任务且不依赖刷新内存结果', () => {
   assert.match(app, /clearStorageData/);
 });
 
-test('提示词增强默认关闭，开启后才显示高级选项', () => {
+test('提示词增强默认关闭，开启后才显示模型等高级选项', () => {
   assert.match(html, />提示词增强</);
+  assert.match(html, /开启 AI 提示词修饰/);
   assert.match(html, /id="promptEnhancementEnabled"/);
   assert.match(html, /id="promptEnhancementOptions"[^>]*class="[^"]*hidden/);
   assert.doesNotMatch(html, /id="promptEnhancementEnabled"[^>]*checked/);
   assert.match(html, /id="promptEnhancementModel"/);
   assert.match(html, /id="promptEnhancementMode"/);
   assert.match(html, /id="promptEnhancementLanguage"/);
-  assert.match(html, /id="promptEnhancementOutput"/);
+  assert.doesNotMatch(html, /id="promptEnhancementOutput"/);
   assert.match(app, /promptEnhancement:\s*\{[^}]*enabled:\s*false/s);
-  assert.match(app, /togglePromptEnhancementOptions/);
+  assert.match(app, /syncPromptEnhancementUi/);
 });
 
-test('账号设置支持单独配置提示词模型，输入栏提供不挤压上传按钮的 AI 修饰按钮', () => {
-  assert.match(html, /id="editPromptModel"/);
-  assert.match(app, /promptModel:/);
-  assert.match(html, /id="enhancePromptBtn"/);
+test('主页面修饰按钮默认隐藏，开启后仅手动修饰且生成按钮不再调用修饰接口', () => {
+  assert.match(html, /id="enhancePromptBtn"[^>]*class="[^"]*hidden/);
+  assert.doesNotMatch(html, /id="editPromptModel"/);
+  assert.match(html, /aria-label="润色提示词"/);
   assert.match(css, /\.prompt-tools/);
   assert.match(css, /\.enhance-prompt-btn/);
+  assert.match(css, /\.enhance-prompt-btn\.hidden\s*\{\s*display\s*:\s*none/);
   assert.match(css, /flex-wrap\s*:\s*wrap/);
+  assert.doesNotMatch(app, /if \(state\.appSettings\.promptEnhancement\?\.enabled\)/);
 });
 
 test('设置界面样式保持简洁并适配移动端', () => {

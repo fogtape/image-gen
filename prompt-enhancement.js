@@ -5,7 +5,6 @@ export const DEFAULT_PROMPT_ENHANCEMENT_SETTINGS = Object.freeze({
   model: '',
   mode: 'balanced',
   language: 'auto',
-  output: 'replace',
 });
 
 const MODE_LABELS = {
@@ -31,7 +30,6 @@ export function normalizePromptEnhancementSettings(input = {}) {
     model: String(input.model || '').trim(),
     mode: pickAllowed(input.mode, ['balanced', 'professional', 'faithful'], DEFAULT_PROMPT_ENHANCEMENT_SETTINGS.mode),
     language: pickAllowed(input.language, ['auto', 'zh', 'en'], DEFAULT_PROMPT_ENHANCEMENT_SETTINGS.language),
-    output: pickAllowed(input.output, ['replace', 'temporary'], DEFAULT_PROMPT_ENHANCEMENT_SETTINGS.output),
   };
 }
 
