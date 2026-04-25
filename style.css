@@ -487,22 +487,6 @@ textarea { resize: vertical; }
   border-radius: 6px;
 }
 
-.route-mode-info {
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--text-2);
-  font-size: 0.78rem;
-  line-height: 1.55;
-  box-shadow: var(--shadow-sm);
-}
-
-.route-mode-info.oauth { color: #075985; background: #f0f9ff; border-color: #bae6fd; }
-.route-mode-info.responses { color: #166534; background: #f0fdf4; border-color: #bbf7d0; }
-.route-mode-info.images { color: #374151; background: #fafafa; }
-.route-mode-info.muted { color: var(--text-3); }
-
 /* Custom Select */
 .custom-select {
   position: relative;

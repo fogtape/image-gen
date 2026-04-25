@@ -1220,14 +1220,24 @@ async function createBackgroundJob(payload) {
     body: JSON.stringify(payload),
   });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(normalizeGenerationError(data.error || data.message || `HTTP ${resp.status}`));
+  if (!resp.ok) {
+    const err = new Error(normalizeGenerationError(data.error || data.message || `HTTP ${resp.status}`));
+    err.status = resp.status;
+    err.data = data;
+    throw err;
+  }
   return data;
 }
 
 async function fetchBackgroundJob(jobId) {
   const resp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(normalizeGenerationError(data.error || data.message || `HTTP ${resp.status}`));
+  if (!resp.ok) {
+    const err = new Error(normalizeGenerationError(data.error || data.message || `HTTP ${resp.status}`));
+    err.status = resp.status;
+    err.data = data;
+    throw err;
+  }
   return data;
 }
 
@@ -1271,6 +1281,11 @@ function isBackgroundJobsUnavailableError(error) {
   return /HTTP\s+(404|405)|Failed to fetch|NetworkError|Not Found|Method not allowed/i.test(message);
 }
 
+function isMissingBackgroundJobError(error) {
+  const message = normalizeGenerationError(error?.message || error || '');
+  return error?.status === 404 || /Job not found|not found or expired|HTTP\s+404/i.test(message);
+}
+
 async function genDirectImagesAfterJobFallback(cfg, prompt, quality, background, size, format, hasRef) {
   setGenerationStatus('云平台后台任务不可用，改用浏览器直连生成');
   if (cfg.isOAuth) return await genOAuthImages(cfg, prompt, quality, background, size, format);
@@ -1297,9 +1312,20 @@ async function genBackgroundImages(cfg, prompt, quality, background, size, forma
   setGenerationStatus('request:send');
   try {
     const job = await createBackgroundJob(payload);
-    saveActiveJob({ jobId: job.jobId || job.id, format, isOAuth: cfg.isOAuth, createdAt: Date.now() });
+    if (job.status === 'completed') {
+      clearActiveJob();
+      stopWaitingStatusSequence();
+      setGenerationStatus('result:render');
+      if (cfg.isOAuth) handleOAuthImageResult(job.result, format);
+      else handleImagesResult(job.result, format);
+      await loadStorageStats();
+      return;
+    }
+    const jobId = job.jobId || job.id;
+    if (!jobId) throw new Error('后台任务创建失败：缺少 jobId');
+    saveActiveJob({ jobId, format, isOAuth: cfg.isOAuth, createdAt: Date.now() });
     setGenerationStatus('后台任务已提交，可以切到后台稍后回来查看');
-    await pollBackgroundJob(job.jobId || job.id, format, cfg.isOAuth);
+    await pollBackgroundJob(jobId, format, cfg.isOAuth);
   } catch (e) {
     if (isBackgroundJobsUnavailableError(e)) {
       await genDirectImagesAfterJobFallback(cfg, prompt, quality, background, size, format, hasRef);
@@ -1318,6 +1344,12 @@ async function resumeActiveJobIfAny() {
   try {
     await pollBackgroundJob(active.jobId, active.format || 'png', !!active.isOAuth);
   } catch (e) {
+    if (isMissingBackgroundJobError(e)) {
+      clearActiveJob();
+      stopWaitingStatusSequence();
+      setGenerationStatus(IDLE_GENERATION_HINT);
+      return;
+    }
     clearActiveJob();
     showError(e);
   } finally {

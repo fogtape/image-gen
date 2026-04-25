@@ -33,8 +33,8 @@ test('API Key 账号流式模式默认关闭，只有用户显式开启才走 Re
   assert.doesNotMatch(html, /id="editStream" checked/);
 });
 
-test('OAuth 账号隐藏流式开关并显示真实 ChatGPT 后端流程说明', () => {
-  assert.match(html, /id="routeModeInfo"/);
+test('OAuth 账号编辑页隐藏流式开关并显示真实 ChatGPT 后端流程说明，首页不展示突兀流程条', () => {
+  assert.doesNotMatch(html, /id="routeModeInfo"/);
   assert.match(html, /id="editStreamSection"/);
   assert.match(html, /id="editOAuthFlowInfo"/);
   assert.match(html, /chat-requirements[\s\S]*conversation\/prepare[\s\S]*conversation/);

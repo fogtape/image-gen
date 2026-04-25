@@ -167,6 +167,10 @@ function shouldStartOAuthLoopbackServer() {
   return !process.env.VERCEL;
 }
 
+function isServerlessRuntime() {
+  return !!(process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.AWS_EXECUTION_ENV);
+}
+
 function ensureLoopbackServer() {
   if (loopbackServer) return Promise.resolve();
   return new Promise((resolve, reject) => {
@@ -877,11 +881,27 @@ async function handleCreateImageJob(req, res) {
   const parsed = await readJsonBody(req, res);
   if (!parsed) return;
   try {
+    if (isServerlessRuntime()) {
+      const progress = [];
+      const onProgress = (phase, message, extra = {}) => {
+        progress.push({ phase, message, ...extra, at: Date.now() });
+      };
+      const serverlessPayload = {
+        ...parsed,
+        storageSettings: { ...(parsed.storageSettings || {}), enabled: false },
+      };
+      const result = await runImageJob(serverlessPayload, onProgress);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'completed', result, progress, serverless: true }));
+      return;
+    }
+
     const job = imageJobStore.create(parsed);
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ jobId: job.id, ...job }));
   } catch (e) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
+    const status = /missing prompt|missing api|missing oauth|missing access token/i.test(e.message || '') ? 400 : 500;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: e.message || 'Failed to create job' }));
   }
 }
