@@ -565,10 +565,29 @@ function baseApiUrl(apiUrl) {
   return text;
 }
 
+const CODEX_CLIENT_VERSION = '0.104.0';
+const CODEX_CLIENT_USER_AGENT = `codex_cli_rs/${CODEX_CLIENT_VERSION}`;
+
 function buildApiHeaders(cfg = {}, extra = {}) {
   const apiKey = String(cfg.apiKey || '').trim();
   if (!apiKey) throw new Error('Missing API key');
   return { Authorization: `Bearer ${apiKey}`, ...extra };
+}
+
+function buildResponsesApiHeaders(cfg = {}, extra = {}) {
+  return buildApiHeaders(cfg, {
+    Accept: 'text/event-stream',
+    'OpenAI-Beta': 'responses=experimental',
+    Originator: 'codex_cli_rs',
+    Version: CODEX_CLIENT_VERSION,
+    'User-Agent': CODEX_CLIENT_USER_AGENT,
+    session_id: crypto.randomUUID(),
+    ...extra,
+  });
+}
+
+function isImagesApiModel(model) {
+  return /^gpt-image-/i.test(String(model || '').trim());
 }
 
 function imageOptionsFromPayload(payload) {
@@ -714,6 +733,7 @@ async function runResponsesJob(payload, onProgress) {
     model: cfg.model,
     input,
     stream: true,
+    store: false,
     tool_choice: 'required',
     tools: [{
       type: 'image_generation',
@@ -728,7 +748,7 @@ async function runResponsesJob(payload, onProgress) {
   onProgress('request:send', getGenerationProgressMessage('request:send'));
   const resp = await fetch(`${baseApiUrl(cfg.apiUrl)}/v1/responses`, {
     method: 'POST',
-    headers: buildApiHeaders(cfg, { 'Content-Type': 'application/json' }),
+    headers: buildResponsesApiHeaders(cfg, { 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   });
   onProgress('request:accepted', getGenerationProgressMessage('request:accepted'));
@@ -782,6 +802,7 @@ async function runImageJob(payload, onProgress) {
       result = await runResponsesJob(payload, onProgress);
     } catch (e) {
       if (normalizeGenerationError(e) === '非常抱歉，生成的图片可能违反了我们的内容政策。如果你认为此判断有误，请重试或修改提示语。') throw e;
+      if (!isImagesApiModel(payload.cfg?.model)) throw e;
       onProgress('fallback:images', getGenerationProgressMessage('fallback:images'));
       result = await runImagesApiJob({ ...payload, mode: normalizeRefImages(payload).length ? 'edits' : 'images' }, onProgress);
     }
