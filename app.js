@@ -15,10 +15,12 @@ const ACCOUNTS_KEY = 'img-gen-accounts';
 const ACTIVE_JOB_KEY = 'img-gen-active-job';
 const OLD_KEY = 'img-gen-settings';
 const DEFAULT_MODEL = 'gpt-5.4';
+const MAX_REF_IMAGES = 3;
 
 const state = {
   data: { activeId: null, accounts: [], useProxy: false },
-  refImageBase64: null,
+  refImagesBase64: [],
+  refImagePreviewUrls: [],
   generating: false,
   dropdownOpen: false,
   oauthPendingSessionId: null,
@@ -756,7 +758,7 @@ async function generate() {
   const format = $('#formatSelect').value;
   const style = $('#styleSelect').value;
   const type = $('#typeSelect').value;
-  const hasRef = !!state.refImageBase64;
+  const hasRef = state.refImagesBase64.length > 0;
 
   let finalPrompt = prompt;
   const tags = [style, type].filter(Boolean);
@@ -860,7 +862,7 @@ async function genBackgroundImages(cfg, prompt, quality, background, size, forma
     background,
     size,
     format,
-    refImageBase64: hasRef ? state.refImageBase64 : undefined,
+    refImagesBase64: hasRef ? state.refImagesBase64 : undefined,
   };
 
   setGenerationStatus('request:send');
@@ -986,7 +988,7 @@ async function genImages(cfg, prompt, quality, background, size, format) {
 async function genEdits(cfg, prompt, quality, background, size, format) {
   const body = {
     model: cfg.model, prompt, n: 1, response_format: 'b64_json',
-    image: [{ type: 'base64', data: state.refImageBase64 }],
+    image: state.refImagesBase64.map((data) => ({ type: 'base64', data })),
   };
   if (quality) body.quality = quality;
   if (background && background !== 'auto') body.background = background;
@@ -1039,7 +1041,7 @@ async function genResponses(cfg, prompt, quality, background, size, format, hasR
   let input;
   if (hasRef) {
     input = [{ role: 'user', content: [
-      { type: 'input_image', image_url: `data:image/png;base64,${state.refImageBase64}` },
+      ...state.refImagesBase64.map((data) => ({ type: 'input_image', image_url: `data:image/png;base64,${data}` })),
       { type: 'input_text', text: prompt },
     ]}];
   } else {
@@ -1140,6 +1142,34 @@ function fileToBase64(file) {
   });
 }
 
+function renderRefPreviews() {
+  const preview = $('#refPreview');
+  preview.innerHTML = '';
+  state.refImagesBase64.forEach((_, index) => {
+    const item = document.createElement('div');
+    item.className = 'ref-preview-item';
+    const img = document.createElement('img');
+    img.alt = `参考图 ${index + 1}`;
+    img.src = state.refImagePreviewUrls[index] || '';
+    const remove = document.createElement('button');
+    remove.className = 'ref-remove';
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.onclick = (e) => {
+      e.preventDefault();
+      state.refImagesBase64.splice(index, 1);
+      const [url] = state.refImagePreviewUrls.splice(index, 1);
+      if (url) URL.revokeObjectURL(url);
+      renderRefPreviews();
+      if (!state.refImagesBase64.length) $('#refImage').value = '';
+    };
+    item.appendChild(img);
+    item.appendChild(remove);
+    preview.appendChild(item);
+  });
+  preview.classList.toggle('hidden', state.refImagesBase64.length === 0);
+}
+
 // --- Init ---
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1191,15 +1221,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Reference image
+  // Reference images
   $('#refImage').onchange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    state.refImageBase64 = await fileToBase64(file);
-    $('#refPreviewImg').src = URL.createObjectURL(file);
-    $('#refPreview').classList.remove('hidden');
+    const selectedFiles = Array.from(e.target.files || []);
+    const files = Array.from(e.target.files || []).slice(0, MAX_REF_IMAGES);
+    if (!files.length) return;
+    if (selectedFiles.length > MAX_REF_IMAGES) showError('最多只能上传 3 张参考图，已保留前 3 张');
+    state.refImagePreviewUrls.forEach((url) => URL.revokeObjectURL(url));
+    state.refImagesBase64 = await Promise.all(files.map(fileToBase64));
+    state.refImagePreviewUrls = files.map((file) => URL.createObjectURL(file));
+    renderRefPreviews();
   };
-  $('#removeRef').onclick = () => { state.refImageBase64 = null; $('#refImage').value = ''; $('#refPreview').classList.add('hidden'); };
 
   // Lightbox
   $('#lightboxClose').onclick = () => $('#lightbox').classList.add('hidden');

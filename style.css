@@ -353,9 +353,14 @@ textarea { resize: vertical; }
 
 .tool-btn:hover { background: var(--border-light); color: var(--primary); }
 
-.ref-preview { position: relative; display: inline-flex; }
-.ref-preview.hidden { display: none; }
-.ref-preview img {
+.ref-preview-list {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ref-preview-list.hidden { display: none; }
+.ref-preview-item { position: relative; display: inline-flex; }
+.ref-preview-item img {
   height: 34px; width: 34px;
   object-fit: cover;
   border-radius: 6px;

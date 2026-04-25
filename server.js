@@ -21,6 +21,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
+const MAX_REF_IMAGES = 3;
 const OAUTH_LOOPBACK_PORT = 1455;
 const OAUTH_SESSION_FILE = path.join(__dirname, '.oauth-sessions.json');
 
@@ -548,7 +549,7 @@ function buildApiHeaders(cfg = {}, extra = {}) {
   return { Authorization: `Bearer ${apiKey}`, ...extra };
 }
 
-function imageOptionsFromPayload(payload = {}) {
+function imageOptionsFromPayload(payload) {
   const out = {};
   if (payload.quality) out.quality = payload.quality;
   if (payload.background && payload.background !== 'auto') out.background = payload.background;
@@ -557,7 +558,15 @@ function imageOptionsFromPayload(payload = {}) {
   return out;
 }
 
-function extractImagesFromResponsesText(rawText, format) {
+function normalizeRefImages(payload = {}) {
+  const raw = Array.isArray(payload.refImagesBase64)
+    ? payload.refImagesBase64
+    : (payload.refImageBase64 ? [payload.refImageBase64] : []);
+  if (raw.length > MAX_REF_IMAGES) throw new Error('最多只能上传 3 张参考图');
+  return raw.filter((item) => typeof item === 'string' && item.trim()).slice(0, MAX_REF_IMAGES);
+}
+
+function extractImagesFromResponsesText(rawText, format = 'png') {
   const found = [];
   const addResult = (result) => {
     if (result) found.push({ b64_json: result });
@@ -636,13 +645,14 @@ async function runImagesApiJob(payload, onProgress) {
   const cfg = payload.cfg || {};
   const format = payload.format || 'png';
   const mode = payload.mode;
+  const refImages = normalizeRefImages(payload);
   const body = mode === 'edits'
     ? {
         model: cfg.model,
         prompt: payload.prompt,
         n: 1,
         response_format: 'b64_json',
-        image: [{ type: 'base64', data: payload.refImageBase64 }],
+        image: refImages.map((data) => ({ type: 'base64', data })),
         ...imageOptionsFromPayload(payload),
       }
     : {
@@ -668,11 +678,12 @@ async function runImagesApiJob(payload, onProgress) {
 
 async function runResponsesJob(payload, onProgress) {
   const cfg = payload.cfg || {};
-  const hasRef = !!payload.refImageBase64;
+  const refImages = normalizeRefImages(payload);
+  const hasRef = refImages.length > 0;
   const format = payload.format || 'png';
   const input = hasRef
     ? [{ role: 'user', content: [
-        { type: 'input_image', image_url: `data:image/png;base64,${payload.refImageBase64}` },
+        ...refImages.map((data) => ({ type: 'input_image', image_url: `data:image/png;base64,${data}` })),
         { type: 'input_text', text: payload.prompt },
       ]}]
     : payload.prompt;
@@ -738,7 +749,7 @@ async function runImageJob(payload, onProgress) {
     } catch (e) {
       if (normalizeGenerationError(e) === '非常抱歉，生成的图片可能违反了我们的内容政策。如果你认为此判断有误，请重试或修改提示语。') throw e;
       onProgress('fallback:images', getGenerationProgressMessage('fallback:images'));
-      return await runImagesApiJob({ ...payload, mode: payload.refImageBase64 ? 'edits' : 'images' }, onProgress);
+      return await runImagesApiJob({ ...payload, mode: normalizeRefImages(payload).length ? 'edits' : 'images' }, onProgress);
     }
   }
   if (mode === 'images' || mode === 'edits') return await runImagesApiJob(payload, onProgress);

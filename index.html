@@ -151,14 +151,11 @@
           <textarea id="prompt" placeholder="描述你想生成的图片..." rows="3"></textarea>
           <div class="input-toolbar">
             <div class="toolbar-left">
-              <label class="tool-btn" id="uploadLabel" title="上传参考图">
-                <input type="file" id="refImage" accept="image/*" hidden>
+              <label class="tool-btn" id="uploadLabel" title="上传参考图，最多 3 张">
+                <input type="file" id="refImage" accept="image/*" multiple hidden>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
               </label>
-              <div id="refPreview" class="ref-preview hidden">
-                <img id="refPreviewImg" alt="参考图">
-                <button id="removeRef" class="ref-remove">&times;</button>
-              </div>
+              <div id="refPreview" class="ref-preview-list hidden"></div>
             </div>
             <div class="toolbar-right">
               <span id="generationHint" class="hint">Ctrl+Enter 发送</span>
