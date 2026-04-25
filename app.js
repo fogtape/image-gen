@@ -13,12 +13,31 @@ import {
 const $ = (s) => document.querySelector(s);
 const ACCOUNTS_KEY = 'img-gen-accounts';
 const ACTIVE_JOB_KEY = 'img-gen-active-job';
+const APP_SETTINGS_KEY = 'img-gen-app-settings';
 const OLD_KEY = 'img-gen-settings';
 const DEFAULT_MODEL = 'gpt-5.4';
 const MAX_REF_IMAGES = 3;
+const DEFAULT_APP_SETTINGS = {
+  generation: { size: 'auto', quality: 'medium', format: 'png', background: 'auto' },
+  watermark: {
+    enabled: false,
+    temporaryMode: 'default',
+    mode: 'camera-time',
+    text: 'AI Image Studio',
+    timeFormat: 'camera',
+    position: 'bottom-right',
+    opacity: 0.72,
+    fontSize: 28,
+    color: '#ffffff',
+    shadow: true,
+    background: true,
+  },
+  storage: { enabled: true },
+};
 
 const state = {
   data: { activeId: null, accounts: [], useProxy: false },
+  appSettings: typeof structuredClone === 'function' ? structuredClone(DEFAULT_APP_SETTINGS) : JSON.parse(JSON.stringify(DEFAULT_APP_SETTINGS)),
   refImagesBase64: [],
   refImagePreviewUrls: [],
   generating: false,
@@ -64,6 +83,208 @@ function loadData() {
 
 function saveData() {
   localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(state.data));
+}
+
+function cloneDefaultSettings() {
+  return typeof structuredClone === 'function' ? structuredClone(DEFAULT_APP_SETTINGS) : JSON.parse(JSON.stringify(DEFAULT_APP_SETTINGS));
+}
+
+function mergeAppSettings(input = {}) {
+  const defaults = cloneDefaultSettings();
+  return {
+    generation: { ...defaults.generation, ...(input.generation || {}) },
+    watermark: { ...defaults.watermark, ...(input.watermark || {}) },
+    storage: { ...defaults.storage, ...(input.storage || {}) },
+  };
+}
+
+function loadAppSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(APP_SETTINGS_KEY) || '{}');
+    state.appSettings = mergeAppSettings(saved);
+  } catch {
+    state.appSettings = cloneDefaultSettings();
+  }
+}
+
+function saveAppSettings() {
+  localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(state.appSettings));
+}
+
+function setSelectValue(id, value) {
+  const el = $(`#${id}`);
+  if (el) el.value = value;
+}
+
+function setChecked(id, checked) {
+  const el = $(`#${id}`);
+  if (el) el.checked = !!checked;
+}
+
+function setInputValue(id, value) {
+  const el = $(`#${id}`);
+  if (el) el.value = value;
+}
+
+function applySegmentDefault(field, value) {
+  const group = $(`.seg[data-field="${field}"]`);
+  if (!group) return;
+  group.querySelectorAll('button').forEach((btn) => btn.classList.toggle('active', btn.dataset.value === value));
+}
+
+function applySizeDefault(value) {
+  const csEl = $('#sizeSelect');
+  if (!csEl) return;
+  const item = csEl.querySelector(`.cs-item[data-value="${value}"]`) || csEl.querySelector('.cs-item[data-value="auto"]');
+  if (!item) return;
+  csEl.dataset.value = item.dataset.value;
+  const trigger = csEl.querySelector('.cs-trigger');
+  if (trigger) trigger.textContent = item.dataset.label;
+  csEl.querySelectorAll('.cs-item').forEach((i) => i.classList.toggle('active', i === item));
+}
+
+function applyGenerationDefaultsToControls() {
+  const g = state.appSettings.generation;
+  applySegmentDefault('quality', g.quality);
+  applySegmentDefault('background', g.background);
+  applySizeDefault(g.size);
+  setSelectValue('formatSelect', g.format);
+}
+
+function formatBytes(bytes) {
+  const n = Number(bytes || 0);
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatPreviewTime(date = new Date(), format = 'camera') {
+  const pad = (n) => String(n).padStart(2, '0');
+  const yyyy = date.getFullYear();
+  const mm = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mi = pad(date.getMinutes());
+  if (format === 'slash') return `${yyyy}/${mm}/${dd} ${hh}:${mi}`;
+  if (format === 'dash') return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+  if (format === 'iso') return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+  return `${yyyy}.${mm}.${dd} ${hh}:${mi}`;
+}
+
+function renderWatermarkPreview() {
+  const preview = $('#watermarkPreview');
+  if (!preview) return;
+  const wm = readWatermarkForm();
+  const lines = [];
+  const time = formatPreviewTime(new Date(), wm.timeFormat);
+  if (wm.mode === 'time') lines.push(time);
+  else if (wm.mode === 'camera-time' || wm.mode === 'custom-time') lines.push(wm.text || 'AI Image Studio', time);
+  else lines.push(wm.text || 'AI Image Studio');
+  preview.style.alignItems = wm.position.includes('left') ? 'flex-start' : wm.position.includes('right') ? 'flex-end' : 'center';
+  preview.style.justifyContent = wm.position.startsWith('top') ? 'flex-start' : wm.position === 'center' ? 'center' : 'flex-end';
+  preview.innerHTML = lines.map((line, i) => `<span class="wm-line${i ? ' small' : ''}" style="color:${wm.color};opacity:${wm.opacity};font-size:${i ? Math.max(11, wm.fontSize * 0.75) : wm.fontSize}px;${wm.background ? '' : 'background:transparent;'}${wm.shadow ? '' : 'text-shadow:none;'}">${line.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</span>`).join('');
+}
+
+function readWatermarkForm() {
+  return {
+    enabled: !!$('#watermarkEnabled')?.checked,
+    temporaryMode: $('#watermarkTemporaryMode')?.value || 'default',
+    mode: $('#watermarkMode')?.value || 'camera-time',
+    text: ($('#watermarkText')?.value || 'AI Image Studio').trim() || 'AI Image Studio',
+    timeFormat: $('#watermarkTimeFormat')?.value || 'camera',
+    position: $('#watermarkPosition')?.value || 'bottom-right',
+    opacity: Number($('#watermarkOpacity')?.value || 0.72),
+    fontSize: Number($('#watermarkFontSize')?.value || 28),
+    color: $('#watermarkColor')?.value || '#ffffff',
+    shadow: !!$('#watermarkShadow')?.checked,
+    background: !!$('#watermarkBackground')?.checked,
+  };
+}
+
+function fillSettingsForm() {
+  const settings = mergeAppSettings(state.appSettings);
+  setSelectValue('settingsDefaultSize', settings.generation.size);
+  setSelectValue('settingsDefaultQuality', settings.generation.quality);
+  setSelectValue('settingsDefaultFormat', settings.generation.format);
+  setSelectValue('settingsDefaultBackground', settings.generation.background);
+  const wm = settings.watermark;
+  setChecked('watermarkEnabled', wm.enabled);
+  setSelectValue('watermarkTemporaryMode', wm.temporaryMode);
+  setSelectValue('watermarkMode', wm.mode);
+  setInputValue('watermarkText', wm.text);
+  setSelectValue('watermarkTimeFormat', wm.timeFormat);
+  setSelectValue('watermarkPosition', wm.position);
+  setInputValue('watermarkOpacity', wm.opacity);
+  setInputValue('watermarkFontSize', wm.fontSize);
+  setInputValue('watermarkColor', wm.color);
+  setChecked('watermarkShadow', wm.shadow);
+  setChecked('watermarkBackground', wm.background);
+  setChecked('storageEnabled', settings.storage.enabled);
+  renderWatermarkPreview();
+}
+
+function readSettingsForm() {
+  return mergeAppSettings({
+    generation: {
+      size: $('#settingsDefaultSize')?.value || 'auto',
+      quality: $('#settingsDefaultQuality')?.value || 'medium',
+      format: $('#settingsDefaultFormat')?.value || 'png',
+      background: $('#settingsDefaultBackground')?.value || 'auto',
+    },
+    watermark: readWatermarkForm(),
+    storage: { enabled: !!$('#storageEnabled')?.checked },
+  });
+}
+
+function saveSettingsFromForm() {
+  state.appSettings = readSettingsForm();
+  saveAppSettings();
+  applyGenerationDefaultsToControls();
+  $('#settingsOverlay').classList.add('hidden');
+}
+
+function getEffectiveWatermarkSettings() {
+  const wm = { ...state.appSettings.watermark };
+  if (wm.temporaryMode === 'on') wm.enabled = true;
+  if (wm.temporaryMode === 'off') wm.enabled = false;
+  return wm;
+}
+
+async function loadStorageStats() {
+  const el = $('#storageStats');
+  if (!el) return;
+  try {
+    const resp = await fetch('/api/storage');
+    const data = await resp.json();
+    el.textContent = `已保存 ${data.count || 0} 张图片，占用 ${formatBytes(data.totalBytes || 0)}`;
+    loadImageHistory(data.history || []);
+  } catch {
+    el.textContent = '存储状态读取失败';
+  }
+}
+
+function loadImageHistory(history) {
+  if (!Array.isArray(history) || !history.length || $('#results')?.children.length) return;
+  for (const item of history.slice().reverse()) {
+    if (item.url) addResultCardFromUrl(item.url, item.format || 'png');
+  }
+}
+
+async function clearStorageData(scope) {
+  if (scope === 'conversations') {
+    clearActiveJob();
+    $('#prompt').value = '';
+    $('#results').innerHTML = '';
+  }
+  const resp = await fetch('/api/storage/clear', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scope }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  if (scope === 'images' || scope === 'all') $('#results').innerHTML = '';
+  await loadStorageStats();
 }
 
 function migrateOldSettings() {
@@ -841,6 +1062,7 @@ async function pollBackgroundJob(jobId, format, isOAuth) {
       setGenerationStatus('result:render');
       if (isOAuth) handleOAuthImageResult(job.result, format);
       else handleImagesResult(job.result, format);
+      await loadStorageStats();
       return;
     }
     if (job.status === 'failed') {
@@ -862,6 +1084,8 @@ async function genBackgroundImages(cfg, prompt, quality, background, size, forma
     background,
     size,
     format,
+    watermarkSettings: getEffectiveWatermarkSettings(),
+    storageSettings: { enabled: state.appSettings.storage.enabled !== false },
     refImagesBase64: hasRef ? state.refImagesBase64 : undefined,
   };
 
@@ -1174,6 +1398,7 @@ function renderRefPreviews() {
 
 document.addEventListener('DOMContentLoaded', () => {
   loadData();
+  loadAppSettings();
   renderSwitcher();
 
   // Account switcher dropdown
@@ -1186,6 +1411,20 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#dropdownManage').onclick = () => { toggleDropdown(false); renderAccountList(); $('#useProxy').checked = state.data.useProxy; $('#accountOverlay').classList.remove('hidden'); };
   $('#closeAccount').onclick = () => $('#accountOverlay').classList.add('hidden');
   $('#accountOverlay').onclick = (e) => { if (e.target === $('#accountOverlay')) $('#accountOverlay').classList.add('hidden'); };
+
+  // Settings overlay
+  $('#openSettings').onclick = () => { fillSettingsForm(); loadStorageStats(); $('#settingsOverlay').classList.remove('hidden'); };
+  $('#closeSettings').onclick = () => $('#settingsOverlay').classList.add('hidden');
+  $('#cancelSettings').onclick = () => $('#settingsOverlay').classList.add('hidden');
+  $('#saveSettings').onclick = saveSettingsFromForm;
+  $('#settingsOverlay').onclick = (e) => { if (e.target === $('#settingsOverlay')) $('#settingsOverlay').classList.add('hidden'); };
+  ['watermarkEnabled', 'watermarkTemporaryMode', 'watermarkMode', 'watermarkText', 'watermarkTimeFormat', 'watermarkPosition', 'watermarkOpacity', 'watermarkFontSize', 'watermarkColor', 'watermarkShadow', 'watermarkBackground'].forEach((id) => {
+    const el = $(`#${id}`);
+    if (el) el.oninput = el.onchange = renderWatermarkPreview;
+  });
+  $('#clearConversationData').onclick = async () => { try { await clearStorageData('conversations'); } catch (e) { showError(e); } };
+  $('#clearImageData').onclick = async () => { if (!confirm('确定清理已保存的图片？账号不会删除。')) return; try { await clearStorageData('images'); } catch (e) { showError(e); } };
+  $('#clearAllData').onclick = async () => { if (!confirm('确定清理对话和图片数据？账号不会删除。')) return; try { await clearStorageData('all'); clearActiveJob(); $('#prompt').value = ''; } catch (e) { showError(e); } };
 
   // Add manual account
   $('#addManualBtn').onclick = () => openEditModal(null);
@@ -1259,5 +1498,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Ctrl+Enter
   $('#prompt').addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') generate(); });
 
+  applyGenerationDefaultsToControls();
+  loadStorageStats();
   resumeActiveJobIfAny();
 });

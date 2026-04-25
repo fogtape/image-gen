@@ -18,6 +18,9 @@
         </div>
       </div>
       <div class="topbar-right">
+        <button class="topbar-btn" id="openSettings" type="button" title="设置">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
         <div class="account-switcher" id="accountSwitcher">
           <button class="switcher-btn" id="switcherBtn">
             <span class="switcher-dot" id="switcherDot"></span>
@@ -35,6 +38,150 @@
         </div>
       </div>
     </nav>
+
+    <!-- Settings Overlay -->
+    <div id="settingsOverlay" class="overlay hidden">
+      <div class="modal modal-settings">
+        <div class="modal-header">
+          <h2>设置</h2>
+          <button id="closeSettings" class="close-btn">&times;</button>
+        </div>
+        <div class="modal-body settings-body">
+          <section class="settings-section">
+            <h3>生成设置</h3>
+            <div class="settings-grid">
+              <div class="form-group">
+                <label for="settingsDefaultSize">默认尺寸</label>
+                <select id="settingsDefaultSize">
+                  <option value="auto">自动</option>
+                  <option value="1024x1024">1024×1024</option>
+                  <option value="1536x864">16:9 横版 1536×864</option>
+                  <option value="1536x1024">3:2 横版 1536×1024</option>
+                  <option value="864x1536">9:16 竖版 864×1536</option>
+                  <option value="1024x1536">2:3 竖版 1024×1536</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="settingsDefaultQuality">默认质量</label>
+                <select id="settingsDefaultQuality">
+                  <option value="low">低</option>
+                  <option value="medium">中</option>
+                  <option value="high">高</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="settingsDefaultFormat">默认格式</label>
+                <select id="settingsDefaultFormat">
+                  <option value="png">PNG</option>
+                  <option value="webp">WebP</option>
+                  <option value="jpeg">JPEG</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="settingsDefaultBackground">默认背景</label>
+                <select id="settingsDefaultBackground">
+                  <option value="auto">自动</option>
+                  <option value="opaque">不透明</option>
+                  <option value="transparent">透明</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h3>水印设置</h3>
+            <label class="switch-label compact">
+              <span>开启水印</span>
+              <input type="checkbox" id="watermarkEnabled">
+              <span class="switch"></span>
+            </label>
+            <div class="settings-grid">
+              <div class="form-group">
+                <label for="watermarkTemporaryMode">临时开关</label>
+                <select id="watermarkTemporaryMode">
+                  <option value="default">跟随设置</option>
+                  <option value="on">仅本次开启</option>
+                  <option value="off">仅本次关闭</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="watermarkMode">水印类型</label>
+                <select id="watermarkMode">
+                  <option value="custom">自定义文字</option>
+                  <option value="time">当前时间</option>
+                  <option value="camera-time">相机时间</option>
+                  <option value="custom-time">文字 + 时间</option>
+                </select>
+              </div>
+              <div class="form-group wide">
+                <label for="watermarkText">水印文字</label>
+                <input type="text" id="watermarkText" maxlength="80" placeholder="AI Image Studio">
+              </div>
+              <div class="form-group">
+                <label for="watermarkTimeFormat">时间格式</label>
+                <select id="watermarkTimeFormat">
+                  <option value="camera">2026.04.25 11:32</option>
+                  <option value="slash">2026/04/25 11:32</option>
+                  <option value="dash">2026-04-25 11:32</option>
+                  <option value="iso">2026-04-25T11:32</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="watermarkPosition">位置</label>
+                <select id="watermarkPosition">
+                  <option value="bottom-right">右下</option>
+                  <option value="bottom-left">左下</option>
+                  <option value="top-right">右上</option>
+                  <option value="top-left">左上</option>
+                  <option value="center">居中</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="watermarkOpacity">透明度</label>
+                <input type="range" id="watermarkOpacity" min="0.12" max="1" step="0.04">
+              </div>
+              <div class="form-group">
+                <label for="watermarkFontSize">字号</label>
+                <input type="range" id="watermarkFontSize" min="12" max="96" step="1">
+              </div>
+              <div class="form-group">
+                <label for="watermarkColor">颜色</label>
+                <input type="color" id="watermarkColor" value="#ffffff">
+              </div>
+            </div>
+            <div class="settings-inline">
+              <label><input type="checkbox" id="watermarkShadow"> 阴影</label>
+              <label><input type="checkbox" id="watermarkBackground"> 半透明背景条</label>
+            </div>
+            <div id="watermarkPreview" class="watermark-preview">
+              <span class="wm-line">AI Image Studio</span>
+              <span class="wm-line small">2026.04.25 11:32</span>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h3>存储管理</h3>
+            <label class="switch-label compact">
+              <span>保存生成图片</span>
+              <input type="checkbox" id="storageEnabled" checked>
+              <span class="switch"></span>
+            </label>
+            <small class="section-hint">图片保存到后端数据目录，刷新页面后仍可在历史记录中看到；不会删除账号。</small>
+            <div id="storageStats" class="storage-stats">正在读取存储状态...</div>
+            <div class="danger-zone">
+              <button id="clearConversationData" class="btn btn-outline" type="button">清理对话数据</button>
+              <button id="clearImageData" class="btn btn-outline danger" type="button">清理图片数据</button>
+              <button id="clearAllData" class="btn btn-outline danger" type="button">清理全部</button>
+            </div>
+          </section>
+
+          <div class="modal-footer">
+            <button id="cancelSettings" class="btn btn-ghost">取消</button>
+            <button id="saveSettings" class="btn btn-primary">保存</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- Account Management Overlay -->
     <div id="accountOverlay" class="overlay hidden">

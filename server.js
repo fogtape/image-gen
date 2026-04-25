@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { handleOAuthImageRequestBody } from './openai-oauth-image.js';
 import { createJobStore } from './background-jobs.js';
+import { createImageStore } from './image-storage.js';
 import {
   getGenerationProgressMessage,
   getResponseStreamProgressMessage,
@@ -21,7 +22,9 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
+const DATA_DIR = process.env.IMAGE_GEN_DATA_DIR || path.join(__dirname, 'data');
 const MAX_REF_IMAGES = 3;
+const imageStore = createImageStore({ dataDir: DATA_DIR });
 const OAUTH_LOOPBACK_PORT = 1455;
 const OAUTH_SESSION_FILE = path.join(__dirname, '.oauth-sessions.json');
 
@@ -31,6 +34,9 @@ const MIME = {
   '.js': 'application/javascript',
   '.json': 'application/json',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
 };
 
@@ -723,12 +729,23 @@ async function runResponsesJob(payload, onProgress) {
   return extractImagesFromResponsesText(rawText, format);
 }
 
+async function persistJobResultIfEnabled(result, payload, onProgress) {
+  if (payload.storageSettings?.enabled === false) return result;
+  onProgress('storage:save', '正在保存图片到历史记录');
+  return await imageStore.persistGenerationResult(result, {
+    prompt: payload.prompt,
+    format: payload.format || 'png',
+    watermarkSettings: payload.watermarkSettings || {},
+  });
+}
+
 async function runImageJob(payload, onProgress) {
   const mode = payload.mode || 'responses';
   if (!String(payload.prompt || '').trim()) throw new Error('Missing prompt');
+  let result;
   if (mode === 'oauth') {
     const cfg = payload.cfg || {};
-    return await handleOAuthImageRequestBody({
+    result = await handleOAuthImageRequestBody({
       accessToken: cfg.apiKey,
       accountId: cfg.accountId,
       openaiDeviceId: cfg.openaiDeviceId,
@@ -742,17 +759,22 @@ async function runImageJob(payload, onProgress) {
       format: payload.format,
       onProgress: (event) => onProgress(event.phase || event.type || 'progress', event.message || '处理中', event),
     });
+    return await persistJobResultIfEnabled(result, payload, onProgress);
   }
   if (mode === 'responses') {
     try {
-      return await runResponsesJob(payload, onProgress);
+      result = await runResponsesJob(payload, onProgress);
     } catch (e) {
       if (normalizeGenerationError(e) === '非常抱歉，生成的图片可能违反了我们的内容政策。如果你认为此判断有误，请重试或修改提示语。') throw e;
       onProgress('fallback:images', getGenerationProgressMessage('fallback:images'));
-      return await runImagesApiJob({ ...payload, mode: normalizeRefImages(payload).length ? 'edits' : 'images' }, onProgress);
+      result = await runImagesApiJob({ ...payload, mode: normalizeRefImages(payload).length ? 'edits' : 'images' }, onProgress);
     }
+    return await persistJobResultIfEnabled(result, payload, onProgress);
   }
-  if (mode === 'images' || mode === 'edits') return await runImagesApiJob(payload, onProgress);
+  if (mode === 'images' || mode === 'edits') {
+    result = await runImagesApiJob(payload, onProgress);
+    return await persistJobResultIfEnabled(result, payload, onProgress);
+  }
   throw new Error(`Unsupported job mode: ${mode}`);
 }
 
@@ -782,6 +804,38 @@ function handleGetImageJob(req, res, jobId) {
   res.end(JSON.stringify(job));
 }
 
+function handleStorageStats(req, res) {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(imageStore.getStats()));
+}
+
+async function handleStorageClear(req, res) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
+  try {
+    const result = imageStore.clear(parsed.scope || 'images');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  } catch (e) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: e.message || 'Failed to clear storage' }));
+  }
+}
+
+function handleStoredImage(req, res, imageId) {
+  const found = imageStore.getImagePath(imageId);
+  if (!found) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Image not found' }));
+    return;
+  }
+  res.writeHead(200, {
+    'Content-Type': found.record.mime || 'application/octet-stream',
+    'Cache-Control': 'public, max-age=31536000, immutable',
+  });
+  fs.createReadStream(found.filePath).pipe(res);
+}
+
 // --- Main server ---
 
 export const server = http.createServer((req, res) => {
@@ -800,6 +854,13 @@ export const server = http.createServer((req, res) => {
   } else if (url.pathname.startsWith('/api/jobs/') && req.method === 'GET') {
     const jobId = decodeURIComponent(url.pathname.split('/api/jobs/')[1] || '');
     handleGetImageJob(req, res, jobId);
+  } else if (url.pathname === '/api/storage' && req.method === 'GET') {
+    handleStorageStats(req, res);
+  } else if (url.pathname === '/api/storage/clear' && req.method === 'POST') {
+    handleStorageClear(req, res);
+  } else if (url.pathname.startsWith('/api/images/') && req.method === 'GET') {
+    const imageId = decodeURIComponent(url.pathname.split('/api/images/')[1] || '');
+    handleStoredImage(req, res, imageId);
   } else if (url.pathname === '/api/oauth/start' && req.method === 'POST') {
     handleOAuthStart(req, res);
   } else if (url.pathname.startsWith('/api/oauth/status/') && req.method === 'GET') {
