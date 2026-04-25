@@ -748,6 +748,19 @@ async function readResponseTextWithProgress(resp, onProgress) {
   return rawText;
 }
 
+async function readUpstreamJson(resp, label = 'API') {
+  const text = await resp.text();
+  try {
+    return JSON.parse(text || '{}');
+  } catch {
+    const prefix = String(text || '').trim().slice(0, 120).replace(/\s+/g, ' ');
+    if (/^<!doctype html|^<html|^</i.test(prefix)) {
+      throw new Error(`${label} 上游返回了 HTML 错误页面（HTTP ${resp.status}）。这通常是 API 站点/CDN 返回 502、404 或网关错误，不是图片 JSON 结果。`);
+    }
+    throw new Error(`${label} 返回的不是有效 JSON（HTTP ${resp.status}）：${prefix || '空响应'}`);
+  }
+}
+
 export function buildImagesApiBody(payload = {}) {
   const cfg = payload.cfg || {};
   const mode = payload.mode;
@@ -786,7 +799,7 @@ async function runImagesApiJob(payload, onProgress) {
     body: JSON.stringify(body),
   });
   onProgress('request:accepted', getGenerationProgressMessage('request:accepted'));
-  const data = await resp.json().catch(() => ({}));
+  const data = await readUpstreamJson(resp, 'Images API');
   if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
   return data;
 }

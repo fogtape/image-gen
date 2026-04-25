@@ -1426,6 +1426,19 @@ function handleOAuthImageResult(data, format) {
   handleImagesResult(data, format);
 }
 
+async function readJsonResponse(resp, label = 'API') {
+  const text = await resp.text();
+  try {
+    return JSON.parse(text || '{}');
+  } catch {
+    const prefix = String(text || '').trim().slice(0, 120).replace(/\s+/g, ' ');
+    if (/^<!doctype html|^<html|^</i.test(prefix)) {
+      throw new Error(`${label} 上游返回了 HTML 错误页面（HTTP ${resp.status}）。这通常是 API 站点/CDN 返回 502、404 或网关错误，不是图片 JSON 结果。`);
+    }
+    throw new Error(`${label} 返回的不是有效 JSON（HTTP ${resp.status}）：${prefix || '空响应'}`);
+  }
+}
+
 // --- /v1/images/generations ---
 
 async function genImages(cfg, prompt, quality, background, size, format) {
@@ -1445,7 +1458,7 @@ async function genImages(cfg, prompt, quality, background, size, format) {
   });
   setGenerationStatus('request:accepted');
   startWaitingStatusSequence();
-  const data = await resp.json();
+  const data = await readJsonResponse(resp, 'Images API');
   if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
   setGenerationStatus('result:render');
   stopWaitingStatusSequence();
@@ -1475,7 +1488,7 @@ async function genEdits(cfg, prompt, quality, background, size, format) {
   });
   setGenerationStatus('request:accepted');
   startWaitingStatusSequence();
-  const data = await resp.json();
+  const data = await readJsonResponse(resp, 'Images API');
   if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
   setGenerationStatus('result:render');
   stopWaitingStatusSequence();
