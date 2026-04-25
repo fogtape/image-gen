@@ -7,6 +7,7 @@ import {
   collectImagePointersFromText,
   normalizeBase64Image,
   isChatChallengeRequired,
+  reportOAuthProgress,
 } from '../openai-oauth-image.js';
 
 test('OAuth 生图请求使用 ChatGPT backend 头，而不是 Codex/OpenAI Images scope 头', () => {
@@ -76,4 +77,17 @@ test('ChatGPT challenge required parser does not treat string false as required'
   assert.equal(isChatChallengeRequired({ required: true }), true);
   assert.equal(isChatChallengeRequired({ required: 'true' }), true);
   assert.equal(isChatChallengeRequired({ required: 'required' }), true);
+});
+
+test('reportOAuthProgress emits structured progress events and ignores missing callbacks', () => {
+  const events = [];
+  reportOAuthProgress((event) => events.push(event), 'oauth:requirements', '正在获取 ChatGPT 账号状态', { attempt: 1 });
+  reportOAuthProgress(null, 'oauth:conversation', 'ignored');
+
+  assert.deepEqual(events, [{
+    type: 'progress',
+    phase: 'oauth:requirements',
+    message: '正在获取 ChatGPT 账号状态',
+    attempt: 1,
+  }]);
 });

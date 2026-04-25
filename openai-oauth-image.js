@@ -59,6 +59,11 @@ export function isChatChallengeRequired(challenge) {
   return false;
 }
 
+export function reportOAuthProgress(onProgress, phase, message, extra = {}) {
+  if (typeof onProgress !== 'function') return;
+  onProgress({ type: 'progress', phase, message, ...extra });
+}
+
 export function buildChatGPTBackendHeaders({ accessToken, accountId, deviceId, sessionId, userAgent } = {}) {
   if (!String(accessToken || '').trim()) throw new Error('Missing OAuth access token');
   const headers = {
@@ -561,7 +566,7 @@ async function resolvePointerBytes(headers, conversationId, pointer) {
   return downloadBytes(headers, downloadURL);
 }
 
-async function generateOneImage({ headers, prompt, chatReqs }) {
+async function generateOneImage({ headers, prompt, chatReqs, onProgress }) {
   const parentMessageId = randomUUID();
   const proofToken = generateProofToken({
     required: !!chatReqs?.proofofwork?.required,
@@ -570,7 +575,9 @@ async function generateOneImage({ headers, prompt, chatReqs }) {
     userAgent: headers['User-Agent'],
   });
 
+  reportOAuthProgress(onProgress, 'oauth:bootstrap', '正在初始化 ChatGPT 会话');
   await initializeConversation(headers).catch(() => {});
+  reportOAuthProgress(onProgress, 'oauth:prepare_conversation', '正在准备 ChatGPT 图片会话');
   const conduitToken = await prepareConversation({
     headers,
     prompt,
@@ -594,10 +601,13 @@ async function generateOneImage({ headers, prompt, chatReqs }) {
     timeoutMs: 180_000,
   });
   if (!resp.ok) throw await statusError(resp, 'image conversation request failed');
+  reportOAuthProgress(onProgress, 'oauth:conversation', '正在提交提示词到 ChatGPT');
   const rawText = await resp.text();
+  reportOAuthProgress(onProgress, 'oauth:generating', 'ChatGPT 正在生成图片');
   const streamResult = collectImagePointersFromText(rawText);
   let pointers = streamResult.pointers;
   if (streamResult.conversationId && !hasFileServicePointer(pointers)) {
+    reportOAuthProgress(onProgress, 'oauth:poll', '正在轮询图片结果');
     const polled = await pollConversation(headers, streamResult.conversationId);
     pointers = mergePointers(pointers, polled);
   }
@@ -609,6 +619,7 @@ async function generateOneImage({ headers, prompt, chatReqs }) {
 
   const data = [];
   for (const pointer of pointers) {
+    reportOAuthProgress(onProgress, 'oauth:download', '正在下载生成的图片');
     const bytes = await resolvePointerBytes(headers, streamResult.conversationId, pointer);
     data.push({
       b64_json: bytes.toString('base64'),
@@ -619,6 +630,8 @@ async function generateOneImage({ headers, prompt, chatReqs }) {
 }
 
 export async function generateOAuthImage(input = {}) {
+  const onProgress = input.onProgress;
+  reportOAuthProgress(onProgress, 'oauth:prepare', '正在准备 OAuth 生图请求');
   const accessToken = String(input.accessToken || input.apiKey || '').trim();
   const prompt = String(input.prompt || '').trim();
   if (!accessToken) {
@@ -642,7 +655,9 @@ export async function generateOAuthImage(input = {}) {
     userAgent: input.userAgent,
   });
 
+  reportOAuthProgress(onProgress, 'oauth:bootstrap', '正在初始化 ChatGPT 会话');
   await bootstrap(headers).catch(() => {});
+  reportOAuthProgress(onProgress, 'oauth:requirements', '正在获取 ChatGPT 账号状态');
   const chatReqs = await fetchChatRequirements(headers);
   if (isChatChallengeRequired(chatReqs?.arkose)) {
     throw new Error('ChatGPT 要求人机验证（arkose），当前 OAuth 生图代理无法自动完成。请先在官方 ChatGPT 网页端使用同一账号完成一次消息/图片请求后再重试，或更换网络/账号。');
@@ -654,11 +669,12 @@ export async function generateOAuthImage(input = {}) {
   const count = Math.max(1, Math.min(4, Number.parseInt(input.n || 1, 10) || 1));
   const data = [];
   for (let i = 0; i < count; i++) {
-    const items = await generateOneImage({ headers, prompt, chatReqs });
+    const items = await generateOneImage({ headers, prompt, chatReqs, onProgress });
     data.push(...items);
     if (data.length >= count) break;
   }
 
+  reportOAuthProgress(onProgress, 'oauth:done', '图片已生成，正在返回页面');
   return {
     created: Math.floor(Date.now() / 1000),
     data: data.slice(0, count),

@@ -1,4 +1,12 @@
-import { IDLE_GENERATION_HINT, POLICY_VIOLATION_MESSAGE, getGeneratingHint, isPolicyViolationText, normalizeGenerationError } from './ui-feedback.js';
+import {
+  IDLE_GENERATION_HINT,
+  POLICY_VIOLATION_MESSAGE,
+  getGeneratingHint,
+  getGenerationProgressMessage,
+  getResponseStreamProgressMessage,
+  isPolicyViolationText,
+  normalizeGenerationError,
+} from './ui-feedback.js';
 
 const $ = (s) => document.querySelector(s);
 const ACCOUNTS_KEY = 'img-gen-accounts';
@@ -157,6 +165,48 @@ async function smartFetch(url, opts) {
   }
 }
 
+function parseSseBlock(block) {
+  const eventLines = String(block || '').split('\n');
+  let event = 'message';
+  const dataLines = [];
+  for (const line of eventLines) {
+    if (line.startsWith('event:')) event = line.slice(6).trim() || 'message';
+    else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+  }
+  const dataText = dataLines.join('\n').trim();
+  return { event, dataText };
+}
+
+async function readSseText(resp, onEvent) {
+  if (!resp.body || !resp.body.getReader) return await resp.text();
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let rawText = '';
+
+  const consumeBlock = (block) => {
+    if (!block.trim()) return;
+    rawText += `${block}\n\n`;
+    const { event, dataText } = parseSseBlock(block);
+    if (!dataText || dataText === '[DONE]') return;
+    let data = dataText;
+    try { data = JSON.parse(dataText); } catch {}
+    onEvent?.(event, data, dataText);
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split(/\r?\n\r?\n/);
+    buffer = parts.pop() || '';
+    for (const part of parts) consumeBlock(part);
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) consumeBlock(buffer);
+  return rawText;
+}
+
 // --- Token Refresh ---
 
 async function refreshOAuthToken(acc) {
@@ -201,25 +251,26 @@ function showError(msg) {
   setTimeout(() => el.classList.add('hidden'), 10000);
 }
 
+function setGenerationStatus(phaseOrMessage, message) {
+  const hintEl = $('#generationHint') || $('.toolbar-right .hint');
+  if (!hintEl) return;
+  hintEl.textContent = message || getGenerationProgressMessage(phaseOrMessage, String(phaseOrMessage || '正在生成图片'));
+}
+
 function setLoading(on) {
   state.generating = on;
   $('#generateBtn .btn-text').classList.toggle('hidden', on);
   $('#generateBtn .btn-loading').classList.toggle('hidden', !on);
   $('#generateBtn').disabled = on;
-  const hintEl = $('#generationHint') || $('.toolbar-right .hint');
-  if (!hintEl) return;
   if (state.generationHintTimer) {
     clearInterval(state.generationHintTimer);
     state.generationHintTimer = null;
   }
   if (on) {
     state.generationHintStep = 0;
-    hintEl.textContent = getGeneratingHint(state.generationHintStep++);
-    state.generationHintTimer = setInterval(() => {
-      hintEl.textContent = getGeneratingHint(state.generationHintStep++);
-    }, 2500);
+    setGenerationStatus(getGeneratingHint(state.generationHintStep++));
   } else {
-    hintEl.textContent = IDLE_GENERATION_HINT;
+    setGenerationStatus(IDLE_GENERATION_HINT);
   }
 }
 
@@ -674,6 +725,7 @@ async function generate() {
   if (tags.length) finalPrompt = `${tags.join(', ')} style. ${prompt}`;
 
   setLoading(true);
+  setGenerationStatus('prompt:prepare');
   $('#errorMsg').classList.add('hidden');
 
   try {
@@ -712,14 +764,42 @@ async function genOAuthImages(cfg, prompt, quality, background, size, format) {
     format,
   };
 
-  const resp = await fetch('/api/oauth/images', {
+  setGenerationStatus('request:send');
+  const resp = await fetch('/api/oauth/images/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.error || data.message || `HTTP ${resp.status}`));
 
+  const contentType = resp.headers.get('content-type') || '';
+  if (!contentType.includes('text/event-stream')) {
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.error || data.message || `HTTP ${resp.status}`));
+    handleOAuthImageResult(data, format);
+    return;
+  }
+
+  let resultData = null;
+  let streamError = null;
+  await readSseText(resp, (event, data) => {
+    if (event === 'progress') {
+      if (data?.message) setGenerationStatus(data.phase || data.message, data.message);
+      else if (data?.phase) setGenerationStatus(data.phase);
+    } else if (event === 'result') {
+      resultData = data;
+    } else if (event === 'error') {
+      streamError = data;
+      setGenerationStatus('生成失败，正在整理错误信息');
+    }
+  });
+
+  if (streamError) throw new Error(normalizeGenerationError(streamError.error || streamError.message || streamError));
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  if (!resultData) throw new Error('OAuth 生图接口未返回结果');
+  handleOAuthImageResult(resultData, format);
+}
+
+function handleOAuthImageResult(data, format) {
   const acc = getActiveAccount();
   if (acc && acc.type === 'oauth') {
     const updates = {};
@@ -728,6 +808,7 @@ async function genOAuthImages(cfg, prompt, quality, background, size, format) {
     if (Object.keys(updates).length) updateAccount(acc.id, updates);
   }
 
+  setGenerationStatus('result:render');
   handleImagesResult(data, format);
 }
 
@@ -740,6 +821,7 @@ async function genImages(cfg, prompt, quality, background, size, format) {
   if (size && size !== 'auto') body.size = size;
   if (format !== 'png') body.output_format = format;
 
+  setGenerationStatus('request:send');
   const resp = await smartFetch(`${cfg.apiUrl}/v1/images/generations`, {
     method: 'POST',
     headers: buildHeaders(cfg, { 'Content-Type': 'application/json' }),
@@ -747,8 +829,10 @@ async function genImages(cfg, prompt, quality, background, size, format) {
     jsonBody: body,
     _forceProxy: cfg.isOAuth,
   });
+  setGenerationStatus('request:accepted');
   const data = await resp.json();
   if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
+  setGenerationStatus('result:render');
   handleImagesResult(data, format);
 }
 
@@ -764,6 +848,7 @@ async function genEdits(cfg, prompt, quality, background, size, format) {
   if (size && size !== 'auto') body.size = size;
   if (format !== 'png') body.output_format = format;
 
+  setGenerationStatus('request:send');
   const resp = await smartFetch(`${cfg.apiUrl}/v1/images/edits`, {
     method: 'POST',
     headers: buildHeaders(cfg, { 'Content-Type': 'application/json' }),
@@ -771,8 +856,10 @@ async function genEdits(cfg, prompt, quality, background, size, format) {
     jsonBody: body,
     _forceProxy: cfg.isOAuth,
   });
+  setGenerationStatus('request:accepted');
   const data = await resp.json();
   if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
+  setGenerationStatus('result:render');
   handleImagesResult(data, format);
 }
 
@@ -795,6 +882,7 @@ async function genResponsesWithFallback(cfg, prompt, quality, background, size, 
   } catch (e) {
     if (normalizeGenerationError(e) === POLICY_VIOLATION_MESSAGE) throw e;
     console.warn('Responses API failed, falling back to Images API:', e);
+    setGenerationStatus('fallback:images');
     if (hasRef) await genEdits(cfg, prompt, quality, background, size, format);
     else await genImages(cfg, prompt, quality, background, size, format);
   }
@@ -828,6 +916,7 @@ async function genResponses(cfg, prompt, quality, background, size, format, hasR
     tools: [imageTool],
   };
 
+  setGenerationStatus('request:send');
   const resp = await smartFetch(`${cfg.apiUrl}/v1/responses`, {
     method: 'POST',
     headers: buildHeaders(cfg, { 'Content-Type': 'application/json' }),
@@ -836,27 +925,47 @@ async function genResponses(cfg, prompt, quality, background, size, format, hasR
     _forceProxy: cfg.isOAuth,
   });
 
-  const rawText = await resp.text();
   let found = false;
+  let streamError = null;
+  const contentType = resp.headers.get('content-type') || '';
+  const rawText = contentType.includes('text/event-stream')
+    ? await readSseText(resp, (event, data) => {
+        if (event !== 'message' || !data || typeof data !== 'object') return;
+        const message = getResponseStreamProgressMessage(data);
+        if (message) setGenerationStatus(message);
+        if (data.type === 'response.output_item.done' && data.item?.type === 'image_generation_call' && data.item.result) {
+          setGenerationStatus('result:render');
+          addResultCard(data.item.result, format);
+          found = true;
+        }
+        if (data.error) streamError = data.error;
+      })
+    : await resp.text();
+
+  if (streamError) throw new Error(normalizeGenerationError(streamError.message || JSON.stringify(streamError)));
 
   try {
+    setGenerationStatus('result:parse');
     const data = JSON.parse(rawText);
     if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
     for (const item of (data.output || [])) {
-      if (item.type === 'image_generation_call' && item.result) { addResultCard(item.result, format); found = true; }
+      if (item.type === 'image_generation_call' && item.result) { setGenerationStatus('result:render'); addResultCard(item.result, format); found = true; }
     }
     if (found) return;
   } catch (e) {
     if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;
   }
 
+  if (found) return;
   for (const line of rawText.split('\n')) {
     if (!line.startsWith('data:')) continue;
     const s = line.slice(5).trim();
     if (!s || s === '[DONE]') continue;
     try {
       const ev = JSON.parse(s);
-      if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call' && ev.item.result) { addResultCard(ev.item.result, format); found = true; }
+      const message = getResponseStreamProgressMessage(ev);
+      if (message) setGenerationStatus(message);
+      if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call' && ev.item.result) { setGenerationStatus('result:render'); addResultCard(ev.item.result, format); found = true; }
       if (ev.error) throw new Error(normalizeGenerationError(ev.error.message || JSON.stringify(ev.error)));
     } catch (e) {
       if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;

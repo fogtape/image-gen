@@ -7,6 +7,7 @@ import {
   getOAuthSessionByState,
   deleteOAuthSession,
   cleanSessions,
+  formatSseEvent,
 } from '../server.js';
 
 test('OAuth session store resolves by sessionId and state', () => {
@@ -42,4 +43,11 @@ test('OAuth session cleanup removes expired sessions and state index', () => {
   cleanSessions();
   assert.equal(getOAuthSessionById(sessionId), null);
   assert.equal(getOAuthSessionByState(state).session, null);
+});
+
+test('formatSseEvent serializes named events as SSE chunks', () => {
+  assert.equal(
+    formatSseEvent('progress', { phase: 'request:send', message: '正在提交请求到后端' }),
+    'event: progress\ndata: {"phase":"request:send","message":"正在提交请求到后端"}\n\n',
+  );
 });

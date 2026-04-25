@@ -464,16 +464,25 @@ async function handleOAuthRefresh(req, res) {
 
 // --- OAuth image generation handler ---
 
-async function handleOAuthImages(req, res) {
+export function formatSseEvent(event, data) {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+async function readJsonBody(req, res) {
   let body = '';
   for await (const chunk of req) body += chunk;
-
-  let parsed;
-  try { parsed = JSON.parse(body || '{}'); } catch {
+  try {
+    return JSON.parse(body || '{}');
+  } catch {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Invalid JSON' }));
-    return;
+    return null;
   }
+}
+
+async function handleOAuthImages(req, res) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
 
   try {
     const data = await handleOAuthImageRequestBody(parsed);
@@ -483,6 +492,34 @@ async function handleOAuthImages(req, res) {
     const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: e.message || 'OAuth image generation failed' }));
+  }
+}
+
+async function handleOAuthImagesStream(req, res) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+
+  const send = (event, data) => res.write(formatSseEvent(event, data));
+  try {
+    send('progress', { phase: 'request:accepted', message: '后端已接收请求' });
+    const data = await handleOAuthImageRequestBody({
+      ...parsed,
+      onProgress: (event) => send(event.type || 'progress', event),
+    });
+    send('result', data);
+    send('done', { ok: true });
+    res.end();
+  } catch (e) {
+    const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
+    send('error', { status, error: e.message || 'OAuth image generation failed' });
+    res.end();
   }
 }
 
@@ -510,6 +547,8 @@ export const server = http.createServer((req, res) => {
     handleOAuthRefresh(req, res);
   } else if (url.pathname === '/api/oauth/images' && req.method === 'POST') {
     handleOAuthImages(req, res);
+  } else if (url.pathname === '/api/oauth/images/stream' && req.method === 'POST') {
+    handleOAuthImagesStream(req, res);
   } else {
     serveStatic(req, res);
   }
