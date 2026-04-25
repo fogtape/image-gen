@@ -9,6 +9,7 @@ import {
 import {
   buildOAuthCodexHeaders,
   buildOAuthCodexImagesRequest,
+  handleOAuthCodexImageRequestBody,
 } from '../server.js';
 
 test('OAuth 图片生成请求使用 sub2api/Codex Responses 指纹', () => {
@@ -50,6 +51,40 @@ test('OAuth 图片生成请求走 Codex /responses image_generation，支持文�
   assert.equal(req.input[0].content[0].type, 'input_text');
   assert.equal(req.input[0].content[1].type, 'input_image');
   assert.equal(req.input[0].content[1].image_url, 'data:image/png;base64,abc123');
+});
+
+test('OAuth Codex 在上游拒绝强制 image_generation tool_choice 时，同端点重试 auto', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    calls.push({ url: String(url), body: JSON.parse(opts.body) });
+    if (calls.length === 1) {
+      return new Response(JSON.stringify({
+        error: { message: "Tool choice 'image_generation' not found in 'tools' parameter." },
+      }), { status: 400, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response('data: {"type":"response.output_item.done","item":{"type":"image_generation_call","result":"iVBORw0KGgo="}}\n\ndata: [DONE]\n\n', {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    });
+  };
+  try {
+    const result = await handleOAuthCodexImageRequestBody({
+      accessToken: 'access-token-for-test',
+      prompt: '画一只猫',
+      format: 'png',
+    });
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].url, 'https://chatgpt.com/backend-api/codex/responses');
+    assert.deepEqual(calls[0].body.tool_choice, { type: 'image_generation' });
+    assert.equal(calls[1].url, 'https://chatgpt.com/backend-api/codex/responses');
+    assert.equal(calls[1].body.tool_choice, 'auto');
+    assert.equal(calls[1].body.tools[0].type, 'image_generation');
+    assert.equal(result.data[0].b64_json, 'iVBORw0KGgo=');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('ChatGPT challenge required parser does not treat string false as required', () => {
