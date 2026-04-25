@@ -1235,6 +1235,19 @@ async function pollBackgroundJob(jobId, format, isOAuth) {
   }
 }
 
+function isBackgroundJobsUnavailableError(error) {
+  const message = normalizeGenerationError(error?.message || error || '');
+  return /HTTP\s+(404|405)|Failed to fetch|NetworkError|Not Found|Method not allowed/i.test(message);
+}
+
+async function genDirectImagesAfterJobFallback(cfg, prompt, quality, background, size, format, hasRef) {
+  setGenerationStatus('云平台后台任务不可用，改用浏览器直连生成');
+  if (cfg.isOAuth) return await genOAuthImages(cfg, prompt, quality, background, size, format);
+  if (cfg.streamMode) return await genResponsesWithFallback(cfg, prompt, quality, background, size, format, hasRef);
+  if (hasRef) return await genEdits(cfg, prompt, quality, background, size, format);
+  return await genImages(cfg, prompt, quality, background, size, format);
+}
+
 async function genBackgroundImages(cfg, prompt, quality, background, size, format, hasRef) {
   const mode = backgroundModeFor(cfg, hasRef);
   const payload = {
@@ -1251,10 +1264,18 @@ async function genBackgroundImages(cfg, prompt, quality, background, size, forma
   };
 
   setGenerationStatus('request:send');
-  const job = await createBackgroundJob(payload);
-  saveActiveJob({ jobId: job.jobId || job.id, format, isOAuth: cfg.isOAuth, createdAt: Date.now() });
-  setGenerationStatus('后台任务已提交，可以切到后台稍后回来查看');
-  await pollBackgroundJob(job.jobId || job.id, format, cfg.isOAuth);
+  try {
+    const job = await createBackgroundJob(payload);
+    saveActiveJob({ jobId: job.jobId || job.id, format, isOAuth: cfg.isOAuth, createdAt: Date.now() });
+    setGenerationStatus('后台任务已提交，可以切到后台稍后回来查看');
+    await pollBackgroundJob(job.jobId || job.id, format, cfg.isOAuth);
+  } catch (e) {
+    if (isBackgroundJobsUnavailableError(e)) {
+      await genDirectImagesAfterJobFallback(cfg, prompt, quality, background, size, format, hasRef);
+      return;
+    }
+    throw e;
+  }
 }
 
 async function resumeActiveJobIfAny() {
