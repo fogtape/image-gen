@@ -50,4 +50,8 @@ test('formatSseEvent serializes named events as SSE chunks', () => {
     formatSseEvent('progress', { phase: 'request:send', message: '正在提交请求到后端' }),
     'event: progress\ndata: {"phase":"request:send","message":"正在提交请求到后端"}\n\n',
   );
+  assert.equal(
+    formatSseEvent('progress', { message: 'a\nb' }),
+    'event: progress\ndata: {"message":"a\\nb"}\n\n',
+  );
 });

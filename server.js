@@ -503,10 +503,14 @@ async function handleOAuthImagesStream(req, res) {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
     'Access-Control-Allow-Origin': '*',
   });
+  res.flushHeaders?.();
 
-  const send = (event, data) => res.write(formatSseEvent(event, data));
+  const send = (event, data) => {
+    res.write(formatSseEvent(event, data));
+  };
   try {
     send('progress', { phase: 'request:accepted', message: '后端已接收请求' });
     const data = await handleOAuthImageRequestBody({

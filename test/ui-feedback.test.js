@@ -8,6 +8,8 @@ import {
   IDLE_GENERATION_HINT,
   getGenerationProgressMessage,
   getResponseStreamProgressMessage,
+  getSseProgressMessage,
+  getWaitingProgressMessage,
 } from '../ui-feedback.js';
 
 test('normalizeGenerationError turns content policy failures into user-friendly Chinese guidance', () => {
@@ -50,4 +52,18 @@ test('getResponseStreamProgressMessage converts Responses SSE event types into p
   assert.equal(getResponseStreamProgressMessage({ type: 'response.output_item.done', item: { type: 'image_generation_call' } }), '图片数据已返回');
   assert.equal(getResponseStreamProgressMessage({ type: 'response.completed' }), '生成完成，正在渲染结果');
   assert.equal(getResponseStreamProgressMessage({ type: 'unrelated' }), '');
+});
+
+test('getSseProgressMessage handles named SSE events as well as default message events', () => {
+  assert.equal(getSseProgressMessage('response.created', { type: 'response.created' }), '后端已接收请求');
+  assert.equal(getSseProgressMessage('response.output_item.added', { item: { type: 'image_generation_call' } }), '模型已开始生成图片');
+  assert.equal(getSseProgressMessage('progress', { phase: 'oauth:download', message: '正在下载生成的图片' }), '正在下载生成的图片');
+  assert.equal(getSseProgressMessage('message', { type: 'response.completed' }), '生成完成，正在渲染结果');
+});
+
+test('getWaitingProgressMessage gives truthful fallback text when upstream has no granular stream events', () => {
+  assert.equal(getWaitingProgressMessage(0), '后端已接收请求，正在等待模型处理');
+  assert.equal(getWaitingProgressMessage(1), '模型可能正在排队或生成图片');
+  assert.equal(getWaitingProgressMessage(2), '接口暂未返回更细进度，继续等待图片结果');
+  assert.equal(getWaitingProgressMessage(3), '后端已接收请求，正在等待模型处理');
 });

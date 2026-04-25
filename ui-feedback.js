@@ -31,6 +31,12 @@ export const GENERATING_HINTS = [
   '正在接收图片数据',
 ];
 
+export const WAITING_PROGRESS_MESSAGES = [
+  '后端已接收请求，正在等待模型处理',
+  '模型可能正在排队或生成图片',
+  '接口暂未返回更细进度，继续等待图片结果',
+];
+
 function toReadableText(value) {
   if (value == null) return '';
   if (value instanceof Error) return value.message || String(value);
@@ -84,6 +90,22 @@ export function getResponseStreamProgressMessage(ev = {}) {
   if (ev.type === 'response.completed') return getGenerationProgressMessage('response:completed');
   if (ev.type === 'response.failed' || ev.type === 'error') return '生成失败，正在整理错误信息';
   return '';
+}
+
+export function getSseProgressMessage(event = 'message', data = {}) {
+  if (event === 'progress' && data && typeof data === 'object') {
+    return data.message || getGenerationProgressMessage(data.phase, '');
+  }
+  if (data && typeof data === 'object') {
+    const normalized = data.type ? data : { ...data, type: event };
+    return getResponseStreamProgressMessage(normalized);
+  }
+  return '';
+}
+
+export function getWaitingProgressMessage(step = 0) {
+  const idx = Math.abs(Number.parseInt(step, 10) || 0) % WAITING_PROGRESS_MESSAGES.length;
+  return WAITING_PROGRESS_MESSAGES[idx];
 }
 
 export function getGeneratingHint(step = 0) {

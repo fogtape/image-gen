@@ -4,6 +4,8 @@ import {
   getGeneratingHint,
   getGenerationProgressMessage,
   getResponseStreamProgressMessage,
+  getSseProgressMessage,
+  getWaitingProgressMessage,
   isPolicyViolationText,
   normalizeGenerationError,
 } from './ui-feedback.js';
@@ -23,6 +25,8 @@ const state = {
   oauthAuthUrl: '',
   generationHintTimer: null,
   generationHintStep: 0,
+  waitingStatusTimer: null,
+  waitingStatusStep: 0,
 };
 
 // --- Data Layer ---
@@ -257,6 +261,22 @@ function setGenerationStatus(phaseOrMessage, message) {
   hintEl.textContent = message || getGenerationProgressMessage(phaseOrMessage, String(phaseOrMessage || '正在生成图片'));
 }
 
+function stopWaitingStatusSequence() {
+  if (state.waitingStatusTimer) {
+    clearInterval(state.waitingStatusTimer);
+    state.waitingStatusTimer = null;
+  }
+}
+
+function startWaitingStatusSequence() {
+  stopWaitingStatusSequence();
+  state.waitingStatusStep = 0;
+  setGenerationStatus(getWaitingProgressMessage(state.waitingStatusStep++));
+  state.waitingStatusTimer = setInterval(() => {
+    setGenerationStatus(getWaitingProgressMessage(state.waitingStatusStep++));
+  }, 4500);
+}
+
 function setLoading(on) {
   state.generating = on;
   $('#generateBtn .btn-text').classList.toggle('hidden', on);
@@ -266,6 +286,7 @@ function setLoading(on) {
     clearInterval(state.generationHintTimer);
     state.generationHintTimer = null;
   }
+  stopWaitingStatusSequence();
   if (on) {
     state.generationHintStep = 0;
     setGenerationStatus(getGeneratingHint(state.generationHintStep++));
@@ -772,6 +793,7 @@ async function genOAuthImages(cfg, prompt, quality, background, size, format) {
   });
 
   const contentType = resp.headers.get('content-type') || '';
+  startWaitingStatusSequence();
   if (!contentType.includes('text/event-stream')) {
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.error || data.message || `HTTP ${resp.status}`));
@@ -782,13 +804,16 @@ async function genOAuthImages(cfg, prompt, quality, background, size, format) {
   let resultData = null;
   let streamError = null;
   await readSseText(resp, (event, data) => {
-    if (event === 'progress') {
-      if (data?.message) setGenerationStatus(data.phase || data.message, data.message);
-      else if (data?.phase) setGenerationStatus(data.phase);
-    } else if (event === 'result') {
+    const message = getSseProgressMessage(event, data);
+    if (message) {
+      stopWaitingStatusSequence();
+      setGenerationStatus(message);
+    }
+    if (event === 'result') {
       resultData = data;
     } else if (event === 'error') {
       streamError = data;
+      stopWaitingStatusSequence();
       setGenerationStatus('生成失败，正在整理错误信息');
     }
   });
@@ -809,6 +834,7 @@ function handleOAuthImageResult(data, format) {
   }
 
   setGenerationStatus('result:render');
+  stopWaitingStatusSequence();
   handleImagesResult(data, format);
 }
 
@@ -830,9 +856,11 @@ async function genImages(cfg, prompt, quality, background, size, format) {
     _forceProxy: cfg.isOAuth,
   });
   setGenerationStatus('request:accepted');
+  startWaitingStatusSequence();
   const data = await resp.json();
   if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
   setGenerationStatus('result:render');
+  stopWaitingStatusSequence();
   handleImagesResult(data, format);
 }
 
@@ -857,9 +885,11 @@ async function genEdits(cfg, prompt, quality, background, size, format) {
     _forceProxy: cfg.isOAuth,
   });
   setGenerationStatus('request:accepted');
+  startWaitingStatusSequence();
   const data = await resp.json();
   if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
   setGenerationStatus('result:render');
+  stopWaitingStatusSequence();
   handleImagesResult(data, format);
 }
 
@@ -928,12 +958,18 @@ async function genResponses(cfg, prompt, quality, background, size, format, hasR
   let found = false;
   let streamError = null;
   const contentType = resp.headers.get('content-type') || '';
+  startWaitingStatusSequence();
   const rawText = contentType.includes('text/event-stream')
     ? await readSseText(resp, (event, data) => {
-        if (event !== 'message' || !data || typeof data !== 'object') return;
-        const message = getResponseStreamProgressMessage(data);
-        if (message) setGenerationStatus(message);
-        if (data.type === 'response.output_item.done' && data.item?.type === 'image_generation_call' && data.item.result) {
+        if (!data || typeof data !== 'object') return;
+        const message = getSseProgressMessage(event, data);
+        if (message) {
+          stopWaitingStatusSequence();
+          setGenerationStatus(message);
+        }
+        const type = data.type || event;
+        if (type === 'response.output_item.done' && data.item?.type === 'image_generation_call' && data.item.result) {
+          stopWaitingStatusSequence();
           setGenerationStatus('result:render');
           addResultCard(data.item.result, format);
           found = true;
@@ -949,7 +985,7 @@ async function genResponses(cfg, prompt, quality, background, size, format, hasR
     const data = JSON.parse(rawText);
     if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
     for (const item of (data.output || [])) {
-      if (item.type === 'image_generation_call' && item.result) { setGenerationStatus('result:render'); addResultCard(item.result, format); found = true; }
+      if (item.type === 'image_generation_call' && item.result) { stopWaitingStatusSequence(); setGenerationStatus('result:render'); addResultCard(item.result, format); found = true; }
     }
     if (found) return;
   } catch (e) {
@@ -964,8 +1000,8 @@ async function genResponses(cfg, prompt, quality, background, size, format, hasR
     try {
       const ev = JSON.parse(s);
       const message = getResponseStreamProgressMessage(ev);
-      if (message) setGenerationStatus(message);
-      if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call' && ev.item.result) { setGenerationStatus('result:render'); addResultCard(ev.item.result, format); found = true; }
+      if (message) { stopWaitingStatusSequence(); setGenerationStatus(message); }
+      if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call' && ev.item.result) { stopWaitingStatusSequence(); setGenerationStatus('result:render'); addResultCard(ev.item.result, format); found = true; }
       if (ev.error) throw new Error(normalizeGenerationError(ev.error.message || JSON.stringify(ev.error)));
     } catch (e) {
       if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;
