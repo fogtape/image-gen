@@ -829,7 +829,7 @@ function effectiveOAuthImageModel(payload = {}) {
   return /^gpt-image-/i.test(model) ? model : 'gpt-image-2';
 }
 
-export function buildOAuthCodexImagesRequest(payload = {}, requestOptions = {}) {
+export function buildOAuthCodexImagesRequest(payload = {}) {
   const refImages = normalizeRefImages(payload);
   const hasRef = refImages.length > 0;
   const prompt = String(payload.prompt || '').trim();
@@ -852,7 +852,7 @@ export function buildOAuthCodexImagesRequest(payload = {}, requestOptions = {}) 
     include: ['reasoning.encrypted_content'],
     model: 'gpt-5.4-mini',
     store: false,
-    tool_choice: requestOptions.relaxedToolChoice ? 'auto' : { type: 'image_generation' },
+    tool_choice: { type: 'image_generation' },
     input: [{
       type: 'message',
       role: 'user',
@@ -907,35 +907,20 @@ async function runImagesApiJob(payload, onProgress) {
   return data;
 }
 
-function isOAuthImageToolChoiceMismatch(rawText = '') {
-  const text = String(rawText || '');
-  return /tool choice ['"]?image_generation['"]? not found in ['"]?tools['"]? parameter/i.test(text);
-}
-
 async function runOAuthCodexImagesJob(payload, onProgress) {
   const normalized = normalizeOAuthPayload(payload);
   const cfg = normalized.cfg || {};
   const format = normalized.format || 'png';
-
-  const sendCodexRequest = async (requestOptions = {}) => {
-    const body = buildOAuthCodexImagesRequest(normalized, requestOptions);
-    return fetch(`${baseApiUrl(cfg.apiUrl)}/responses`, {
-      method: 'POST',
-      headers: buildOAuthCodexHeaders(cfg, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify(body),
-    });
-  };
+  const body = buildOAuthCodexImagesRequest(normalized);
 
   onProgress('request:send', getGenerationProgressMessage('request:send'));
-  let resp = await sendCodexRequest();
+  const resp = await fetch(`${baseApiUrl(cfg.apiUrl)}/responses`, {
+    method: 'POST',
+    headers: buildOAuthCodexHeaders(cfg, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
   onProgress('request:accepted', getGenerationProgressMessage('request:accepted'));
-  let rawText = await readResponseTextWithProgress(resp, onProgress);
-  if (!resp.ok && isOAuthImageToolChoiceMismatch(rawText)) {
-    onProgress('request:retry', '上游不接受强制图片工具，正在改用自动工具选择重试');
-    resp = await sendCodexRequest({ relaxedToolChoice: true });
-    onProgress('request:accepted', getGenerationProgressMessage('request:accepted'));
-    rawText = await readResponseTextWithProgress(resp, onProgress);
-  }
+  const rawText = await readResponseTextWithProgress(resp, onProgress);
   if (!resp.ok) {
     try {
       const data = JSON.parse(rawText);
