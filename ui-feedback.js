@@ -21,7 +21,6 @@ export const GENERATION_PROGRESS_MESSAGES = {
   'oauth:download_url': '正在获取图片下载地址',
   'oauth:download': '正在下载生成的图片',
   'oauth:done': '图片已生成，正在返回页面',
-  'fallback:images': 'Responses 不可用，正在切换到 Images API',
   'result:parse': '正在解析生成结果',
   'result:render': '正在渲染生成结果',
 };

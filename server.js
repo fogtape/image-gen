@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { handleOAuthImageRequestBody, testOAuthAccessToken } from './openai-oauth-image.js';
+import { testOAuthAccessToken } from './openai-oauth-image.js';
 import { createJobStore } from './background-jobs.js';
 import { createImageStore } from './image-storage.js';
 import {
@@ -560,7 +560,7 @@ async function handleOAuthImages(req, res) {
   if (!parsed) return;
 
   try {
-    const data = await handleOAuthImageRequestBody(parsed);
+    const data = await runOAuthCodexImagesJob(normalizeOAuthPayload(parsed), () => {});
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
   } catch (e) {
@@ -603,9 +603,8 @@ async function handleOAuthImagesStream(req, res) {
   };
   try {
     send('progress', { phase: 'request:accepted', message: '后端已接收请求' });
-    const data = await handleOAuthImageRequestBody({
-      ...parsed,
-      onProgress: (event) => send(event.type || 'progress', event),
+    const data = await runOAuthCodexImagesJob(normalizeOAuthPayload(parsed), (phase, message, extra = {}) => {
+      send('progress', { phase, message, ...extra });
     });
     send('result', data);
     send('done', { ok: true });
@@ -634,8 +633,8 @@ function buildApiHeaders(cfg = {}, extra = {}) {
   return { Authorization: `Bearer ${apiKey}`, ...extra };
 }
 
-function buildResponsesApiHeaders(cfg = {}, extra = {}) {
-  return buildApiHeaders(cfg, {
+export function buildOAuthCodexHeaders(cfg = {}, extra = {}) {
+  const headers = buildApiHeaders(cfg, {
     Accept: 'text/event-stream',
     'OpenAI-Beta': 'responses=experimental',
     Originator: 'codex_cli_rs',
@@ -644,14 +643,21 @@ function buildResponsesApiHeaders(cfg = {}, extra = {}) {
     session_id: crypto.randomUUID(),
     ...extra,
   });
+  const accountId = String(cfg.accountId || '').trim();
+  if (accountId) headers['chatgpt-account-id'] = accountId;
+  return headers;
 }
 
-function isImagesApiModel(model) {
-  return /^gpt-image-/i.test(String(model || '').trim());
+function buildImagesApiHeaders(cfg = {}, extra = {}) {
+  const headers = buildApiHeaders(cfg, extra);
+  const accountId = String(cfg.accountId || '').trim();
+  if (accountId) headers['chatgpt-account-id'] = accountId;
+  return headers;
 }
 
 function imageOptionsFromPayload(payload) {
   const out = {};
+  if (payload.stream === true) out.stream = true;
   if (payload.quality) out.quality = payload.quality;
   if (payload.background && payload.background !== 'auto') out.background = payload.background;
   if (payload.size && payload.size !== 'auto') out.size = payload.size;
@@ -675,15 +681,24 @@ function normalizeRefImages(payload = {}) {
 
 function extractImagesFromResponsesText(rawText, format = 'png') {
   const found = [];
-  const addResult = (result) => {
-    if (result) found.push({ b64_json: result });
+  const addResult = (result, extra = {}) => {
+    if (result) found.push({ b64_json: result, ...extra });
+  };
+  const collectResponseOutput = (response) => {
+    for (const item of (response?.output || [])) {
+      if (item.type === 'image_generation_call' && item.result) {
+        addResult(item.result, {
+          revised_prompt: item.revised_prompt,
+          output_format: item.output_format,
+        });
+      }
+    }
   };
 
   try {
     const data = JSON.parse(rawText);
-    for (const item of (data.output || [])) {
-      if (item.type === 'image_generation_call' && item.result) addResult(item.result);
-    }
+    collectResponseOutput(data);
+    collectResponseOutput(data.response);
     if (found.length) return { created: Math.floor(Date.now() / 1000), data: found };
   } catch {}
 
@@ -694,8 +709,9 @@ function extractImagesFromResponsesText(rawText, format = 'png') {
     try {
       const ev = JSON.parse(s);
       if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call' && ev.item.result) {
-        addResult(ev.item.result);
+        addResult(ev.item.result, { revised_prompt: ev.item.revised_prompt, output_format: ev.item.output_format });
       }
+      if (ev.type === 'response.completed') collectResponseOutput(ev.response);
       if (ev.error) throw new Error(normalizeGenerationError(ev.error.message || JSON.stringify(ev.error)));
     } catch (e) {
       if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;
@@ -705,6 +721,30 @@ function extractImagesFromResponsesText(rawText, format = 'png') {
   if (found.length) return { created: Math.floor(Date.now() / 1000), data: found };
   if (isPolicyViolationText(rawText)) throw new Error(normalizeGenerationError(rawText));
   throw new Error(`未能从 ${format || '图片'} 响应中提取到图片`);
+}
+
+function extractImagesFromImagesApiSse(rawText, format = 'png') {
+  const found = [];
+  for (const line of String(rawText || '').split('\n')) {
+    if (!line.startsWith('data:')) continue;
+    const s = line.slice(5).trim();
+    if (!s || s === '[DONE]') continue;
+    try {
+      const ev = JSON.parse(s);
+      if (ev.type === 'image_generation.completed' && ev.b64_json) {
+        found.push({ b64_json: ev.b64_json, revised_prompt: ev.revised_prompt, url: ev.url });
+      } else if (ev.type === 'response.completed') {
+        const converted = extractImagesFromResponsesText(`data: ${JSON.stringify(ev)}\n\n`, format);
+        found.push(...(converted.data || []));
+      }
+      if (ev.error) throw new Error(normalizeGenerationError(ev.error.message || JSON.stringify(ev.error)));
+    } catch (e) {
+      if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;
+    }
+  }
+  if (found.length) return { created: Math.floor(Date.now() / 1000), data: found };
+  if (isPolicyViolationText(rawText)) throw new Error(normalizeGenerationError(rawText));
+  throw new Error(`未能从 Images API 流式响应中提取到图片`);
 }
 
 async function readResponseTextWithProgress(resp, onProgress) {
@@ -771,7 +811,6 @@ export function buildImagesApiBody(payload = {}) {
       prompt: payload.prompt,
       n: 1,
       response_format: 'b64_json',
-      image: refImages.map((data) => ({ type: 'base64', data })),
       images: refImages.map((data) => ({ image_url: toImageDataUrl(data) })),
       ...imageOptionsFromPayload(payload),
     };
@@ -785,6 +824,64 @@ export function buildImagesApiBody(payload = {}) {
   };
 }
 
+function effectiveOAuthImageModel(payload = {}) {
+  const model = String(payload.cfg?.model || payload.model || '').trim();
+  return /^gpt-image-/i.test(model) ? model : 'gpt-image-2';
+}
+
+export function buildOAuthCodexImagesRequest(payload = {}) {
+  const refImages = normalizeRefImages(payload);
+  const hasRef = refImages.length > 0;
+  const prompt = String(payload.prompt || '').trim();
+  const tool = {
+    type: 'image_generation',
+    action: hasRef ? 'edit' : 'generate',
+    model: effectiveOAuthImageModel(payload),
+  };
+  const options = imageOptionsFromPayload({ ...payload, stream: false });
+  delete options.stream;
+  Object.assign(tool, options);
+  if (payload.format && payload.format !== 'png') tool.output_format = payload.format;
+  else if (payload.format === 'png') tool.output_format = 'png';
+
+  return {
+    instructions: '',
+    stream: true,
+    reasoning: { effort: 'medium', summary: 'auto' },
+    parallel_tool_calls: true,
+    include: ['reasoning.encrypted_content'],
+    model: 'gpt-5.4-mini',
+    store: false,
+    tool_choice: { type: 'image_generation' },
+    input: [{
+      type: 'message',
+      role: 'user',
+      content: [
+        { type: 'input_text', text: prompt },
+        ...refImages.map((data) => ({ type: 'input_image', image_url: toImageDataUrl(data) })),
+      ],
+    }],
+    tools: [tool],
+  };
+}
+
+function normalizeOAuthPayload(input = {}) {
+  const cfg = input.cfg || {};
+  const rawApiUrl = String(input.apiUrl || cfg.apiUrl || '').trim().replace(/\/+$/, '');
+  const codexApiUrl = /chatgpt\.com\/backend-api\/codex/i.test(rawApiUrl)
+    ? rawApiUrl.replace(/\/responses$/i, '')
+    : 'https://chatgpt.com/backend-api/codex';
+  return {
+    ...input,
+    cfg: {
+      apiUrl: codexApiUrl,
+      apiKey: input.accessToken || input.apiKey || cfg.apiKey,
+      accountId: input.accountId || cfg.accountId,
+      model: input.model || cfg.model || 'gpt-image-2',
+    },
+  };
+}
+
 async function runImagesApiJob(payload, onProgress) {
   const cfg = payload.cfg || {};
   const format = payload.format || 'png';
@@ -795,47 +892,31 @@ async function runImagesApiJob(payload, onProgress) {
   onProgress('request:send', getGenerationProgressMessage('request:send'));
   const resp = await fetch(`${baseApiUrl(cfg.apiUrl)}${endpoint}`, {
     method: 'POST',
-    headers: buildApiHeaders(cfg, { 'Content-Type': 'application/json' }),
+    headers: buildImagesApiHeaders(cfg, { 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   });
   onProgress('request:accepted', getGenerationProgressMessage('request:accepted'));
+  const contentType = resp.headers.get('content-type') || '';
+  if (contentType.includes('text/event-stream')) {
+    const rawText = await readResponseTextWithProgress(resp, onProgress);
+    if (!resp.ok) throw new Error(normalizeGenerationError(rawText || `HTTP ${resp.status}`));
+    return extractImagesFromImagesApiSse(rawText, format);
+  }
   const data = await readUpstreamJson(resp, 'Images API');
   if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
   return data;
 }
 
-async function runResponsesJob(payload, onProgress) {
-  const cfg = payload.cfg || {};
-  const refImages = normalizeRefImages(payload);
-  const hasRef = refImages.length > 0;
-  const format = payload.format || 'png';
-  const input = hasRef
-    ? [{ role: 'user', content: [
-        ...refImages.map((data) => ({ type: 'input_image', image_url: toImageDataUrl(data) })),
-        { type: 'input_text', text: payload.prompt },
-      ]}]
-    : payload.prompt;
-
-  const body = {
-    model: cfg.model,
-    input,
-    stream: true,
-    store: false,
-    tool_choice: 'required',
-    tools: [{
-      type: 'image_generation',
-      action: hasRef ? 'edit' : 'generate',
-      quality: payload.quality || 'medium',
-      size: payload.size === 'auto' ? 'auto' : payload.size,
-      background: payload.background || 'auto',
-      output_format: format,
-    }],
-  };
+async function runOAuthCodexImagesJob(payload, onProgress) {
+  const normalized = normalizeOAuthPayload(payload);
+  const cfg = normalized.cfg || {};
+  const format = normalized.format || 'png';
+  const body = buildOAuthCodexImagesRequest(normalized);
 
   onProgress('request:send', getGenerationProgressMessage('request:send'));
-  const resp = await fetch(`${baseApiUrl(cfg.apiUrl)}/v1/responses`, {
+  const resp = await fetch(`${baseApiUrl(cfg.apiUrl)}/responses`, {
     method: 'POST',
-    headers: buildResponsesApiHeaders(cfg, { 'Content-Type': 'application/json' }),
+    headers: buildOAuthCodexHeaders(cfg, { 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   });
   onProgress('request:accepted', getGenerationProgressMessage('request:accepted'));
@@ -846,10 +927,14 @@ async function runResponsesJob(payload, onProgress) {
       throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
     } catch (e) {
       if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;
-      throw new Error(`HTTP ${resp.status}`);
+      throw new Error(normalizeGenerationError(rawText || `HTTP ${resp.status}`));
     }
   }
   return extractImagesFromResponsesText(rawText, format);
+}
+
+export async function handleOAuthCodexImageRequestBody(body = {}) {
+  return await runOAuthCodexImagesJob(normalizeOAuthPayload(body), () => {});
 }
 
 async function persistJobResultIfEnabled(result, payload, onProgress) {
@@ -863,36 +948,11 @@ async function persistJobResultIfEnabled(result, payload, onProgress) {
 }
 
 async function runImageJob(payload, onProgress) {
-  const mode = payload.mode || 'responses';
+  const mode = payload.mode || (normalizeRefImages(payload).length ? 'edits' : 'images');
   if (!String(payload.prompt || '').trim()) throw new Error('Missing prompt');
   let result;
   if (mode === 'oauth') {
-    const cfg = payload.cfg || {};
-    result = await handleOAuthImageRequestBody({
-      accessToken: cfg.apiKey,
-      accountId: cfg.accountId,
-      openaiDeviceId: cfg.openaiDeviceId,
-      openaiSessionId: cfg.openaiSessionId,
-      model: cfg.model,
-      prompt: payload.prompt,
-      n: 1,
-      quality: payload.quality,
-      background: payload.background,
-      size: payload.size,
-      format: payload.format,
-      onProgress: (event) => onProgress(event.phase || event.type || 'progress', event.message || '处理中', event),
-    });
-    return await persistJobResultIfEnabled(result, payload, onProgress);
-  }
-  if (mode === 'responses') {
-    try {
-      result = await runResponsesJob(payload, onProgress);
-    } catch (e) {
-      if (normalizeGenerationError(e) === '非常抱歉，生成的图片可能违反了我们的内容政策。如果你认为此判断有误，请重试或修改提示语。') throw e;
-      if (!isImagesApiModel(payload.cfg?.model)) throw e;
-      onProgress('fallback:images', getGenerationProgressMessage('fallback:images'));
-      result = await runImagesApiJob({ ...payload, mode: normalizeRefImages(payload).length ? 'edits' : 'images' }, onProgress);
-    }
+    result = await runOAuthCodexImagesJob(payload, onProgress);
     return await persistJobResultIfEnabled(result, payload, onProgress);
   }
   if (mode === 'images' || mode === 'edits') {

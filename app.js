@@ -1,6 +1,5 @@
 import {
   IDLE_GENERATION_HINT,
-  POLICY_VIOLATION_MESSAGE,
   getGeneratingHint,
   getGenerationProgressMessage,
   getResponseStreamProgressMessage,
@@ -15,7 +14,7 @@ const ACCOUNTS_KEY = 'img-gen-accounts';
 const ACTIVE_JOB_KEY = 'img-gen-active-job';
 const APP_SETTINGS_KEY = 'img-gen-app-settings';
 const OLD_KEY = 'img-gen-settings';
-const DEFAULT_MODEL = 'gpt-5.4';
+const DEFAULT_MODEL = 'gpt-image-2';
 const MAX_REF_IMAGES = 3;
 const DEFAULT_APP_SETTINGS = {
   generation: { size: 'auto', quality: 'medium', format: 'png', background: 'auto' },
@@ -439,13 +438,12 @@ function buildHeaders(cfg, extra) {
   const headers = { Authorization: `Bearer ${cfg.apiKey}`, ...extra };
   if (cfg.isOAuth) {
     headers['Originator'] = 'codex_cli_rs';
-    if (cfg.accountId) headers['Chatgpt-Account-Id'] = cfg.accountId;
-    headers['Version'] = '0.101.0';
+    if (cfg.accountId) headers['chatgpt-account-id'] = cfg.accountId;
+    headers['Version'] = '0.104.0';
     headers['OpenAI-Beta'] = 'responses=experimental';
-    headers['Session_id'] = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36);
-    headers['User-Agent'] = 'codex_cli_rs/0.101.0';
+    headers['session_id'] = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36);
+    headers['User-Agent'] = 'codex_cli_rs/0.104.0';
     headers['Accept'] = 'text/event-stream';
-    headers['Connection'] = 'Keep-Alive';
   }
   return headers;
 }
@@ -671,12 +669,12 @@ function syncAccountModeUi() {
     return;
   }
   if (cfg.isOAuth) {
-    info.textContent = '当前模式：OAuth · ChatGPT 后端图片流程（chat-requirements → conversation/prepare → conversation → 下载图片），不受流式开关影响。';
+    info.textContent = '当前模式：OAuth · Codex Responses 图片工具流程（/backend-api/codex/responses + image_generation），不受流式开关影响。';
     info.className = 'route-mode-info oauth';
     return;
   }
   if (cfg.streamMode) {
-    info.textContent = '当前模式：API Key · 流式 Responses API（/v1/responses + image_generation）。';
+    info.textContent = '当前模式：API Key · 流式 Images API（/v1/images/* + stream=true）。';
     info.className = 'route-mode-info responses';
     return;
   }
@@ -1040,7 +1038,7 @@ async function testConnection() {
       const data = await resp.json().catch(() => ({}));
       if (resp.ok || data.ok) {
         el.className = 'toast success';
-        el.textContent = '连接成功 — OAuth ChatGPT 后端可用';
+        el.textContent = '连接成功 — OAuth Codex 通道可用';
       } else {
         el.className = 'toast error';
         el.textContent = `失败 (${resp.status}): ${data.error || data.message || ''}`;
@@ -1175,9 +1173,6 @@ async function generate() {
   hideGenerationErrorDialog();
 
   try {
-    if (cfg.isOAuth && hasRef) {
-      throw new Error('OAuth 登录生图已改走 ChatGPT 后端通道；当前先支持文字生图，参考图请暂用 API Key 账号。');
-    }
     if (shouldAutoEnhance) {
       finalPrompt = await requestPromptEnhancement(cfg, prompt, style, type, promptEnhancementSettingsForRequest(true));
       $('#prompt').value = finalPrompt;
@@ -1197,7 +1192,6 @@ async function generate() {
 
 function backgroundModeFor(cfg, hasRef) {
   if (cfg.isOAuth) return 'oauth';
-  if (cfg.streamMode) return 'responses';
   return hasRef ? 'edits' : 'images';
 }
 
@@ -1288,8 +1282,7 @@ function isMissingBackgroundJobError(error) {
 
 async function genDirectImagesAfterJobFallback(cfg, prompt, quality, background, size, format, hasRef) {
   setGenerationStatus('云平台后台任务不可用，改用浏览器直连生成');
-  if (cfg.isOAuth) return await genOAuthImages(cfg, prompt, quality, background, size, format);
-  if (cfg.streamMode) return await genResponsesWithFallback(cfg, prompt, quality, background, size, format, hasRef);
+  if (cfg.isOAuth) return await genOAuthImages(cfg, prompt, quality, background, size, format, hasRef);
   if (hasRef) return await genEdits(cfg, prompt, quality, background, size, format);
   return await genImages(cfg, prompt, quality, background, size, format);
 }
@@ -1304,6 +1297,7 @@ async function genBackgroundImages(cfg, prompt, quality, background, size, forma
     background,
     size,
     format,
+    stream: cfg.streamMode === true,
     watermarkSettings: getEffectiveWatermarkSettings(),
     storageSettings: { enabled: state.appSettings.storage.enabled !== false },
     refImagesBase64: hasRef ? state.refImagesBase64 : undefined,
@@ -1357,20 +1351,18 @@ async function resumeActiveJobIfAny() {
   }
 }
 
-// --- OAuth ChatGPT backend image generation ---
-async function genOAuthImages(cfg, prompt, quality, background, size, format) {
+// --- OAuth Codex Responses image generation ---
+async function genOAuthImages(cfg, prompt, quality, background, size, format, hasRef) {
   const body = {
     accessToken: cfg.apiKey,
     accountId: cfg.accountId,
-    openaiDeviceId: cfg.openaiDeviceId,
-    openaiSessionId: cfg.openaiSessionId,
     model: cfg.model,
     prompt,
-    n: 1,
     quality,
     background,
     size,
     format,
+    refImagesBase64: hasRef ? state.refImagesBase64 : undefined,
   };
 
   setGenerationStatus('request:send');
@@ -1441,12 +1433,68 @@ async function readJsonResponse(resp, label = 'API') {
 
 // --- /v1/images/generations ---
 
-async function genImages(cfg, prompt, quality, background, size, format) {
-  const body = { model: cfg.model, prompt, n: 1, response_format: 'b64_json' };
+function applyImagesOptions(body, cfg, quality, background, size, format) {
   if (quality) body.quality = quality;
   if (background && background !== 'auto') body.background = background;
   if (size && size !== 'auto') body.size = size;
   if (format !== 'png') body.output_format = format;
+  if (cfg.streamMode === true) body.stream = true;
+  return body;
+}
+
+async function handleImagesApiResponse(resp, format) {
+  const contentType = resp.headers.get('content-type') || '';
+  startWaitingStatusSequence();
+  if (!contentType.includes('text/event-stream')) {
+    const data = await readJsonResponse(resp, 'Images API');
+    if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
+    setGenerationStatus('result:render');
+    stopWaitingStatusSequence();
+    handleImagesResult(data, format);
+    return;
+  }
+
+  let found = false;
+  let streamError = null;
+  const rawText = await readSseText(resp, (event, data) => {
+    if (!data || typeof data !== 'object') return;
+    const message = getSseProgressMessage(event, data) || getResponseStreamProgressMessage(data);
+    if (message) {
+      stopWaitingStatusSequence();
+      setGenerationStatus(message);
+    }
+    const type = data.type || event;
+    if (type === 'image_generation.completed' && data.b64_json) {
+      stopWaitingStatusSequence();
+      setGenerationStatus('result:render');
+      addResultCard(data.b64_json, format);
+      found = true;
+    } else if (type === 'response.output_item.done' && data.item?.type === 'image_generation_call' && data.item.result) {
+      stopWaitingStatusSequence();
+      setGenerationStatus('result:render');
+      addResultCard(data.item.result, format);
+      found = true;
+    } else if (type === 'response.completed') {
+      for (const item of (data.response?.output || [])) {
+        if (item.type === 'image_generation_call' && item.result) {
+          stopWaitingStatusSequence();
+          setGenerationStatus('result:render');
+          addResultCard(item.result, format);
+          found = true;
+        }
+      }
+    }
+    if (data.error) streamError = data.error;
+  });
+
+  if (streamError) throw new Error(normalizeGenerationError(streamError.message || JSON.stringify(streamError)));
+  if (!resp.ok) throw new Error(normalizeGenerationError(rawText || `HTTP ${resp.status}`));
+  if (isPolicyViolationText(rawText)) throw new Error(normalizeGenerationError(rawText));
+  if (!found) throw new Error('未能从 Images API 流式响应中提取到图片');
+}
+
+async function genImages(cfg, prompt, quality, background, size, format) {
+  const body = applyImagesOptions({ model: cfg.model, prompt, n: 1, response_format: 'b64_json' }, cfg, quality, background, size, format);
 
   setGenerationStatus('request:send');
   const resp = await smartFetch(`${cfg.apiUrl}/v1/images/generations`, {
@@ -1457,26 +1505,19 @@ async function genImages(cfg, prompt, quality, background, size, format) {
     _forceProxy: cfg.isOAuth,
   });
   setGenerationStatus('request:accepted');
-  startWaitingStatusSequence();
-  const data = await readJsonResponse(resp, 'Images API');
-  if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
-  setGenerationStatus('result:render');
-  stopWaitingStatusSequence();
-  handleImagesResult(data, format);
+  await handleImagesApiResponse(resp, format);
 }
 
 // --- /v1/images/edits ---
 
 async function genEdits(cfg, prompt, quality, background, size, format) {
-  const body = {
-    model: cfg.model, prompt, n: 1, response_format: 'b64_json',
-    image: state.refImagesBase64.map((data) => ({ type: 'base64', data })),
+  const body = applyImagesOptions({
+    model: cfg.model,
+    prompt,
+    n: 1,
+    response_format: 'b64_json',
     images: state.refImagesBase64.map((data) => ({ image_url: toImageDataUrl(data) })),
-  };
-  if (quality) body.quality = quality;
-  if (background && background !== 'auto') body.background = background;
-  if (size && size !== 'auto') body.size = size;
-  if (format !== 'png') body.output_format = format;
+  }, cfg, quality, background, size, format);
 
   setGenerationStatus('request:send');
   const resp = await smartFetch(`${cfg.apiUrl}/v1/images/edits`, {
@@ -1487,12 +1528,7 @@ async function genEdits(cfg, prompt, quality, background, size, format) {
     _forceProxy: cfg.isOAuth,
   });
   setGenerationStatus('request:accepted');
-  startWaitingStatusSequence();
-  const data = await readJsonResponse(resp, 'Images API');
-  if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
-  setGenerationStatus('result:render');
-  stopWaitingStatusSequence();
-  handleImagesResult(data, format);
+  await handleImagesApiResponse(resp, format);
 }
 
 function handleImagesResult(data, format) {
@@ -1504,114 +1540,6 @@ function handleImagesResult(data, format) {
     }
   }
   if (!found) throw new Error('API 返回成功但未包含图片数据');
-}
-
-// --- /v1/responses (streaming) ---
-
-async function genResponsesWithFallback(cfg, prompt, quality, background, size, format, hasRef) {
-  try {
-    await genResponses(cfg, prompt, quality, background, size, format, hasRef);
-  } catch (e) {
-    if (normalizeGenerationError(e) === POLICY_VIOLATION_MESSAGE) throw e;
-    console.warn('Responses API failed, falling back to Images API:', e);
-    setGenerationStatus('fallback:images');
-    if (hasRef) await genEdits(cfg, prompt, quality, background, size, format);
-    else await genImages(cfg, prompt, quality, background, size, format);
-  }
-}
-
-async function genResponses(cfg, prompt, quality, background, size, format, hasRef) {
-  let input;
-  if (hasRef) {
-    input = [{ role: 'user', content: [
-      ...state.refImagesBase64.map((data) => ({ type: 'input_image', image_url: toImageDataUrl(data) })),
-      { type: 'input_text', text: prompt },
-    ]}];
-  } else {
-    input = prompt;
-  }
-
-  const imageTool = {
-    type: 'image_generation',
-    action: hasRef ? 'edit' : 'generate',
-    quality: quality || 'medium',
-    size: size === 'auto' ? 'auto' : size,
-    background: background || 'auto',
-    output_format: format,
-  };
-
-  const body = {
-    model: cfg.model || DEFAULT_MODEL,
-    input,
-    stream: true,
-    tool_choice: 'required',
-    tools: [imageTool],
-  };
-
-  setGenerationStatus('request:send');
-  const resp = await smartFetch(`${cfg.apiUrl}/v1/responses`, {
-    method: 'POST',
-    headers: buildHeaders(cfg, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify(body),
-    jsonBody: body,
-    _forceProxy: cfg.isOAuth,
-  });
-
-  let found = false;
-  let streamError = null;
-  const contentType = resp.headers.get('content-type') || '';
-  startWaitingStatusSequence();
-  const rawText = contentType.includes('text/event-stream')
-    ? await readSseText(resp, (event, data) => {
-        if (!data || typeof data !== 'object') return;
-        const message = getSseProgressMessage(event, data);
-        if (message) {
-          stopWaitingStatusSequence();
-          setGenerationStatus(message);
-        }
-        const type = data.type || event;
-        if (type === 'response.output_item.done' && data.item?.type === 'image_generation_call' && data.item.result) {
-          stopWaitingStatusSequence();
-          setGenerationStatus('result:render');
-          addResultCard(data.item.result, format);
-          found = true;
-        }
-        if (data.error) streamError = data.error;
-      })
-    : await resp.text();
-
-  if (streamError) throw new Error(normalizeGenerationError(streamError.message || JSON.stringify(streamError)));
-
-  try {
-    setGenerationStatus('result:parse');
-    const data = JSON.parse(rawText);
-    if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
-    for (const item of (data.output || [])) {
-      if (item.type === 'image_generation_call' && item.result) { stopWaitingStatusSequence(); setGenerationStatus('result:render'); addResultCard(item.result, format); found = true; }
-    }
-    if (found) return;
-  } catch (e) {
-    if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;
-  }
-
-  if (found) return;
-  for (const line of rawText.split('\n')) {
-    if (!line.startsWith('data:')) continue;
-    const s = line.slice(5).trim();
-    if (!s || s === '[DONE]') continue;
-    try {
-      const ev = JSON.parse(s);
-      const message = getResponseStreamProgressMessage(ev);
-      if (message) { stopWaitingStatusSequence(); setGenerationStatus(message); }
-      if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call' && ev.item.result) { stopWaitingStatusSequence(); setGenerationStatus('result:render'); addResultCard(ev.item.result, format); found = true; }
-      if (ev.error) throw new Error(normalizeGenerationError(ev.error.message || JSON.stringify(ev.error)));
-    } catch (e) {
-      if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;
-    }
-  }
-
-  if (isPolicyViolationText(rawText)) throw new Error(normalizeGenerationError(rawText));
-  if (!found) throw new Error('未能从响应中提取到图片');
 }
 
 // --- File Helpers ---
