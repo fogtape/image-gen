@@ -1458,6 +1458,7 @@ async function genEdits(cfg, prompt, quality, background, size, format) {
   const body = {
     model: cfg.model, prompt, n: 1, response_format: 'b64_json',
     image: state.refImagesBase64.map((data) => ({ type: 'base64', data })),
+    images: state.refImagesBase64.map((data) => ({ image_url: toImageDataUrl(data) })),
   };
   if (quality) body.quality = quality;
   if (background && background !== 'auto') body.background = background;
@@ -1510,7 +1511,7 @@ async function genResponses(cfg, prompt, quality, background, size, format, hasR
   let input;
   if (hasRef) {
     input = [{ role: 'user', content: [
-      ...state.refImagesBase64.map((data) => ({ type: 'input_image', image_url: `data:image/png;base64,${data}` })),
+      ...state.refImagesBase64.map((data) => ({ type: 'input_image', image_url: toImageDataUrl(data) })),
       { type: 'input_text', text: prompt },
     ]}];
   } else {
@@ -1609,6 +1610,12 @@ function fileToBase64(file) {
     r.onerror = reject;
     r.readAsDataURL(file);
   });
+}
+
+function toImageDataUrl(data, mime = 'image/png') {
+  const value = String(data || '').trim();
+  if (/^data:image\/[^;]+;base64,/i.test(value)) return value;
+  return `data:${mime};base64,${value}`;
 }
 
 function renderRefPreviews() {

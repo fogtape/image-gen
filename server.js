@@ -659,6 +659,12 @@ function imageOptionsFromPayload(payload) {
   return out;
 }
 
+export function toImageDataUrl(data, mime = 'image/png') {
+  const value = String(data || '').trim();
+  if (/^data:image\/[^;]+;base64,/i.test(value)) return value;
+  return `data:${mime};base64,${value}`;
+}
+
 function normalizeRefImages(payload = {}) {
   const raw = Array.isArray(payload.refImagesBase64)
     ? payload.refImagesBase64
@@ -742,27 +748,35 @@ async function readResponseTextWithProgress(resp, onProgress) {
   return rawText;
 }
 
+export function buildImagesApiBody(payload = {}) {
+  const cfg = payload.cfg || {};
+  const mode = payload.mode;
+  const refImages = normalizeRefImages(payload);
+  if (mode === 'edits') {
+    return {
+      model: cfg.model,
+      prompt: payload.prompt,
+      n: 1,
+      response_format: 'b64_json',
+      image: refImages.map((data) => ({ type: 'base64', data })),
+      images: refImages.map((data) => ({ image_url: toImageDataUrl(data) })),
+      ...imageOptionsFromPayload(payload),
+    };
+  }
+  return {
+    model: cfg.model,
+    prompt: payload.prompt,
+    n: 1,
+    response_format: 'b64_json',
+    ...imageOptionsFromPayload(payload),
+  };
+}
+
 async function runImagesApiJob(payload, onProgress) {
   const cfg = payload.cfg || {};
   const format = payload.format || 'png';
   const mode = payload.mode;
-  const refImages = normalizeRefImages(payload);
-  const body = mode === 'edits'
-    ? {
-        model: cfg.model,
-        prompt: payload.prompt,
-        n: 1,
-        response_format: 'b64_json',
-        image: refImages.map((data) => ({ type: 'base64', data })),
-        ...imageOptionsFromPayload(payload),
-      }
-    : {
-        model: cfg.model,
-        prompt: payload.prompt,
-        n: 1,
-        response_format: 'b64_json',
-        ...imageOptionsFromPayload(payload),
-      };
+  const body = buildImagesApiBody(payload);
 
   const endpoint = mode === 'edits' ? '/v1/images/edits' : '/v1/images/generations';
   onProgress('request:send', getGenerationProgressMessage('request:send'));
@@ -784,7 +798,7 @@ async function runResponsesJob(payload, onProgress) {
   const format = payload.format || 'png';
   const input = hasRef
     ? [{ role: 'user', content: [
-        ...refImages.map((data) => ({ type: 'input_image', image_url: `data:image/png;base64,${data}` })),
+        ...refImages.map((data) => ({ type: 'input_image', image_url: toImageDataUrl(data) })),
         { type: 'input_text', text: payload.prompt },
       ]}]
     : payload.prompt;
