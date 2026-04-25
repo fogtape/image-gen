@@ -7,6 +7,7 @@ import {
   collectImagePointersFromText,
   normalizeBase64Image,
   isChatChallengeRequired,
+  getUnsupportedChatRequirementChallenge,
   reportOAuthProgress,
 } from '../openai-oauth-image.js';
 
@@ -77,6 +78,12 @@ test('ChatGPT challenge required parser does not treat string false as required'
   assert.equal(isChatChallengeRequired({ required: true }), true);
   assert.equal(isChatChallengeRequired({ required: 'true' }), true);
   assert.equal(isChatChallengeRequired({ required: 'required' }), true);
+});
+
+test('ChatGPT 图片代理只阻断 sub2api 同样不支持的 arkose，不把 turnstile 字段直接当失败', () => {
+  assert.equal(getUnsupportedChatRequirementChallenge({ arkose: { required: true } }), 'arkose');
+  assert.equal(getUnsupportedChatRequirementChallenge({ turnstile: { required: true } }), '');
+  assert.equal(getUnsupportedChatRequirementChallenge({ turnstile: { required: 'required' }, proofofwork: { required: true } }), '');
 });
 
 test('reportOAuthProgress emits structured progress events and ignores missing callbacks', () => {

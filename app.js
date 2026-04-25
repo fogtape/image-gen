@@ -998,21 +998,23 @@ async function testConnection() {
 
   try {
     if (cfg.isOAuth) {
-      const body = { model: cfg.model, input: 'test', max_output_tokens: 1 };
-      const resp = await smartFetch(`${cfg.apiUrl}/v1/responses`, {
+      const resp = await fetch('/api/oauth/test', {
         method: 'POST',
-        headers: buildHeaders(cfg, { 'Content-Type': 'application/json' }),
-        body: JSON.stringify(body),
-        jsonBody: body,
-        _forceProxy: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiKey: cfg.apiKey,
+          accountId: cfg.accountId,
+          openaiDeviceId: cfg.openaiDeviceId,
+          openaiSessionId: cfg.openaiSessionId,
+        }),
       });
-      if (resp.ok || resp.status === 200) {
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok || data.ok) {
         el.className = 'toast success';
-        el.textContent = '连接成功 — OAuth token 有效';
+        el.textContent = '连接成功 — OAuth ChatGPT 后端可用';
       } else {
-        const data = await resp.json().catch(() => ({}));
         el.className = 'toast error';
-        el.textContent = `失败 (${resp.status}): ${data.error?.message || data.message || ''}`;
+        el.textContent = `失败 (${resp.status}): ${data.error || data.message || ''}`;
       }
     } else {
       const resp = await smartFetch(`${cfg.apiUrl}/v1/models`, {

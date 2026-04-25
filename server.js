@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { handleOAuthImageRequestBody } from './openai-oauth-image.js';
+import { handleOAuthImageRequestBody, testOAuthAccessToken } from './openai-oauth-image.js';
 import { createJobStore } from './background-jobs.js';
 import { createImageStore } from './image-storage.js';
 import {
@@ -537,6 +537,20 @@ async function readJsonBody(req, res) {
   }
 }
 
+async function handleOAuthTest(req, res) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
+  try {
+    const data = await testOAuthAccessToken(parsed);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
+  } catch (e) {
+    const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: e.message || 'OAuth test failed' }));
+  }
+}
+
 async function handleOAuthImages(req, res) {
   const parsed = await readJsonBody(req, res);
   if (!parsed) return;
@@ -951,6 +965,8 @@ export const server = http.createServer((req, res) => {
     handleOAuthExchange(req, res);
   } else if (url.pathname === '/api/oauth/refresh' && req.method === 'POST') {
     handleOAuthRefresh(req, res);
+  } else if (url.pathname === '/api/oauth/test' && req.method === 'POST') {
+    handleOAuthTest(req, res);
   } else if (url.pathname === '/api/oauth/images' && req.method === 'POST') {
     handleOAuthImages(req, res);
   } else if (url.pathname === '/api/oauth/images/stream' && req.method === 'POST') {

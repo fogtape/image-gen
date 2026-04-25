@@ -25,6 +25,7 @@ test('Vercel 为 OAuth 登录相关路径提供显式 API 入口，避免返回 
     'api/oauth/start.js',
     'api/oauth/exchange.js',
     'api/oauth/refresh.js',
+    'api/oauth/test.js',
     'api/oauth/status/[state].js',
     'api/oauth/images/stream.js',
   ]) {

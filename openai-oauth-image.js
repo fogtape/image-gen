@@ -59,6 +59,11 @@ export function isChatChallengeRequired(challenge) {
   return false;
 }
 
+export function getUnsupportedChatRequirementChallenge(chatReqs = {}) {
+  if (isChatChallengeRequired(chatReqs?.arkose)) return 'arkose';
+  return '';
+}
+
 export function reportOAuthProgress(onProgress, phase, message, extra = {}) {
   if (typeof onProgress !== 'function') return;
   onProgress({ type: 'progress', phase, message, ...extra });
@@ -659,11 +664,9 @@ export async function generateOAuthImage(input = {}) {
   await bootstrap(headers).catch(() => {});
   reportOAuthProgress(onProgress, 'oauth:requirements', '正在获取 ChatGPT 账号状态');
   const chatReqs = await fetchChatRequirements(headers);
-  if (isChatChallengeRequired(chatReqs?.arkose)) {
-    throw new Error('ChatGPT 要求人机验证（arkose），当前 OAuth 生图代理无法自动完成。请先在官方 ChatGPT 网页端使用同一账号完成一次消息/图片请求后再重试，或更换网络/账号。');
-  }
-  if (isChatChallengeRequired(chatReqs?.turnstile)) {
-    throw new Error('ChatGPT 要求人机验证（turnstile），当前 OAuth 生图代理无法自动完成。请先在官方 ChatGPT 网页端使用同一账号完成一次消息/图片请求后再重试，或更换网络/账号。');
+  const unsupportedChallenge = getUnsupportedChatRequirementChallenge(chatReqs);
+  if (unsupportedChallenge) {
+    throw new Error(`ChatGPT 要求人机验证（${unsupportedChallenge}），当前 OAuth 生图代理无法自动完成。请先在官方 ChatGPT 网页端使用同一账号完成一次消息/图片请求后再重试，或更换网络/账号。`);
   }
 
   const count = Math.max(1, Math.min(4, Number.parseInt(input.n || 1, 10) || 1));
@@ -680,6 +683,43 @@ export async function generateOAuthImage(input = {}) {
     data: data.slice(0, count),
     openaiDeviceId,
     openaiSessionId,
+  };
+}
+
+export async function testOAuthAccessToken(input = {}) {
+  const accessToken = String(input.accessToken || input.apiKey || '').trim();
+  if (!accessToken) {
+    const err = new Error('Missing OAuth access token');
+    err.status = 400;
+    throw err;
+  }
+  const openaiDeviceId = String(input.deviceId || input.openaiDeviceId || '').trim() || randomUUID();
+  const openaiSessionId = String(input.sessionId || input.openaiSessionId || '').trim() || randomUUID();
+  const headers = buildChatGPTBackendHeaders({
+    accessToken,
+    accountId: input.accountId,
+    deviceId: openaiDeviceId,
+    sessionId: openaiSessionId,
+    userAgent: input.userAgent,
+  });
+  await bootstrap(headers).catch(() => {});
+  const chatReqs = await fetchChatRequirements(headers);
+  const unsupportedChallenge = getUnsupportedChatRequirementChallenge(chatReqs);
+  if (unsupportedChallenge) {
+    const err = new Error(`ChatGPT 要求人机验证（${unsupportedChallenge}），当前 OAuth 代理无法自动完成。`);
+    err.status = 403;
+    throw err;
+  }
+  return {
+    ok: true,
+    service: 'chatgpt-backend',
+    openaiDeviceId,
+    openaiSessionId,
+    challenges: {
+      arkose: !!isChatChallengeRequired(chatReqs?.arkose),
+      turnstile: !!isChatChallengeRequired(chatReqs?.turnstile),
+      proofofwork: !!isChatChallengeRequired(chatReqs?.proofofwork),
+    },
   };
 }
 
