@@ -35,6 +35,17 @@ test('设置面板支持默认尺寸质量格式和成熟水印配置', () => {
   assert.match(html, /仅本次/);
 });
 
+test('设置默认尺寸选项与首页尺寸选项保持一致，避免保存设置后丢失 4:7 等尺寸', () => {
+  const settingsMatch = html.match(/<select id="settingsDefaultSize">([\s\S]*?)<\/select>/);
+  const homepageMatch = html.match(/<div class="custom-select" id="sizeSelect"[\s\S]*?<div class="cs-dropdown hidden">([\s\S]*?)<\/div>\s*<\/div>/);
+  assert.ok(settingsMatch, 'settings default size select should exist');
+  assert.ok(homepageMatch, 'homepage size select should exist');
+
+  const settingsSizes = [...settingsMatch[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]);
+  const homepageSizes = [...homepageMatch[1].matchAll(/class="cs-item" data-value="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(settingsSizes, homepageSizes);
+});
+
 test('设置会参与后台生成任务且不依赖刷新内存结果', () => {
   assert.match(app, /APP_SETTINGS_KEY/);
   assert.match(app, /getEffectiveWatermarkSettings/);
