@@ -19,6 +19,7 @@ import {
   extractOpenAIUserInfo,
   formatOAuthTokenError,
 } from './oauth-flow.js';
+import { enhancePrompt } from './prompt-enhancement.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -509,6 +510,21 @@ async function handleOAuthImages(req, res) {
   }
 }
 
+async function handlePromptEnhance(req, res) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
+
+  try {
+    const result = await enhancePrompt(parsed);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  } catch (e) {
+    const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 400;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: e.message || 'Prompt enhancement failed' }));
+  }
+}
+
 async function handleOAuthImagesStream(req, res) {
   const parsed = await readJsonBody(req, res);
   if (!parsed) return;
@@ -849,6 +865,8 @@ export const server = http.createServer((req, res) => {
 
   if (url.pathname === '/api/proxy' && req.method === 'POST') {
     handleProxy(req, res);
+  } else if (url.pathname === '/api/prompt/enhance' && req.method === 'POST') {
+    handlePromptEnhance(req, res);
   } else if (url.pathname === '/api/jobs' && req.method === 'POST') {
     handleCreateImageJob(req, res);
   } else if (url.pathname.startsWith('/api/jobs/') && req.method === 'GET') {

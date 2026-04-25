@@ -6,7 +6,7 @@ ENV PORT=3000
 
 COPY package*.json ./
 RUN npm ci --omit=dev
-COPY index.html app.js style.css server.js openai-oauth-image.js oauth-flow.js ui-feedback.js background-jobs.js image-storage.js image-watermark.js ./
+COPY index.html app.js style.css server.js openai-oauth-image.js oauth-flow.js ui-feedback.js background-jobs.js image-storage.js image-watermark.js prompt-enhancement.js ./
 COPY api ./api
 COPY netlify ./netlify
 

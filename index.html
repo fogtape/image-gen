@@ -93,6 +93,50 @@
 
           <section class="settings-section">
             <h3>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.8 5.4L19 10.2l-5.2 1.8L12 17l-1.8-5L5 10.2l5.2-1.8L12 3z"/><path d="M5 16l.9 2.6L8.5 19.5l-2.6.9L5 23l-.9-2.6-2.6-.9 2.6-.9L5 16z"/></svg>
+              <span>提示词增强</span>
+            </h3>
+            <label class="switch-label compact">
+              <span>生成前自动优化提示词</span>
+              <input type="checkbox" id="promptEnhancementEnabled">
+              <span class="switch"></span>
+            </label>
+            <small class="section-hint">默认关闭。开启后会先调用文本模型修饰提示词，再提交图片生成。</small>
+            <div id="promptEnhancementOptions" class="prompt-enhancement-options hidden">
+              <div class="settings-grid">
+                <div class="form-group wide">
+                  <label for="promptEnhancementModel">优化模型</label>
+                  <input type="text" id="promptEnhancementModel" placeholder="留空则跟随账号提示词模型 / 图片模型">
+                </div>
+                <div class="form-group">
+                  <label for="promptEnhancementMode">修饰模式</label>
+                  <select id="promptEnhancementMode">
+                    <option value="balanced">平衡增强</option>
+                    <option value="professional">专业摄影/海报</option>
+                    <option value="faithful">保留原意</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="promptEnhancementLanguage">输出语言</label>
+                  <select id="promptEnhancementLanguage">
+                    <option value="auto">跟随输入</option>
+                    <option value="zh">中文</option>
+                    <option value="en">英文</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="promptEnhancementOutput">自动生成后</label>
+                  <select id="promptEnhancementOutput">
+                    <option value="replace">替换输入框</option>
+                    <option value="temporary">仅本次使用</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h3>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
               <span>水印设置</span>
             </h3>
@@ -285,6 +329,11 @@
             <label for="editModel">模型</label>
             <input type="text" id="editModel" value="gpt-5.4">
           </div>
+          <div class="form-group">
+            <label for="editPromptModel">提示词模型</label>
+            <input type="text" id="editPromptModel" placeholder="留空则跟随上面的图片模型">
+            <small>只用于 AI 修饰提示词，不影响图片生成模型</small>
+          </div>
           <label class="switch-label">
             <span>流式模式（Responses API）</span>
             <input type="checkbox" id="editStream" checked>
@@ -307,10 +356,16 @@
           <textarea id="prompt" placeholder="描述你想生成的图片..." rows="3"></textarea>
           <div class="input-toolbar">
             <div class="toolbar-left">
-              <label class="tool-btn" id="uploadLabel" title="上传参考图，最多 3 张">
-                <input type="file" id="refImage" accept="image/*" multiple hidden>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-              </label>
+              <div class="prompt-tools">
+                <label class="tool-btn" id="uploadLabel" title="上传参考图，最多 3 张">
+                  <input type="file" id="refImage" accept="image/*" multiple hidden>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+                </label>
+                <button id="enhancePromptBtn" class="tool-btn enhance-prompt-btn" type="button" title="AI 修饰提示词">
+                  <span class="enhance-label">AI 修饰</span>
+                  <span class="enhance-loading hidden"><span class="spinner"></span></span>
+                </button>
+              </div>
               <div id="refPreview" class="ref-preview-list hidden"></div>
             </div>
             <div class="toolbar-right">

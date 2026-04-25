@@ -44,6 +44,28 @@ test('设置会参与后台生成任务且不依赖刷新内存结果', () => {
   assert.match(app, /clearStorageData/);
 });
 
+test('提示词增强默认关闭，开启后才显示高级选项', () => {
+  assert.match(html, />提示词增强</);
+  assert.match(html, /id="promptEnhancementEnabled"/);
+  assert.match(html, /id="promptEnhancementOptions"[^>]*class="[^"]*hidden/);
+  assert.doesNotMatch(html, /id="promptEnhancementEnabled"[^>]*checked/);
+  assert.match(html, /id="promptEnhancementModel"/);
+  assert.match(html, /id="promptEnhancementMode"/);
+  assert.match(html, /id="promptEnhancementLanguage"/);
+  assert.match(html, /id="promptEnhancementOutput"/);
+  assert.match(app, /promptEnhancement:\s*\{[^}]*enabled:\s*false/s);
+  assert.match(app, /togglePromptEnhancementOptions/);
+});
+
+test('账号设置支持单独配置提示词模型，输入栏提供不挤压上传按钮的 AI 修饰按钮', () => {
+  assert.match(html, /id="editPromptModel"/);
+  assert.match(app, /promptModel:/);
+  assert.match(html, /id="enhancePromptBtn"/);
+  assert.match(css, /\.prompt-tools/);
+  assert.match(css, /\.enhance-prompt-btn/);
+  assert.match(css, /flex-wrap\s*:\s*wrap/);
+});
+
 test('设置界面样式保持简洁并适配移动端', () => {
   assert.match(css, /\.settings-grid/);
   assert.match(css, /\.watermark-preview/);

@@ -3,6 +3,8 @@ export const IDLE_GENERATION_HINT = 'Ctrl+Enter 发送';
 
 export const GENERATION_PROGRESS_MESSAGES = {
   'prompt:prepare': '正在整理提示词',
+  'prompt:enhance:send': '正在优化提示词',
+  'prompt:enhance:done': '提示词已优化，正在提交生成任务',
   'request:send': '正在提交请求到后端',
   'request:accepted': '后端已接收请求',
   'response:created': '后端已接收请求',
