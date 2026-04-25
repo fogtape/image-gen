@@ -26,21 +26,20 @@ test('服务端提供 /api/oauth/test 探活路由，供 Vercel OAuth 连接测�
   assert.ok(fs.existsSync(new URL('../api/oauth/test.js', import.meta.url)), 'Vercel explicit OAuth test route should exist');
 });
 
-test('API Key 账号流式模式默认关闭，只有用户显式开启才给 Images API 传 stream=true', () => {
+test('API Key 账号流式模式默认关闭，只有用户显式开启才走 Responses', () => {
   assert.match(app, /streamMode: old\.streamMode === true/);
   assert.match(app, /streamMode: acc \? acc\.streamMode === true : false/);
   assert.match(app, /\$\('#editStream'\)\.checked = acc \? acc\.streamMode === true : false/);
   assert.doesNotMatch(html, /id="editStream" checked/);
 });
 
-test('OAuth 账号编辑页隐藏流式开关并显示 Codex Responses 图片工具流程说明，首页不展示突兀流程条', () => {
+test('OAuth 账号编辑页隐藏流式开关并显示真实 ChatGPT 后端流程说明，首页不展示突兀流程条', () => {
   assert.doesNotMatch(html, /id="routeModeInfo"/);
   assert.match(html, /id="editStreamSection"/);
   assert.match(html, /id="editOAuthFlowInfo"/);
-  assert.match(html, /Codex Responses 图片工具流程[\s\S]*\/backend-api\/codex\/responses[\s\S]*image_generation/);
-  assert.doesNotMatch(html, /chat-requirements[\s\S]*conversation\/prepare[\s\S]*conversation/);
+  assert.match(html, /chat-requirements[\s\S]*conversation\/prepare[\s\S]*conversation/);
   assert.match(app, /function syncAccountModeUi\(/);
   assert.match(app, /editStreamSection[\s\S]*classList\.toggle\('hidden', isOAuth\)/);
   assert.match(app, /editOAuthFlowInfo[\s\S]*classList\.toggle\('hidden', !isOAuth\)/);
-  assert.match(app, /Codex Responses 图片工具流程/);
+  assert.match(app, /ChatGPT 后端图片流程/);
 });

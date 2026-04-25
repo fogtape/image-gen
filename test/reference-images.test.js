@@ -22,10 +22,10 @@ test('前端用多参考图数组渲染预览并提交后台任务', () => {
   assert.match(css, /\.ref-preview-item/);
 });
 
-test('后端图片任务支持最多三张参考图，并按 sub2api Images edits 提供 image_url 字段', () => {
+test('后端图片任务支持最多三张参考图，并向 Images edits 提供 image_url 兼容字段', () => {
   assert.match(server, /const MAX_REF_IMAGES = 3;/);
   assert.match(server, /normalizeRefImages\(payload\)/);
-  assert.doesNotMatch(server, /image:\s*refImages\.map\(\(data\) => \(\{ type: 'base64', data \}\)\)/);
+  assert.match(server, /image:\s*refImages\.map\(\(data\) => \(\{ type: 'base64', data \}\)\)/);
   assert.match(server, /images:\s*refImages\.map\(\(data\) => \(\{ image_url: toImageDataUrl\(data\) \}\)\)/);
   assert.match(server, /refImages\.map\(\(data\) => \(\{ type: 'input_image'/);
 });

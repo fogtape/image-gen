@@ -332,19 +332,19 @@
           </div>
           <div class="form-group">
             <label for="editModel">模型</label>
-            <input type="text" id="editModel" value="gpt-image-2">
+            <input type="text" id="editModel" value="gpt-5.4">
           </div>
           <div id="editStreamSection" class="stream-mode-section">
             <label class="switch-label">
-              <span>流式模式（Images API）</span>
+              <span>流式模式（Responses API）</span>
               <input type="checkbox" id="editStream">
               <span class="switch"></span>
             </label>
-            <small class="section-hint">默认关闭。开启后 API Key 账号仍走 /v1/images/generations 或 /v1/images/edits，并在请求体里带 stream=true。</small>
+            <small class="section-hint">默认关闭。开启后 API Key 账号走 /v1/responses + image_generation；关闭时走 /images/generations 或 /images/edits。</small>
           </div>
           <div id="editOAuthFlowInfo" class="oauth-flow-info hidden">
-            <strong>OAuth 账号固定走 Codex Responses 图片工具流程</strong>
-            <span>实际链路：/backend-api/codex/responses + image_generation，支持文生图和参考图编辑，不受这里的流式开关影响。</span>
+            <strong>OAuth 账号固定走 ChatGPT 后端图片流程</strong>
+            <span>实际链路：chat-requirements → conversation/prepare → conversation → 下载图片。它不使用 /v1/responses 或 /v1/images 的流式开关。</span>
           </div>
           <div class="modal-footer">
             <button id="cancelEdit" class="btn btn-ghost">取消</button>

@@ -1,4 +1,4 @@
-import { handleOAuthCodexImageRequestBody } from '../../server.js';
+import { handleOAuthImageRequestBody } from '../../openai-oauth-image.js';
 
 export async function handler(event) {
   if (event.httpMethod === 'OPTIONS') {
@@ -20,7 +20,7 @@ export async function handler(event) {
   }
 
   try {
-    const data = await handleOAuthCodexImageRequestBody(parsed);
+    const data = await handleOAuthImageRequestBody(parsed);
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },

@@ -634,7 +634,7 @@ async function generateOneImage({ headers, prompt, chatReqs, onProgress }) {
   return data;
 }
 
-async function generateOAuthImage(input = {}) {
+export async function generateOAuthImage(input = {}) {
   const onProgress = input.onProgress;
   reportOAuthProgress(onProgress, 'oauth:prepare', '正在准备 OAuth 生图请求');
   const accessToken = String(input.accessToken || input.apiKey || '').trim();
@@ -721,4 +721,8 @@ export async function testOAuthAccessToken(input = {}) {
       proofofwork: !!isChatChallengeRequired(chatReqs?.proofofwork),
     },
   };
+}
+
+export async function handleOAuthImageRequestBody(body = {}) {
+  return generateOAuthImage(body);
 }
