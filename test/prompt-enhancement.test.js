@@ -11,6 +11,7 @@ import {
 test('提示词增强默认关闭，模型为空时跟随账号模型', () => {
   const settings = normalizePromptEnhancementSettings();
   assert.equal(settings.enabled, false);
+  assert.equal(settings.runMode, 'manual');
   assert.equal(settings.model, '');
   assert.equal(settings.mode, 'balanced');
   assert.equal(settings.language, 'auto');

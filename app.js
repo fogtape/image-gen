@@ -35,6 +35,7 @@ const DEFAULT_APP_SETTINGS = {
   storage: { enabled: true },
   promptEnhancement: {
     enabled: false,
+    runMode: 'manual',
     model: '',
     mode: 'balanced',
     language: 'auto',
@@ -195,16 +196,39 @@ function renderWatermarkPreview() {
   preview.innerHTML = lines.map((line, i) => `<span class="wm-line${i ? ' small' : ''}" style="color:${wm.color};opacity:${wm.opacity};font-size:${i ? Math.max(11, wm.fontSize * 0.75) : wm.fontSize}px;${wm.background ? '' : 'background:transparent;'}${wm.shadow ? '' : 'text-shadow:none;'}">${line.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</span>`).join('');
 }
 
+function getPromptEnhancementRuntime(source = 'state') {
+  if (source === 'form') {
+    const enabled = !!$('#promptEnhancementEnabled')?.checked;
+    const runMode = $('#promptEnhancementRunMode')?.value === 'auto' ? 'auto' : 'manual';
+    return { enabled, runMode };
+  }
+  const settings = state.appSettings.promptEnhancement || {};
+  return {
+    enabled: settings.enabled === true,
+    runMode: settings.runMode === 'auto' ? 'auto' : 'manual',
+  };
+}
+
+function isPromptEnhancementAutoMode(source = 'state') {
+  const pe = getPromptEnhancementRuntime(source);
+  return pe.enabled && pe.runMode === 'auto';
+}
+
+function isPromptEnhancementManualMode(source = 'state') {
+  const pe = getPromptEnhancementRuntime(source);
+  return pe.enabled && pe.runMode === 'manual';
+}
+
 function syncPromptEnhancementUi(source = 'state') {
   const formEnabled = !!$('#promptEnhancementEnabled')?.checked;
   $('#promptEnhancementOptions')?.classList.toggle('hidden', !formEnabled);
-  const enabled = source === 'form' ? formEnabled : !!state.appSettings.promptEnhancement?.enabled;
-  $('#enhancePromptBtn')?.classList.toggle('hidden', !enabled);
+  $('#enhancePromptBtn')?.classList.toggle('hidden', !isPromptEnhancementManualMode(source));
 }
 
 function readPromptEnhancementForm() {
   return {
     enabled: !!$('#promptEnhancementEnabled')?.checked,
+    runMode: $('#promptEnhancementRunMode')?.value === 'auto' ? 'auto' : 'manual',
     model: ($('#promptEnhancementModel')?.value || '').trim(),
     mode: $('#promptEnhancementMode')?.value || 'balanced',
     language: $('#promptEnhancementLanguage')?.value || 'auto',
@@ -247,6 +271,7 @@ function fillSettingsForm() {
   setChecked('watermarkBackground', wm.background);
   const pe = settings.promptEnhancement;
   setChecked('promptEnhancementEnabled', pe.enabled);
+  setSelectValue('promptEnhancementRunMode', pe.runMode || 'manual');
   setInputValue('promptEnhancementModel', pe.model || '');
   setSelectValue('promptEnhancementMode', pe.mode);
   setSelectValue('promptEnhancementLanguage', pe.language);
@@ -1044,6 +1069,7 @@ function setEnhancePromptLoading(on) {
   const btn = $('#enhancePromptBtn');
   if (!btn) return;
   btn.disabled = on || state.generating;
+  btn.querySelector('.enhance-icon')?.classList.toggle('hidden', on);
   btn.querySelector('.enhance-label')?.classList.toggle('hidden', on);
   btn.querySelector('.enhance-loading')?.classList.toggle('hidden', !on);
 }
@@ -1093,16 +1119,24 @@ async function generate() {
   const type = $('#typeSelect').value;
   const hasRef = state.refImagesBase64.length > 0;
 
-  let finalPrompt = buildFinalPrompt(prompt, style, type);
+  const shouldAutoEnhance = isPromptEnhancementAutoMode();
+  let finalPrompt = shouldAutoEnhance ? prompt : buildFinalPrompt(prompt, style, type);
 
   setLoading(true);
   setEnhancePromptLoading(false);
-  setGenerationStatus('prompt:prepare');
+  setGenerationStatus(shouldAutoEnhance ? 'prompt:enhance:send' : 'prompt:prepare');
   $('#errorMsg').classList.add('hidden');
 
   try {
     if (cfg.isOAuth && hasRef) {
       throw new Error('OAuth 登录生图已改走 ChatGPT 后端通道；当前先支持文字生图，参考图请暂用 API Key 账号。');
+    }
+    if (shouldAutoEnhance) {
+      finalPrompt = await requestPromptEnhancement(cfg, prompt, style, type, promptEnhancementSettingsForRequest(true));
+      $('#prompt').value = finalPrompt;
+      state.lastEnhancedSource = prompt;
+      state.lastEnhancedPrompt = finalPrompt;
+      setGenerationStatus('prompt:enhance:done');
     }
     await genBackgroundImages(cfg, finalPrompt, quality, background, size, format, hasRef);
   } catch (e) {
@@ -1534,6 +1568,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (el) el.oninput = el.onchange = renderWatermarkPreview;
   });
   $('#promptEnhancementEnabled').onchange = () => syncPromptEnhancementUi('form');
+  $('#promptEnhancementRunMode').onchange = () => syncPromptEnhancementUi('form');
   $('#clearConversationData').onclick = async () => { try { await clearStorageData('conversations'); } catch (e) { showError(e); } };
   $('#clearImageData').onclick = async () => { if (!confirm('确定清理已保存的图片？账号不会删除。')) return; try { await clearStorageData('images'); } catch (e) { showError(e); } };
   $('#clearAllData').onclick = async () => { if (!confirm('确定清理对话和图片数据？账号不会删除。')) return; try { await clearStorageData('all'); clearActiveJob(); $('#prompt').value = ''; } catch (e) { showError(e); } };

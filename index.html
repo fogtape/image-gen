@@ -101,20 +101,27 @@
               <input type="checkbox" id="promptEnhancementEnabled">
               <span class="switch"></span>
             </label>
-            <small class="section-hint">默认关闭。开启后主输入框显示润色按钮；生成图片时不会自动再次修饰。</small>
+            <small class="section-hint">默认关闭。开启后可选择手动润色或生成时自动润色；自动模式不会显示输入框润色按钮。</small>
             <div id="promptEnhancementOptions" class="prompt-enhancement-options hidden">
               <div class="settings-grid">
-                <div class="form-group wide">
-                  <label for="promptEnhancementModel">优化模型</label>
-                  <input type="text" id="promptEnhancementModel" placeholder="留空则跟随图片模型">
+                <div class="form-group">
+                  <label for="promptEnhancementRunMode">修饰词模式</label>
+                  <select id="promptEnhancementRunMode">
+                    <option value="manual">手动：显示润色按钮</option>
+                    <option value="auto">自动：生成前自动修饰</option>
+                  </select>
                 </div>
                 <div class="form-group">
-                  <label for="promptEnhancementMode">修饰模式</label>
+                  <label for="promptEnhancementMode">修饰风格</label>
                   <select id="promptEnhancementMode">
                     <option value="balanced">平衡增强</option>
                     <option value="professional">专业摄影/海报</option>
                     <option value="faithful">保留原意</option>
                   </select>
+                </div>
+                <div class="form-group wide">
+                  <label for="promptEnhancementModel">优化模型</label>
+                  <input type="text" id="promptEnhancementModel" placeholder="留空则跟随图片模型">
                 </div>
                 <div class="form-group">
                   <label for="promptEnhancementLanguage">输出语言</label>
@@ -350,7 +357,7 @@
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
                 </label>
                 <button id="enhancePromptBtn" class="tool-btn enhance-prompt-btn hidden" type="button" title="润色提示词" aria-label="润色提示词">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.7 5.2L19 10l-5.3 1.8L12 17l-1.7-5.2L5 10l5.3-1.8L12 3z"/><path d="M5 16l.7 2.2L8 19l-2.3.8L5 22l-.7-2.2L2 19l2.3-.8L5 16z"/></svg>
+                  <svg class="enhance-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3l1.7 5.2L19 10l-5.3 1.8L12 17l-1.7-5.2L5 10l5.3-1.8L12 3z"/><path d="M5 16l.7 2.2L8 19l-2.3.8L5 22l-.7-2.2L2 19l2.3-.8L5 16z"/></svg>
                   <span class="enhance-label">润色</span>
                   <span class="enhance-loading hidden"><span class="spinner"></span></span>
                 </button>

@@ -2,6 +2,7 @@ import crypto from 'crypto';
 
 export const DEFAULT_PROMPT_ENHANCEMENT_SETTINGS = Object.freeze({
   enabled: false,
+  runMode: 'manual',
   model: '',
   mode: 'balanced',
   language: 'auto',
@@ -27,6 +28,7 @@ function pickAllowed(value, allowed, fallback) {
 export function normalizePromptEnhancementSettings(input = {}) {
   return {
     enabled: input.enabled === true,
+    runMode: pickAllowed(input.runMode, ['manual', 'auto'], DEFAULT_PROMPT_ENHANCEMENT_SETTINGS.runMode),
     model: String(input.model || '').trim(),
     mode: pickAllowed(input.mode, ['balanced', 'professional', 'faithful'], DEFAULT_PROMPT_ENHANCEMENT_SETTINGS.mode),
     language: pickAllowed(input.language, ['auto', 'zh', 'en'], DEFAULT_PROMPT_ENHANCEMENT_SETTINGS.language),
