@@ -4,6 +4,13 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { handleOAuthImageRequestBody } from './openai-oauth-image.js';
+import { createJobStore } from './background-jobs.js';
+import {
+  getGenerationProgressMessage,
+  getResponseStreamProgressMessage,
+  isPolicyViolationText,
+  normalizeGenerationError,
+} from './ui-feedback.js';
 import {
   generateCodeVerifier as makeOAuthCodeVerifier,
   generateCodeChallenge as makeOAuthCodeChallenge,
@@ -527,6 +534,243 @@ async function handleOAuthImagesStream(req, res) {
   }
 }
 
+// --- Background image jobs ---
+
+function baseApiUrl(apiUrl) {
+  const text = String(apiUrl || '').trim().replace(/\/+$/, '');
+  if (!text) throw new Error('Missing API address');
+  return text;
+}
+
+function buildApiHeaders(cfg = {}, extra = {}) {
+  const apiKey = String(cfg.apiKey || '').trim();
+  if (!apiKey) throw new Error('Missing API key');
+  return { Authorization: `Bearer ${apiKey}`, ...extra };
+}
+
+function imageOptionsFromPayload(payload = {}) {
+  const out = {};
+  if (payload.quality) out.quality = payload.quality;
+  if (payload.background && payload.background !== 'auto') out.background = payload.background;
+  if (payload.size && payload.size !== 'auto') out.size = payload.size;
+  if (payload.format && payload.format !== 'png') out.output_format = payload.format;
+  return out;
+}
+
+function extractImagesFromResponsesText(rawText, format) {
+  const found = [];
+  const addResult = (result) => {
+    if (result) found.push({ b64_json: result });
+  };
+
+  try {
+    const data = JSON.parse(rawText);
+    for (const item of (data.output || [])) {
+      if (item.type === 'image_generation_call' && item.result) addResult(item.result);
+    }
+    if (found.length) return { created: Math.floor(Date.now() / 1000), data: found };
+  } catch {}
+
+  for (const line of String(rawText || '').split('\n')) {
+    if (!line.startsWith('data:')) continue;
+    const s = line.slice(5).trim();
+    if (!s || s === '[DONE]') continue;
+    try {
+      const ev = JSON.parse(s);
+      if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call' && ev.item.result) {
+        addResult(ev.item.result);
+      }
+      if (ev.error) throw new Error(normalizeGenerationError(ev.error.message || JSON.stringify(ev.error)));
+    } catch (e) {
+      if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;
+    }
+  }
+
+  if (found.length) return { created: Math.floor(Date.now() / 1000), data: found };
+  if (isPolicyViolationText(rawText)) throw new Error(normalizeGenerationError(rawText));
+  throw new Error(`未能从 ${format || '图片'} 响应中提取到图片`);
+}
+
+async function readResponseTextWithProgress(resp, onProgress) {
+  const ct = resp.headers.get('content-type') || '';
+  if (!ct.includes('text/event-stream') || !resp.body?.getReader) return await resp.text();
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let rawText = '';
+
+  const consumeBlock = (block) => {
+    if (!String(block || '').trim()) return;
+    rawText += `${block}\n\n`;
+    let event = 'message';
+    const dataLines = [];
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim() || 'message';
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+    }
+    const dataText = dataLines.join('\n').trim();
+    if (!dataText || dataText === '[DONE]') return;
+    try {
+      const data = JSON.parse(dataText);
+      const normalized = data.type ? data : { ...data, type: event };
+      const message = getResponseStreamProgressMessage(normalized);
+      if (message) onProgress(normalized.type || event, message);
+    } catch {}
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split(/\r?\n\r?\n/);
+    buffer = parts.pop() || '';
+    for (const part of parts) consumeBlock(part);
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) consumeBlock(buffer);
+  return rawText;
+}
+
+async function runImagesApiJob(payload, onProgress) {
+  const cfg = payload.cfg || {};
+  const format = payload.format || 'png';
+  const mode = payload.mode;
+  const body = mode === 'edits'
+    ? {
+        model: cfg.model,
+        prompt: payload.prompt,
+        n: 1,
+        response_format: 'b64_json',
+        image: [{ type: 'base64', data: payload.refImageBase64 }],
+        ...imageOptionsFromPayload(payload),
+      }
+    : {
+        model: cfg.model,
+        prompt: payload.prompt,
+        n: 1,
+        response_format: 'b64_json',
+        ...imageOptionsFromPayload(payload),
+      };
+
+  const endpoint = mode === 'edits' ? '/v1/images/edits' : '/v1/images/generations';
+  onProgress('request:send', getGenerationProgressMessage('request:send'));
+  const resp = await fetch(`${baseApiUrl(cfg.apiUrl)}${endpoint}`, {
+    method: 'POST',
+    headers: buildApiHeaders(cfg, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  onProgress('request:accepted', getGenerationProgressMessage('request:accepted'));
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
+  return data;
+}
+
+async function runResponsesJob(payload, onProgress) {
+  const cfg = payload.cfg || {};
+  const hasRef = !!payload.refImageBase64;
+  const format = payload.format || 'png';
+  const input = hasRef
+    ? [{ role: 'user', content: [
+        { type: 'input_image', image_url: `data:image/png;base64,${payload.refImageBase64}` },
+        { type: 'input_text', text: payload.prompt },
+      ]}]
+    : payload.prompt;
+
+  const body = {
+    model: cfg.model,
+    input,
+    stream: true,
+    tool_choice: 'required',
+    tools: [{
+      type: 'image_generation',
+      action: hasRef ? 'edit' : 'generate',
+      quality: payload.quality || 'medium',
+      size: payload.size === 'auto' ? 'auto' : payload.size,
+      background: payload.background || 'auto',
+      output_format: format,
+    }],
+  };
+
+  onProgress('request:send', getGenerationProgressMessage('request:send'));
+  const resp = await fetch(`${baseApiUrl(cfg.apiUrl)}/v1/responses`, {
+    method: 'POST',
+    headers: buildApiHeaders(cfg, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  onProgress('request:accepted', getGenerationProgressMessage('request:accepted'));
+  const rawText = await readResponseTextWithProgress(resp, onProgress);
+  if (!resp.ok) {
+    try {
+      const data = JSON.parse(rawText);
+      throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
+    } catch (e) {
+      if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;
+      throw new Error(`HTTP ${resp.status}`);
+    }
+  }
+  return extractImagesFromResponsesText(rawText, format);
+}
+
+async function runImageJob(payload, onProgress) {
+  const mode = payload.mode || 'responses';
+  if (!String(payload.prompt || '').trim()) throw new Error('Missing prompt');
+  if (mode === 'oauth') {
+    const cfg = payload.cfg || {};
+    return await handleOAuthImageRequestBody({
+      accessToken: cfg.apiKey,
+      accountId: cfg.accountId,
+      openaiDeviceId: cfg.openaiDeviceId,
+      openaiSessionId: cfg.openaiSessionId,
+      model: cfg.model,
+      prompt: payload.prompt,
+      n: 1,
+      quality: payload.quality,
+      background: payload.background,
+      size: payload.size,
+      format: payload.format,
+      onProgress: (event) => onProgress(event.phase || event.type || 'progress', event.message || '处理中', event),
+    });
+  }
+  if (mode === 'responses') {
+    try {
+      return await runResponsesJob(payload, onProgress);
+    } catch (e) {
+      if (normalizeGenerationError(e) === '非常抱歉，生成的图片可能违反了我们的内容政策。如果你认为此判断有误，请重试或修改提示语。') throw e;
+      onProgress('fallback:images', getGenerationProgressMessage('fallback:images'));
+      return await runImagesApiJob({ ...payload, mode: payload.refImageBase64 ? 'edits' : 'images' }, onProgress);
+    }
+  }
+  if (mode === 'images' || mode === 'edits') return await runImagesApiJob(payload, onProgress);
+  throw new Error(`Unsupported job mode: ${mode}`);
+}
+
+export const imageJobStore = createJobStore({ runner: runImageJob });
+
+async function handleCreateImageJob(req, res) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
+  try {
+    const job = imageJobStore.create(parsed);
+    res.writeHead(202, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ jobId: job.id, ...job }));
+  } catch (e) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: e.message || 'Failed to create job' }));
+  }
+}
+
+function handleGetImageJob(req, res, jobId) {
+  const job = imageJobStore.get(jobId);
+  if (!job) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Job not found or expired' }));
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(job));
+}
+
 // --- Main server ---
 
 export const server = http.createServer((req, res) => {
@@ -540,6 +784,11 @@ export const server = http.createServer((req, res) => {
 
   if (url.pathname === '/api/proxy' && req.method === 'POST') {
     handleProxy(req, res);
+  } else if (url.pathname === '/api/jobs' && req.method === 'POST') {
+    handleCreateImageJob(req, res);
+  } else if (url.pathname.startsWith('/api/jobs/') && req.method === 'GET') {
+    const jobId = decodeURIComponent(url.pathname.split('/api/jobs/')[1] || '');
+    handleGetImageJob(req, res, jobId);
   } else if (url.pathname === '/api/oauth/start' && req.method === 'POST') {
     handleOAuthStart(req, res);
   } else if (url.pathname.startsWith('/api/oauth/status/') && req.method === 'GET') {

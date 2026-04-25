@@ -12,6 +12,7 @@ import {
 
 const $ = (s) => document.querySelector(s);
 const ACCOUNTS_KEY = 'img-gen-accounts';
+const ACTIVE_JOB_KEY = 'img-gen-active-job';
 const OLD_KEY = 'img-gen-settings';
 const DEFAULT_MODEL = 'gpt-5.4';
 
@@ -33,6 +34,22 @@ const state = {
 
 function genId() {
   return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function saveActiveJob(job) {
+  localStorage.setItem(ACTIVE_JOB_KEY, JSON.stringify(job));
+}
+
+function loadActiveJob() {
+  try { return JSON.parse(localStorage.getItem(ACTIVE_JOB_KEY)); } catch { return null; }
+}
+
+function clearActiveJob() {
+  localStorage.removeItem(ACTIVE_JOB_KEY);
 }
 
 function loadData() {
@@ -750,19 +767,112 @@ async function generate() {
   $('#errorMsg').classList.add('hidden');
 
   try {
-    if (cfg.isOAuth) {
-      if (hasRef) {
-        throw new Error('OAuth 登录生图已改走 ChatGPT 后端通道；当前先支持文字生图，参考图请暂用 API Key 账号。');
-      }
-      await genOAuthImages(cfg, finalPrompt, quality, background, size, format);
-    } else if (cfg.streamMode) {
-      await genResponsesWithFallback(cfg, finalPrompt, quality, background, size, format, hasRef);
-    } else if (hasRef) {
-      await genEdits(cfg, finalPrompt, quality, background, size, format);
-    } else {
-      await genImages(cfg, finalPrompt, quality, background, size, format);
+    if (cfg.isOAuth && hasRef) {
+      throw new Error('OAuth 登录生图已改走 ChatGPT 后端通道；当前先支持文字生图，参考图请暂用 API Key 账号。');
     }
+    await genBackgroundImages(cfg, finalPrompt, quality, background, size, format, hasRef);
   } catch (e) {
+    showError(e);
+  } finally {
+    setLoading(false);
+  }
+}
+
+// --- Background Jobs ---
+
+function backgroundModeFor(cfg, hasRef) {
+  if (cfg.isOAuth) return 'oauth';
+  if (cfg.streamMode) return 'responses';
+  return hasRef ? 'edits' : 'images';
+}
+
+function publicJobCfg(cfg) {
+  return {
+    apiUrl: cfg.apiUrl,
+    apiKey: cfg.apiKey,
+    model: cfg.model,
+    isOAuth: cfg.isOAuth,
+    accountId: cfg.accountId,
+    openaiDeviceId: cfg.openaiDeviceId,
+    openaiSessionId: cfg.openaiSessionId,
+  };
+}
+
+async function createBackgroundJob(payload) {
+  const resp = await fetch('/api/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(normalizeGenerationError(data.error || data.message || `HTTP ${resp.status}`));
+  return data;
+}
+
+async function fetchBackgroundJob(jobId) {
+  const resp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(normalizeGenerationError(data.error || data.message || `HTTP ${resp.status}`));
+  return data;
+}
+
+function applyJobProgress(job) {
+  const last = Array.isArray(job.progress) ? job.progress.at(-1) : null;
+  if (last?.message) setGenerationStatus(last.phase || last.message, last.message);
+}
+
+async function pollBackgroundJob(jobId, format, isOAuth) {
+  startWaitingStatusSequence();
+  while (true) {
+    const job = await fetchBackgroundJob(jobId);
+    applyJobProgress(job);
+    if (job.status === 'completed') {
+      clearActiveJob();
+      stopWaitingStatusSequence();
+      setGenerationStatus('result:render');
+      if (isOAuth) handleOAuthImageResult(job.result, format);
+      else handleImagesResult(job.result, format);
+      return;
+    }
+    if (job.status === 'failed') {
+      clearActiveJob();
+      stopWaitingStatusSequence();
+      throw new Error(normalizeGenerationError(job.error || '后台生成失败'));
+    }
+    await sleep(2000);
+  }
+}
+
+async function genBackgroundImages(cfg, prompt, quality, background, size, format, hasRef) {
+  const mode = backgroundModeFor(cfg, hasRef);
+  const payload = {
+    mode,
+    cfg: publicJobCfg(cfg),
+    prompt,
+    quality,
+    background,
+    size,
+    format,
+    refImageBase64: hasRef ? state.refImageBase64 : undefined,
+  };
+
+  setGenerationStatus('request:send');
+  const job = await createBackgroundJob(payload);
+  saveActiveJob({ jobId: job.jobId || job.id, format, isOAuth: cfg.isOAuth, createdAt: Date.now() });
+  setGenerationStatus('后台任务已提交，可以切到后台稍后回来查看');
+  await pollBackgroundJob(job.jobId || job.id, format, cfg.isOAuth);
+}
+
+async function resumeActiveJobIfAny() {
+  const active = loadActiveJob();
+  if (!active?.jobId || state.generating) return;
+  setLoading(true);
+  $('#errorMsg').classList.add('hidden');
+  setGenerationStatus('正在恢复后台生成任务');
+  try {
+    await pollBackgroundJob(active.jobId, active.format || 'png', !!active.isOAuth);
+  } catch (e) {
+    clearActiveJob();
     showError(e);
   } finally {
     setLoading(false);
@@ -1109,4 +1219,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Ctrl+Enter
   $('#prompt').addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') generate(); });
+
+  resumeActiveJobIfAny();
 });
