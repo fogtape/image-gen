@@ -357,7 +357,7 @@ function migrateOldSettings() {
         apiUrl: old.apiUrl || '',
         apiKey: old.apiKey || '',
         model: old.model || DEFAULT_MODEL,
-        streamMode: old.streamMode !== false,
+        streamMode: old.streamMode === true,
         createdAt: Date.now(),
       };
       state.data.accounts.push(acc);
@@ -406,7 +406,7 @@ function getEffective() {
     apiUrl: acc ? acc.apiUrl : '',
     apiKey: acc ? acc.apiKey : '',
     model: acc ? acc.model : DEFAULT_MODEL,
-    streamMode: acc ? acc.streamMode !== false : true,
+    streamMode: acc ? acc.streamMode === true : false,
     useProxy: state.data.useProxy,
     isOAuth: acc ? acc.type === 'oauth' : false,
     accountId: acc ? (acc.accountId || '') : '',
@@ -660,6 +660,30 @@ function addResultCardFromUrl(imageUrl, format) {
 
 // --- UI Rendering ---
 
+function syncAccountModeUi() {
+  const cfg = getEffective();
+  const acc = getActiveAccount();
+  const info = $('#routeModeInfo');
+  if (!info) return;
+  if (!acc) {
+    info.textContent = '当前模式：请选择账号';
+    info.className = 'route-mode-info muted';
+    return;
+  }
+  if (cfg.isOAuth) {
+    info.textContent = '当前模式：OAuth · ChatGPT 后端图片流程（chat-requirements → conversation/prepare → conversation → 下载图片），不受流式开关影响。';
+    info.className = 'route-mode-info oauth';
+    return;
+  }
+  if (cfg.streamMode) {
+    info.textContent = '当前模式：API Key · 流式 Responses API（/v1/responses + image_generation）。';
+    info.className = 'route-mode-info responses';
+    return;
+  }
+  info.textContent = '当前模式：API Key · 非流式 Images API（/v1/images/generations；有参考图时走 /v1/images/edits）。';
+  info.className = 'route-mode-info images';
+}
+
 function renderSwitcher() {
   const acc = getActiveAccount();
   const dot = $('#switcherDot');
@@ -667,6 +691,7 @@ function renderSwitcher() {
   if (!acc) {
     name.textContent = '未配置';
     dot.className = 'switcher-dot inactive';
+    syncAccountModeUi();
     return;
   }
   name.textContent = acc.name || acc.email || acc.apiUrl || '未命名';
@@ -675,6 +700,7 @@ function renderSwitcher() {
   } else {
     dot.className = 'switcher-dot';
   }
+  syncAccountModeUi();
 }
 
 function renderDropdown() {
@@ -782,7 +808,10 @@ function openEditModal(acc) {
   $('#editUrl').value = acc ? (acc.apiUrl || '') : '';
   $('#editKey').value = acc ? (acc.apiKey || '') : '';
   $('#editModel').value = acc ? (acc.model || DEFAULT_MODEL) : DEFAULT_MODEL;
-  $('#editStream').checked = acc ? acc.streamMode !== false : true;
+  const isOAuth = acc?.type === 'oauth';
+  $('#editStream').checked = acc ? acc.streamMode === true : false;
+  $('#editStreamSection')?.classList.toggle('hidden', isOAuth);
+  $('#editOAuthFlowInfo')?.classList.toggle('hidden', !isOAuth);
   $('#editOverlay').classList.remove('hidden');
 }
 
@@ -820,7 +849,7 @@ function addOAuthAccountFromResult(r) {
     apiUrl: 'https://api.openai.com',
     apiKey: r.accessToken,
     model: DEFAULT_MODEL,
-    streamMode: true,
+    streamMode: false,
     email: r.email || '',
     accountId: r.accountId || '',
     planType: r.planType || '',

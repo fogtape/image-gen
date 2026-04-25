@@ -334,12 +334,18 @@
             <label for="editModel">模型</label>
             <input type="text" id="editModel" value="gpt-5.4">
           </div>
-          <label class="switch-label">
-            <span>流式模式（Responses API）</span>
-            <input type="checkbox" id="editStream" checked>
-            <span class="switch"></span>
-          </label>
-          <small class="section-hint">默认使用 /v1/responses + image_generation；失败时自动回退到 /images/generations 或 /images/edits</small>
+          <div id="editStreamSection" class="stream-mode-section">
+            <label class="switch-label">
+              <span>流式模式（Responses API）</span>
+              <input type="checkbox" id="editStream">
+              <span class="switch"></span>
+            </label>
+            <small class="section-hint">默认关闭。开启后 API Key 账号走 /v1/responses + image_generation；关闭时走 /images/generations 或 /images/edits。</small>
+          </div>
+          <div id="editOAuthFlowInfo" class="oauth-flow-info hidden">
+            <strong>OAuth 账号固定走 ChatGPT 后端图片流程</strong>
+            <span>实际链路：chat-requirements → conversation/prepare → conversation → 下载图片。它不使用 /v1/responses 或 /v1/images 的流式开关。</span>
+          </div>
           <div class="modal-footer">
             <button id="cancelEdit" class="btn btn-ghost">取消</button>
             <button id="saveEdit" class="btn btn-primary">保存</button>
@@ -427,6 +433,9 @@
               <option value="jpeg">JPEG</option>
             </select>
           </div>
+        </div>
+        <div id="routeModeInfo" class="route-mode-info" aria-live="polite">
+          当前模式：请选择账号
         </div>
 
         <!-- Advanced Options -->
