@@ -656,6 +656,64 @@ textarea { resize: vertical; }
 
 .error-bar.hidden { display: none; }
 
+.error-dialog {
+  max-width: 430px;
+  overflow: hidden;
+}
+
+.error-dialog-header {
+  padding-bottom: 0;
+}
+
+.error-dialog-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.error-dialog-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #fff1f0;
+  color: var(--danger);
+  border: 1px solid #ffd6d2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.error-dialog-body {
+  padding-top: 14px;
+}
+
+.error-dialog-summary {
+  color: var(--text-2);
+  font-size: 0.86rem;
+  margin-bottom: 12px;
+}
+
+.error-dialog-message {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 34vh;
+  overflow-y: auto;
+}
+
+.error-dialog-actions {
+  padding: 14px 0 0;
+  justify-content: flex-end;
+}
+
 /* Lightbox */
 .lightbox {
   position: fixed;

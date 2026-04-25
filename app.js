@@ -547,10 +547,25 @@ async function ensureValidToken(cfg) {
 
 // --- UI Helpers ---
 
+function hideGenerationErrorDialog() {
+  $('#generationErrorOverlay')?.classList.add('hidden');
+}
+
+function showGenerationErrorDialog(msg) {
+  const overlay = $('#generationErrorOverlay');
+  const messageEl = $('#generationErrorMessage');
+  if (!overlay || !messageEl) return;
+  messageEl.textContent = String(msg || '生成失败');
+  overlay.classList.remove('hidden');
+  setTimeout(() => $('#generationErrorConfirm')?.focus(), 0);
+}
+
 function showError(msg) {
+  const normalized = normalizeGenerationError(msg);
   const el = $('#errorMsg');
-  el.textContent = normalizeGenerationError(msg);
+  el.textContent = normalized;
   el.classList.remove('hidden');
+  showGenerationErrorDialog(normalized);
   setTimeout(() => el.classList.add('hidden'), 10000);
 }
 
@@ -1126,6 +1141,7 @@ async function generate() {
   setEnhancePromptLoading(false);
   setGenerationStatus(shouldAutoEnhance ? 'prompt:enhance:send' : 'prompt:prepare');
   $('#errorMsg').classList.add('hidden');
+  hideGenerationErrorDialog();
 
   try {
     if (cfg.isOAuth && hasRef) {
@@ -1600,6 +1616,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Generate
   $('#generateBtn').onclick = generate;
   $('#enhancePromptBtn').onclick = enhancePromptManually;
+  $('#generationErrorClose')?.addEventListener('click', hideGenerationErrorDialog);
+  $('#generationErrorConfirm')?.addEventListener('click', hideGenerationErrorDialog);
+  $('#generationErrorOverlay')?.addEventListener('click', (e) => { if (e.target === $('#generationErrorOverlay')) hideGenerationErrorDialog(); });
 
   // Segmented controls
   document.querySelectorAll('.seg').forEach((g) => {

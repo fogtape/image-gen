@@ -466,6 +466,26 @@
       <div id="errorMsg" class="error-bar hidden"></div>
     </main>
 
+    <!-- Generation Error Dialog -->
+    <div id="generationErrorOverlay" class="overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="generationErrorTitle" aria-describedby="generationErrorMessage">
+      <div class="modal error-dialog">
+        <div class="modal-header error-dialog-header">
+          <div class="error-dialog-title-wrap">
+            <span class="error-dialog-icon" aria-hidden="true">!</span>
+            <h2 id="generationErrorTitle">生成失败</h2>
+          </div>
+          <button id="generationErrorClose" class="close-btn" type="button" aria-label="关闭错误提示">&times;</button>
+        </div>
+        <div class="modal-body error-dialog-body">
+          <p class="error-dialog-summary">图片没有生成成功，请查看下面的错误信息。</p>
+          <div id="generationErrorMessage" class="error-dialog-message"></div>
+          <div class="modal-footer error-dialog-actions">
+            <button id="generationErrorConfirm" class="btn btn-primary" type="button">知道了</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Lightbox -->
     <div id="lightbox" class="lightbox hidden">
       <img id="lightboxImg" alt="预览">
