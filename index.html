@@ -48,7 +48,10 @@
         </div>
         <div class="modal-body settings-body">
           <section class="settings-section">
-            <h3>生成设置</h3>
+            <h3>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+              <span>生成设置</span>
+            </h3>
             <div class="settings-grid">
               <div class="form-group">
                 <label for="settingsDefaultSize">默认尺寸</label>
@@ -89,7 +92,10 @@
           </section>
 
           <section class="settings-section">
-            <h3>水印设置</h3>
+            <h3>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <span>水印设置</span>
+            </h3>
             <label class="switch-label compact">
               <span>开启水印</span>
               <input type="checkbox" id="watermarkEnabled">
@@ -160,13 +166,16 @@
           </section>
 
           <section class="settings-section">
-            <h3>存储管理</h3>
+            <h3>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+              <span>存储管理</span>
+            </h3>
             <label class="switch-label compact">
               <span>保存生成图片</span>
               <input type="checkbox" id="storageEnabled" checked>
               <span class="switch"></span>
             </label>
-            <small class="section-hint">图片保存到后端数据目录，刷新页面后仍可在历史记录中看到；不会删除账号。</small>
+            <small class="section-hint">图片保存到后端数据目录，刷新页面后仍可在历史记录中看到</small>
             <div id="storageStats" class="storage-stats">正在读取存储状态...</div>
             <div class="danger-zone">
               <button id="clearConversationData" class="btn btn-outline" type="button">清理对话数据</button>
