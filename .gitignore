@@ -5,3 +5,5 @@ dist
 
 .oauth-sessions.json
 data
+
+config/.env

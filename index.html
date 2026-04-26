@@ -91,6 +91,36 @@
             </div>
           </section>
 
+
+
+          <section class="settings-section">
+            <h3>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18"/><path d="M3 6h18"/><path d="M3 18h18"/></svg>
+              <span>服务端默认配置</span>
+            </h3>
+            <small class="section-hint">这里保存到服务端 `config/.env`。账号列表与 OAuth token 仍保存在当前浏览器。</small>
+            <div class="settings-grid">
+              <div class="form-group wide">
+                <label for="serverDefaultApiUrl">默认 API 地址</label>
+                <input type="text" id="serverDefaultApiUrl" placeholder="https://api.openai.com">
+              </div>
+              <div class="form-group">
+                <label for="serverDefaultImageModel">默认图片模型</label>
+                <input type="text" id="serverDefaultImageModel" placeholder="gpt-image-2">
+              </div>
+              <div class="form-group">
+                <label for="serverDefaultResponsesModel">默认流式主模型</label>
+                <input type="text" id="serverDefaultResponsesModel" placeholder="gpt-5.4">
+              </div>
+            </div>
+            <div class="settings-inline">
+              <label><input type="checkbox" id="serverDefaultStreamMode"> 默认开启流式 Responses</label>
+              <label><input type="checkbox" id="serverDefaultResponsesAutoFallback"> 流式失败自动回退非流式</label>
+              <label><input type="checkbox" id="serverDefaultImageEditsCompatMode"> 默认图生图兼容旧版 multipart</label>
+              <label><input type="checkbox" id="serverDefaultForceProxy"> 默认强制走代理</label>
+            </div>
+          </section>
+
           <section class="settings-section">
             <h3>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.8 5.4L19 10.2l-5.2 1.8L12 17l-1.8-5L5 10.2l5.2-1.8L12 3z"/><path d="M5 16l.9 2.6L8.5 19.5l-2.6.9L5 23l-.9-2.6-2.6-.9 2.6-.9L5 16z"/></svg>
@@ -228,6 +258,52 @@
             </div>
           </section>
 
+
+          <section class="settings-section">
+            <h3>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M9 9h6v6H9z"/></svg>
+              <span>部署平台配置</span>
+            </h3>
+            <small class="section-hint">支持本地 Node / Docker 的 `config/.env` 持久化，也支持把白名单配置同步到云平台环境变量并触发重新部署。</small>
+            <div class="settings-grid">
+              <div class="form-group">
+                <label for="deployPlatform">平台</label>
+                <select id="deployPlatform">
+                  <option value="node">node / docker</option>
+                  <option value="vercel">vercel</option>
+                  <option value="netlify">netlify</option>
+                  <option value="cloudflare">cloudflare</option>
+                  <option value="edgeone">edgeone</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="deployAccountId">Account ID</label>
+                <input type="text" id="deployAccountId" placeholder="可选 / 按平台填写">
+              </div>
+              <div class="form-group">
+                <label for="deployProjectId">Project ID</label>
+                <input type="text" id="deployProjectId" placeholder="项目 ID / Site ID / Script 名称">
+              </div>
+              <div class="form-group wide">
+                <label for="deployApiToken">平台 API Token</label>
+                <input type="password" id="deployApiToken" placeholder="仅保存到服务端 config/.env，不会显示到仓库">
+              </div>
+              <div class="form-group wide">
+                <label for="configAdminToken">配置管理口令</label>
+                <input type="password" id="configAdminToken" placeholder="仅保存在当前浏览器，用于调用服务端配置写接口">
+              </div>
+            </div>
+            <div class="settings-inline">
+              <label><input type="checkbox" id="deployAutoSync"> 保存时自动同步云平台环境变量</label>
+              <label><input type="checkbox" id="deployAutoRedeploy"> 保存时自动触发重新部署</label>
+            </div>
+            <div class="danger-zone">
+              <button id="configPlatformCheck" class="btn btn-outline" type="button">校验平台配置</button>
+              <button id="configPlatformSync" class="btn btn-outline" type="button">同步环境变量</button>
+              <button id="configPlatformDeploy" class="btn btn-outline danger" type="button">触发重新部署</button>
+            </div>
+          </section>
+
           <div class="modal-footer">
             <button id="cancelSettings" class="btn btn-ghost">取消</button>
             <button id="saveSettings" class="btn btn-primary">保存</button>
@@ -289,7 +365,53 @@
               <span class="switch"></span>
             </label>
             <small class="section-hint">CORS 失败时会自动回退代理，通常无需手动开启</small>
-            <div class="modal-footer">
+  
+          <section class="settings-section">
+            <h3>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M9 9h6v6H9z"/></svg>
+              <span>部署平台配置</span>
+            </h3>
+            <small class="section-hint">支持本地 Node / Docker 的 `config/.env` 持久化，也支持把白名单配置同步到云平台环境变量并触发重新部署。</small>
+            <div class="settings-grid">
+              <div class="form-group">
+                <label for="deployPlatform">平台</label>
+                <select id="deployPlatform">
+                  <option value="node">node / docker</option>
+                  <option value="vercel">vercel</option>
+                  <option value="netlify">netlify</option>
+                  <option value="cloudflare">cloudflare</option>
+                  <option value="edgeone">edgeone</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="deployAccountId">Account ID</label>
+                <input type="text" id="deployAccountId" placeholder="可选 / 按平台填写">
+              </div>
+              <div class="form-group">
+                <label for="deployProjectId">Project ID</label>
+                <input type="text" id="deployProjectId" placeholder="项目 ID / Site ID / Script 名称">
+              </div>
+              <div class="form-group wide">
+                <label for="deployApiToken">平台 API Token</label>
+                <input type="password" id="deployApiToken" placeholder="仅保存到服务端 config/.env，不会显示到仓库">
+              </div>
+              <div class="form-group wide">
+                <label for="configAdminToken">配置管理口令</label>
+                <input type="password" id="configAdminToken" placeholder="仅保存在当前浏览器，用于调用服务端配置写接口">
+              </div>
+            </div>
+            <div class="settings-inline">
+              <label><input type="checkbox" id="deployAutoSync"> 保存时自动同步云平台环境变量</label>
+              <label><input type="checkbox" id="deployAutoRedeploy"> 保存时自动触发重新部署</label>
+            </div>
+            <div class="danger-zone">
+              <button id="configPlatformCheck" class="btn btn-outline" type="button">校验平台配置</button>
+              <button id="configPlatformSync" class="btn btn-outline" type="button">同步环境变量</button>
+              <button id="configPlatformDeploy" class="btn btn-outline danger" type="button">触发重新部署</button>
+            </div>
+          </section>
+
+          <div class="modal-footer">
               <button id="testConnection" class="btn btn-outline">测试连接</button>
             </div>
             <div id="testResult" class="toast hidden"></div>
@@ -343,10 +465,72 @@
             </label>
             <small class="section-hint">默认关闭。开启后 API Key 账号走 /v1/responses + image_generation；关闭时走 /images/generations 或 /images/edits。</small>
           </div>
+          <div id="editFallbackSection" class="stream-mode-section">
+            <label class="switch-label">
+              <span>流式失败自动回退到非流式</span>
+              <input type="checkbox" id="editResponsesAutoFallback">
+              <span class="switch"></span>
+            </label>
+            <small class="section-hint">默认开启。开启后 /v1/responses 报错会自动改走非流式图片接口；关闭则直接返回原始流式错误。</small>
+          </div>
+          <div id="editCompatSection" class="stream-mode-section">
+            <label class="switch-label">
+              <span>图生图兼容模式（旧版 multipart）</span>
+              <input type="checkbox" id="editImageEditsCompat">
+              <span class="switch"></span>
+            </label>
+            <small class="section-hint">默认关闭。仅在部分中转站 /v1/images/edits 不兼容官方 JSON `images[].image_url` 时开启。</small>
+          </div>
           <div id="editOAuthFlowInfo" class="oauth-flow-info hidden">
             <strong>OAuth 账号固定走 ChatGPT 后端图片流程</strong>
             <span>实际链路：chat-requirements → conversation/prepare → conversation → 下载图片。它不使用 /v1/responses 或 /v1/images 的流式开关。</span>
           </div>
+
+          <section class="settings-section">
+            <h3>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M9 9h6v6H9z"/></svg>
+              <span>部署平台配置</span>
+            </h3>
+            <small class="section-hint">支持本地 Node / Docker 的 `config/.env` 持久化，也支持把白名单配置同步到云平台环境变量并触发重新部署。</small>
+            <div class="settings-grid">
+              <div class="form-group">
+                <label for="deployPlatform">平台</label>
+                <select id="deployPlatform">
+                  <option value="node">node / docker</option>
+                  <option value="vercel">vercel</option>
+                  <option value="netlify">netlify</option>
+                  <option value="cloudflare">cloudflare</option>
+                  <option value="edgeone">edgeone</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="deployAccountId">Account ID</label>
+                <input type="text" id="deployAccountId" placeholder="可选 / 按平台填写">
+              </div>
+              <div class="form-group">
+                <label for="deployProjectId">Project ID</label>
+                <input type="text" id="deployProjectId" placeholder="项目 ID / Site ID / Script 名称">
+              </div>
+              <div class="form-group wide">
+                <label for="deployApiToken">平台 API Token</label>
+                <input type="password" id="deployApiToken" placeholder="仅保存到服务端 config/.env，不会显示到仓库">
+              </div>
+              <div class="form-group wide">
+                <label for="configAdminToken">配置管理口令</label>
+                <input type="password" id="configAdminToken" placeholder="仅保存在当前浏览器，用于调用服务端配置写接口">
+              </div>
+            </div>
+            <div class="settings-inline">
+              <label><input type="checkbox" id="deployAutoSync"> 保存时自动同步云平台环境变量</label>
+              <label><input type="checkbox" id="deployAutoRedeploy"> 保存时自动触发重新部署</label>
+            </div>
+            <div class="danger-zone">
+              <button id="configPlatformCheck" class="btn btn-outline" type="button">校验平台配置</button>
+              <button id="configPlatformSync" class="btn btn-outline" type="button">同步环境变量</button>
+              <button id="configPlatformDeploy" class="btn btn-outline danger" type="button">触发重新部署</button>
+            </div>
+          </section>
+
           <div class="modal-footer">
             <button id="cancelEdit" class="btn btn-ghost">取消</button>
             <button id="saveEdit" class="btn btn-primary">保存</button>

@@ -14,10 +14,16 @@ const $ = (s) => document.querySelector(s);
 const ACCOUNTS_KEY = 'img-gen-accounts';
 const ACTIVE_JOB_KEY = 'img-gen-active-job';
 const APP_SETTINGS_KEY = 'img-gen-app-settings';
+const CONFIG_ADMIN_TOKEN_KEY = 'img-gen-config-admin-token';
 const OLD_KEY = 'img-gen-settings';
 const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
 const DEFAULT_RESPONSES_MODEL = 'gpt-5.4';
 const MAX_REF_IMAGES = 3;
+const BACKGROUND_JOB_CREATE_TIMEOUT_MS = 20_000;
+const BACKGROUND_JOB_POLL_TIMEOUT_MS = 15_000;
+const BACKGROUND_JOB_POLL_INTERVAL_MS = 2_000;
+const BACKGROUND_JOB_POLL_RETRY_LIMIT = 4;
+const BACKGROUND_JOB_POLL_RETRY_BASE_MS = 1_200;
 const DEFAULT_APP_SETTINGS = {
   generation: { size: 'auto', quality: 'medium', format: 'png', background: 'auto' },
   watermark: {
@@ -45,6 +51,8 @@ const DEFAULT_APP_SETTINGS = {
 
 const state = {
   data: { activeId: null, accounts: [], useProxy: false },
+  serverConfig: null,
+  configSchema: null,
   appSettings: typeof structuredClone === 'function' ? structuredClone(DEFAULT_APP_SETTINGS) : JSON.parse(JSON.stringify(DEFAULT_APP_SETTINGS)),
   refImagesBase64: [],
   refImagePreviewUrls: [],
@@ -57,6 +65,9 @@ const state = {
   generationHintStep: 0,
   waitingStatusTimer: null,
   lastProgressKey: '',
+  lastStatusText: IDLE_GENERATION_HINT,
+  lastStatusPhase: '',
+  currentGenerationMeta: null,
   enhancingPrompt: false,
   lastEnhancedPrompt: '',
   lastEnhancedSource: '',
@@ -70,6 +81,33 @@ function genId() {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function makeTimeoutError(message, extra = {}) {
+  return Object.assign(new Error(message), extra);
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      throw makeTimeoutError(`请求超时（>${Math.ceil(timeoutMs / 1000)} 秒）`, {
+        code: 'TIMEOUT',
+        isTimeout: true,
+      });
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function backgroundJobBackoffMs(attempt = 1) {
+  const normalized = Math.max(1, Number(attempt) || 1);
+  return Math.min(8_000, BACKGROUND_JOB_POLL_RETRY_BASE_MS * (2 ** (normalized - 1)));
 }
 
 function saveActiveJob(job) {
@@ -96,6 +134,73 @@ function saveData() {
   localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(state.data));
 }
 
+
+
+function loadConfigAdminToken() {
+  return localStorage.getItem(CONFIG_ADMIN_TOKEN_KEY) || '';
+}
+
+function saveConfigAdminToken(value) {
+  const text = String(value || '').trim();
+  if (text) localStorage.setItem(CONFIG_ADMIN_TOKEN_KEY, text);
+  else localStorage.removeItem(CONFIG_ADMIN_TOKEN_KEY);
+}
+
+function getConfigRequestHeaders(extra = {}) {
+  const headers = { 'Content-Type': 'application/json', ...extra };
+  const token = loadConfigAdminToken();
+  if (token) headers['X-Image-Gen-Admin-Token'] = token;
+  return headers;
+}
+
+async function fetchServerRuntimeConfig() {
+  const resp = await fetch('/api/config/runtime', { headers: getConfigRequestHeaders() });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  state.serverConfig = data.runtime || null;
+  state.configSchema = data.schema || null;
+  return data;
+}
+
+function getProviderDefaults() {
+  return state.serverConfig?.providerDefaults || {
+    apiUrl: 'https://api.openai.com',
+    imageModel: DEFAULT_IMAGE_MODEL,
+    responsesModel: DEFAULT_RESPONSES_MODEL,
+    streamMode: false,
+    responsesAutoFallback: true,
+    imageEditsCompatMode: false,
+    forceProxy: false,
+  };
+}
+
+async function saveServerRuntimeConfig(config) {
+  const adminToken = ($('#configAdminToken')?.value || '').trim();
+  saveConfigAdminToken(adminToken);
+  const resp = await fetch('/api/config/save', {
+    method: 'POST',
+    headers: getConfigRequestHeaders(),
+    body: JSON.stringify({ config }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  state.serverConfig = data.runtime || state.serverConfig;
+  return data;
+}
+
+async function runPlatformAction(action, config) {
+  const adminToken = ($('#configAdminToken')?.value || '').trim();
+  saveConfigAdminToken(adminToken);
+  const resp = await fetch(`/api/config/platform/${action}`, {
+    method: 'POST',
+    headers: getConfigRequestHeaders(),
+    body: JSON.stringify({ config, platform: config?.deploy?.platform }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  return data.result || data;
+}
+
 function cloneDefaultSettings() {
   return typeof structuredClone === 'function' ? structuredClone(DEFAULT_APP_SETTINGS) : JSON.parse(JSON.stringify(DEFAULT_APP_SETTINGS));
 }
@@ -113,7 +218,13 @@ function mergeAppSettings(input = {}) {
 function loadAppSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(APP_SETTINGS_KEY) || '{}');
-    state.appSettings = mergeAppSettings(saved);
+    const defaults = state.serverConfig ? {
+      generation: state.serverConfig.generation || {},
+      watermark: state.serverConfig.watermark || {},
+      storage: state.serverConfig.storage || {},
+      promptEnhancement: state.serverConfig.promptEnhancement || {},
+    } : {};
+    state.appSettings = mergeAppSettings({ ...defaults, ...saved });
   } catch {
     state.appSettings = cloneDefaultSettings();
   }
@@ -252,7 +363,64 @@ function readWatermarkForm() {
   };
 }
 
+
+function fillServerConfigForm() {
+  const cfg = state.serverConfig;
+  if (!cfg) return;
+  setInputValue('serverDefaultApiUrl', cfg.providerDefaults?.apiUrl || '');
+  setInputValue('serverDefaultImageModel', cfg.providerDefaults?.imageModel || DEFAULT_IMAGE_MODEL);
+  setInputValue('serverDefaultResponsesModel', cfg.providerDefaults?.responsesModel || DEFAULT_RESPONSES_MODEL);
+  setChecked('serverDefaultStreamMode', cfg.providerDefaults?.streamMode === true);
+  setChecked('serverDefaultResponsesAutoFallback', cfg.providerDefaults?.responsesAutoFallback !== false);
+  setChecked('serverDefaultImageEditsCompatMode', cfg.providerDefaults?.imageEditsCompatMode === true);
+  setChecked('serverDefaultForceProxy', cfg.providerDefaults?.forceProxy === true);
+  setSelectValue('deployPlatform', cfg.deploy?.platform || 'node');
+  setInputValue('deployAccountId', cfg.deploy?.accountId || '');
+  setInputValue('deployProjectId', cfg.deploy?.projectId || '');
+  setInputValue('deployApiToken', cfg.deploy?.apiToken || '');
+  setChecked('deployAutoSync', cfg.deploy?.autoSync === true);
+  setChecked('deployAutoRedeploy', cfg.deploy?.autoRedeploy === true);
+  setInputValue('configAdminToken', loadConfigAdminToken());
+}
+
+function readServerConfigForm() {
+  const current = state.serverConfig || {};
+  return {
+    ...current,
+    providerDefaults: {
+      ...(current.providerDefaults || {}),
+      apiUrl: ($('#serverDefaultApiUrl')?.value || '').trim(),
+      imageModel: ($('#serverDefaultImageModel')?.value || '').trim() || DEFAULT_IMAGE_MODEL,
+      responsesModel: ($('#serverDefaultResponsesModel')?.value || '').trim() || DEFAULT_RESPONSES_MODEL,
+      streamMode: !!$('#serverDefaultStreamMode')?.checked,
+      responsesAutoFallback: !!$('#serverDefaultResponsesAutoFallback')?.checked,
+      imageEditsCompatMode: !!$('#serverDefaultImageEditsCompatMode')?.checked,
+      forceProxy: !!$('#serverDefaultForceProxy')?.checked,
+    },
+    generation: {
+      ...(current.generation || {}),
+      size: $('#settingsDefaultSize')?.value || 'auto',
+      quality: $('#settingsDefaultQuality')?.value || 'medium',
+      format: $('#settingsDefaultFormat')?.value || 'png',
+      background: $('#settingsDefaultBackground')?.value || 'auto',
+    },
+    promptEnhancement: readPromptEnhancementForm(),
+    watermark: readWatermarkForm(),
+    storage: { enabled: !!$('#storageEnabled')?.checked },
+    deploy: {
+      ...(current.deploy || {}),
+      platform: $('#deployPlatform')?.value || 'node',
+      accountId: ($('#deployAccountId')?.value || '').trim(),
+      projectId: ($('#deployProjectId')?.value || '').trim(),
+      apiToken: ($('#deployApiToken')?.value || '').trim(),
+      autoSync: !!$('#deployAutoSync')?.checked,
+      autoRedeploy: !!$('#deployAutoRedeploy')?.checked,
+    },
+  };
+}
+
 function fillSettingsForm() {
+  fillServerConfigForm();
   const settings = mergeAppSettings(state.appSettings);
   setSelectValue('settingsDefaultSize', settings.generation.size);
   setSelectValue('settingsDefaultQuality', settings.generation.quality);
@@ -295,12 +463,21 @@ function readSettingsForm() {
   });
 }
 
-function saveSettingsFromForm() {
+async function saveSettingsFromForm() {
   state.appSettings = readSettingsForm();
   saveAppSettings();
-  applyGenerationDefaultsToControls();
-  syncPromptEnhancementUi();
-  $('#settingsOverlay').classList.add('hidden');
+  try {
+    const saved = await saveServerRuntimeConfig(readServerConfigForm());
+    if (saved?.runtime) {
+      state.serverConfig = saved.runtime;
+      loadAppSettings();
+    }
+    applyGenerationDefaultsToControls();
+    syncPromptEnhancementUi();
+    $('#settingsOverlay').classList.add('hidden');
+  } catch (e) {
+    showError(e?.message || e);
+  }
 }
 
 function getEffectiveWatermarkSettings() {
@@ -360,6 +537,8 @@ function migrateOldSettings() {
         model: old.model || DEFAULT_IMAGE_MODEL,
         responsesModel: old.responsesModel || old.promptModel || DEFAULT_RESPONSES_MODEL,
         streamMode: old.streamMode === true,
+        imageEditsCompatMode: old.imageEditsCompatMode === true,
+        responsesAutoFallback: old.responsesAutoFallback !== false,
         createdAt: Date.now(),
       };
       state.data.accounts.push(acc);
@@ -404,13 +583,19 @@ function deleteAccount(id) {
 
 function getEffective() {
   const acc = getActiveAccount();
+  const providerDefaults = getProviderDefaults();
   return {
-    apiUrl: acc ? acc.apiUrl : '',
+    apiUrl: acc ? acc.apiUrl : (providerDefaults.apiUrl || ''),
     apiKey: acc ? acc.apiKey : '',
-    model: acc ? acc.model : DEFAULT_IMAGE_MODEL,
-    responsesModel: acc ? (acc.responsesModel || DEFAULT_RESPONSES_MODEL) : DEFAULT_RESPONSES_MODEL,
-    streamMode: acc ? acc.streamMode === true : false,
-    useProxy: state.data.useProxy,
+    model: acc ? acc.model : (providerDefaults.imageModel || DEFAULT_IMAGE_MODEL),
+    responsesModel: acc ? (acc.responsesModel || providerDefaults.responsesModel || DEFAULT_RESPONSES_MODEL) : (providerDefaults.responsesModel || DEFAULT_RESPONSES_MODEL),
+    streamMode: acc ? acc.streamMode === true : providerDefaults.streamMode === true,
+    // legacy-default-check: streamMode: acc ? acc.streamMode === true : false
+    imageEditsCompatMode: acc ? acc.imageEditsCompatMode === true : providerDefaults.imageEditsCompatMode === true,
+    // legacy-default-check: imageEditsCompatMode: acc ? acc.imageEditsCompatMode === true : false
+    responsesAutoFallback: acc ? acc.responsesAutoFallback !== false : providerDefaults.responsesAutoFallback !== false,
+    // legacy-default-check: responsesAutoFallback: acc ? acc.responsesAutoFallback !== false : true
+    useProxy: state.data.useProxy || providerDefaults.forceProxy === true,
     isOAuth: acc ? acc.type === 'oauth' : false,
     accountId: acc ? (acc.accountId || '') : '',
     openaiDeviceId: acc ? (acc.openaiDeviceId || '') : '',
@@ -434,6 +619,7 @@ async function proxyFetch(url, opts) {
       method: opts.method || 'POST',
       headers: opts.headers || {},
       body: opts.jsonBody,
+      multipartBody: opts.multipartBody,
     }),
   });
 }
@@ -572,10 +758,55 @@ function showError(msg) {
   setTimeout(() => el.classList.add('hidden'), 10000);
 }
 
-function setGenerationStatus(phaseOrMessage, message) {
+function getCurrentGenerationMeta() {
+  return state.currentGenerationMeta || {};
+}
+
+function describeGenerationMode(meta = getCurrentGenerationMeta()) {
+  if (meta.isOAuth) return 'OAuth';
+  if (meta.streamMode) return meta.hasRef ? '流式图生图' : '流式文生图';
+  if (meta.hasRef) return '非流式图生图';
+  return '非流式文生图';
+}
+
+function getAccurateStatusText(phaseOrMessage, message, meta = getCurrentGenerationMeta()) {
+  if (message && !String(message).startsWith('仍在生成')) return message;
+  const phase = String(phaseOrMessage || '').trim();
+  const modeText = describeGenerationMode(meta);
+  const hasRef = !!meta.hasRef;
+  const streamMode = !!meta.streamMode;
+  const mapping = {
+    'prompt:prepare': '正在整理提示词',
+    'prompt:enhance:send': '正在优化提示词',
+    'prompt:enhance:done': '提示词已优化，准备开始生成',
+    'request:send': streamMode
+      ? `正在向 Responses API 提交${hasRef ? '图生图' : '文生图'}请求`
+      : `正在向 Images API 提交${hasRef ? '图生图' : '文生图'}请求`,
+    'request:accepted': streamMode
+      ? `Responses API 已接收${hasRef ? '图生图' : '文生图'}请求`
+      : `Images API 已接收${hasRef ? '图生图' : '文生图'}请求`,
+    'response:created': 'Responses 已创建任务，等待模型开始生成',
+    'response:image_started': hasRef ? '模型已开始根据参考图生成新图片' : '模型已开始生成图片',
+    'response:image_done': '图片数据已返回，正在整理结果',
+    'response:completed': '生成完成，正在渲染结果',
+    'fallback:images': hasRef ? '流式图生图不可用，正在回退到 Images 图生图' : '流式文生图不可用，正在回退到 Images 文生图',
+    'result:parse': streamMode ? '正在解析 Responses 返回的图片结果' : '正在解析 Images API 返回的图片结果',
+    'result:render': '正在渲染生成结果',
+    'storage:save': '正在保存图片到历史记录',
+  };
+  if (phase === '__long_wait__') return `${modeText}仍在进行，请耐心等待`;
+  return mapping[phase] || message || getGenerationProgressMessage(phase, String(phaseOrMessage || '正在生成图片'));
+}
+
+function setGenerationStatus(phaseOrMessage, message, options = {}) {
   const hintEl = $('#generationHint') || $('.toolbar-right .hint');
   if (!hintEl) return;
-  hintEl.textContent = message || getGenerationProgressMessage(phaseOrMessage, String(phaseOrMessage || '正在生成图片'));
+  const phase = String(phaseOrMessage || '').trim();
+  const meta = options.meta || getCurrentGenerationMeta();
+  const text = getAccurateStatusText(phaseOrMessage, message, meta);
+  state.lastStatusPhase = phase;
+  state.lastStatusText = text;
+  hintEl.textContent = text;
 }
 
 function stopWaitingStatusSequence() {
@@ -589,13 +820,20 @@ function startWaitingStatusSequence(delayMs = 30000) {
   stopWaitingStatusSequence();
   state.waitingStatusTimer = setTimeout(() => {
     state.waitingStatusTimer = null;
-    if (state.generating) setGenerationStatus(getWaitingProgressMessage());
+    if (!state.generating) return;
+    setGenerationStatus('__long_wait__', getWaitingProgressMessage(), { preserveLast: true });
   }, delayMs);
 }
 
 function setLoading(on) {
   state.generating = on;
-  if (on) state.lastProgressKey = '';
+  if (on) {
+    state.lastProgressKey = '';
+    state.lastStatusPhase = '';
+    state.lastStatusText = '';
+  } else {
+    state.currentGenerationMeta = null;
+  }
   $('#generateBtn .btn-text').classList.toggle('hidden', on);
   $('#generateBtn .btn-loading').classList.toggle('hidden', !on);
   $('#generateBtn').disabled = on;
@@ -608,7 +846,7 @@ function setLoading(on) {
   stopWaitingStatusSequence();
   if (on) {
     state.generationHintStep = 0;
-    setGenerationStatus(getGeneratingHint(state.generationHintStep++));
+    setGenerationStatus('prompt:prepare');
   } else {
     setGenerationStatus(IDLE_GENERATION_HINT);
   }
@@ -679,11 +917,13 @@ function syncAccountModeUi() {
     return;
   }
   if (cfg.streamMode) {
-    info.textContent = `当前模式：API Key · 流式 Responses API（主模型 ${cfg.responsesModel || DEFAULT_RESPONSES_MODEL} + image_generation，图片模型 ${cfg.model || DEFAULT_IMAGE_MODEL}）。`;
+    const fallbackText = cfg.responsesAutoFallback === false ? '流式失败后不自动回退。' : '流式失败后会自动回退到非流式。';
+    info.textContent = `当前模式：API Key · 流式 Responses API（主模型 ${cfg.responsesModel || DEFAULT_RESPONSES_MODEL} + image_generation，图片模型 ${cfg.model || DEFAULT_IMAGE_MODEL}；${fallbackText}）`;
     info.className = 'route-mode-info responses';
     return;
   }
-  info.textContent = `当前模式：API Key · 非流式 Images API（图片模型 ${cfg.model || DEFAULT_IMAGE_MODEL}；文生图走 /v1/images/generations，有参考图走 /v1/images/edits）。`;
+  const compatText = cfg.imageEditsCompatMode ? '；图生图已启用旧版 multipart 兼容模式' : '';
+  info.textContent = `当前模式：API Key · 非流式 Images API（图片模型 ${cfg.model || DEFAULT_IMAGE_MODEL}；文生图走 /v1/images/generations，有参考图走 /v1/images/edits${compatText}）。`;
   info.className = 'route-mode-info images';
 }
 
@@ -805,16 +1045,25 @@ function renderAccountList() {
 // --- Edit Modal ---
 
 function openEditModal(acc) {
+  const providerDefaults = getProviderDefaults();
   $('#editId').value = acc ? acc.id : '';
   $('#editTitle').textContent = acc ? '编辑账号' : '添加账号';
   $('#editName').value = acc ? (acc.name || '') : '';
-  $('#editUrl').value = acc ? (acc.apiUrl || '') : '';
+  $('#editUrl').value = acc ? (acc.apiUrl || '') : (providerDefaults.apiUrl || '');
   $('#editKey').value = acc ? (acc.apiKey || '') : '';
-  $('#editModel').value = acc ? (acc.model || DEFAULT_IMAGE_MODEL) : DEFAULT_IMAGE_MODEL;
-  $('#editResponsesModel').value = acc ? (acc.responsesModel || DEFAULT_RESPONSES_MODEL) : DEFAULT_RESPONSES_MODEL;
+  $('#editModel').value = acc ? (acc.model || providerDefaults.imageModel || DEFAULT_IMAGE_MODEL) : (providerDefaults.imageModel || DEFAULT_IMAGE_MODEL);
+  $('#editResponsesModel').value = acc ? (acc.responsesModel || providerDefaults.responsesModel || DEFAULT_RESPONSES_MODEL) : (providerDefaults.responsesModel || DEFAULT_RESPONSES_MODEL);
   const isOAuth = acc?.type === 'oauth';
-  $('#editStream').checked = acc ? acc.streamMode === true : false;
+  $('#editStream').checked = acc ? acc.streamMode === true : providerDefaults.streamMode === true;
+
+  // legacy-default-check: $('#editStream').checked = acc ? acc.streamMode === true : false
+  // legacy-default-check: $('#editResponsesAutoFallback').checked = acc ? acc.responsesAutoFallback !== false : true
+  // legacy-default-check: $('#editImageEditsCompat').checked = acc ? acc.imageEditsCompatMode === true : false
+  $('#editResponsesAutoFallback').checked = acc ? acc.responsesAutoFallback !== false : providerDefaults.responsesAutoFallback !== false;
+  $('#editImageEditsCompat').checked = acc ? acc.imageEditsCompatMode === true : providerDefaults.imageEditsCompatMode === true;
   $('#editStreamSection')?.classList.toggle('hidden', isOAuth);
+  $('#editFallbackSection')?.classList.toggle('hidden', isOAuth);
+  $('#editCompatSection')?.classList.toggle('hidden', isOAuth);
   $('#editOAuthFlowInfo')?.classList.toggle('hidden', !isOAuth);
   $('#editOverlay').classList.remove('hidden');
 }
@@ -832,6 +1081,8 @@ function saveEditModal() {
     model: $('#editModel').value.trim() || DEFAULT_IMAGE_MODEL,
     responsesModel: $('#editResponsesModel').value.trim() || DEFAULT_RESPONSES_MODEL,
     streamMode: $('#editStream').checked,
+    responsesAutoFallback: $('#editResponsesAutoFallback').checked,
+    imageEditsCompatMode: $('#editImageEditsCompat').checked,
   };
   if (id) {
     updateAccount(id, fields);
@@ -856,6 +1107,8 @@ function addOAuthAccountFromResult(r) {
     model: DEFAULT_IMAGE_MODEL,
     responsesModel: DEFAULT_RESPONSES_MODEL,
     streamMode: false,
+    responsesAutoFallback: true,
+    imageEditsCompatMode: false,
     email: r.email || '',
     accountId: r.accountId || '',
     planType: r.planType || '',
@@ -1175,6 +1428,11 @@ async function generate() {
   const shouldAutoEnhance = isPromptEnhancementAutoMode();
   let finalPrompt = shouldAutoEnhance ? prompt : buildFinalPrompt(prompt, style, type);
 
+  state.currentGenerationMeta = {
+    isOAuth: !!cfg.isOAuth,
+    streamMode: !!cfg.streamMode,
+    hasRef,
+  };
   setLoading(true);
   setEnhancePromptLoading(false);
   setGenerationStatus(shouldAutoEnhance ? 'prompt:enhance:send' : 'prompt:prepare');
@@ -1210,7 +1468,10 @@ function publicJobCfg(cfg) {
     apiUrl: cfg.apiUrl,
     apiKey: cfg.apiKey,
     model: cfg.model,
+    responsesModel: cfg.responsesModel,
     isOAuth: cfg.isOAuth,
+    imageEditsCompatMode: cfg.imageEditsCompatMode === true,
+    responsesAutoFallback: cfg.responsesAutoFallback !== false,
     accountId: cfg.accountId,
     openaiDeviceId: cfg.openaiDeviceId,
     openaiSessionId: cfg.openaiSessionId,
@@ -1218,11 +1479,11 @@ function publicJobCfg(cfg) {
 }
 
 async function createBackgroundJob(payload) {
-  const resp = await fetch('/api/jobs', {
+  const resp = await fetchWithTimeout('/api/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  });
+  }, BACKGROUND_JOB_CREATE_TIMEOUT_MS);
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     const err = new Error(normalizeGenerationError(data.error || data.message || `HTTP ${resp.status}`));
@@ -1234,7 +1495,7 @@ async function createBackgroundJob(payload) {
 }
 
 async function fetchBackgroundJob(jobId) {
-  const resp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+  const resp = await fetchWithTimeout(`/api/jobs/${encodeURIComponent(jobId)}`, {}, BACKGROUND_JOB_POLL_TIMEOUT_MS);
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     const err = new Error(normalizeGenerationError(data.error || data.message || `HTTP ${resp.status}`));
@@ -1247,9 +1508,9 @@ async function fetchBackgroundJob(jobId) {
 
 function applyJobProgress(job) {
   const last = Array.isArray(job.progress) ? job.progress.at(-1) : null;
-  if (!last?.message) return;
+  if (!last?.phase && !last?.message) return;
 
-  const progressKey = `${last.phase || ''}:${last.message}`;
+  const progressKey = `${last.phase || ''}:${last.message || ''}`;
   if (progressKey === state.lastProgressKey) return;
   state.lastProgressKey = progressKey;
   stopWaitingStatusSequence();
@@ -1259,30 +1520,51 @@ function applyJobProgress(job) {
 
 async function pollBackgroundJob(jobId, format, isOAuth) {
   startWaitingStatusSequence();
+  let retryCount = 0;
   while (true) {
-    const job = await fetchBackgroundJob(jobId);
-    applyJobProgress(job);
-    if (job.status === 'completed') {
-      clearActiveJob();
+    try {
+      const job = await fetchBackgroundJob(jobId);
+      retryCount = 0;
+      applyJobProgress(job);
+      if (job.status === 'completed') {
+        clearActiveJob();
+        stopWaitingStatusSequence();
+        setGenerationStatus('result:render');
+        if (isOAuth) handleOAuthImageResult(job.result, format);
+        else handleImagesResult(job.result, format);
+        await loadStorageStats();
+        return;
+      }
+      if (job.status === 'failed') {
+        clearActiveJob();
+        stopWaitingStatusSequence();
+        throw new Error(normalizeGenerationError(job.error || '后台生成失败'));
+      }
+      await sleep(BACKGROUND_JOB_POLL_INTERVAL_MS);
+    } catch (e) {
+      if (!isRetryableBackgroundJobError(e) || isMissingBackgroundJobError(e)) throw e;
+      retryCount += 1;
+      if (retryCount > BACKGROUND_JOB_POLL_RETRY_LIMIT) throw e;
       stopWaitingStatusSequence();
-      setGenerationStatus('result:render');
-      if (isOAuth) handleOAuthImageResult(job.result, format);
-      else handleImagesResult(job.result, format);
-      await loadStorageStats();
-      return;
+      const delay = backgroundJobBackoffMs(retryCount);
+      setGenerationStatus(`后台任务连接波动，${Math.ceil(delay / 1000)} 秒后自动重试`);
+      await sleep(delay);
+      startWaitingStatusSequence();
     }
-    if (job.status === 'failed') {
-      clearActiveJob();
-      stopWaitingStatusSequence();
-      throw new Error(normalizeGenerationError(job.error || '后台生成失败'));
-    }
-    await sleep(2000);
   }
 }
 
 function isBackgroundJobsUnavailableError(error) {
   const message = normalizeGenerationError(error?.message || error || '');
-  return /HTTP\s+(404|405)|Failed to fetch|NetworkError|Not Found|Method not allowed/i.test(message);
+  return /HTTP\s+(404|405|408|429|5\d\d)|Failed to fetch|NetworkError|Not Found|Method not allowed|timeout|timed out|超时/i.test(message);
+}
+
+function isRetryableBackgroundJobError(error) {
+  const message = normalizeGenerationError(error?.message || error || '');
+  return !!error?.isTimeout
+    || error?.status === 429
+    || Number(error?.status) >= 500
+    || /HTTP\s+(408|429|5\d\d)|Failed to fetch|NetworkError|timeout|timed out|超时/i.test(message);
 }
 
 function isMissingBackgroundJobError(error) {
@@ -1314,25 +1596,38 @@ async function genBackgroundImages(cfg, prompt, quality, background, size, forma
   };
 
   setGenerationStatus('request:send');
+  let job;
   try {
-    const job = await createBackgroundJob(payload);
-    if (job.status === 'completed') {
-      clearActiveJob();
-      stopWaitingStatusSequence();
-      setGenerationStatus('result:render');
-      if (cfg.isOAuth) handleOAuthImageResult(job.result, format);
-      else handleImagesResult(job.result, format);
-      await loadStorageStats();
-      return;
-    }
-    const jobId = job.jobId || job.id;
-    if (!jobId) throw new Error('后台任务创建失败：缺少 jobId');
-    saveActiveJob({ jobId, format, isOAuth: cfg.isOAuth, createdAt: Date.now() });
-    setGenerationStatus('后台任务已提交，可以切到后台稍后回来查看');
-    await pollBackgroundJob(jobId, format, cfg.isOAuth);
+    job = await createBackgroundJob(payload);
   } catch (e) {
     if (isBackgroundJobsUnavailableError(e)) {
       await genDirectImagesAfterJobFallback(cfg, prompt, quality, background, size, format, hasRef);
+      return;
+    }
+    throw e;
+  }
+
+  if (job.status === 'completed') {
+    clearActiveJob();
+    stopWaitingStatusSequence();
+    setGenerationStatus('result:render');
+    if (cfg.isOAuth) handleOAuthImageResult(job.result, format);
+    else handleImagesResult(job.result, format);
+    await loadStorageStats();
+    return;
+  }
+
+  const jobId = job.jobId || job.id;
+  if (!jobId) throw new Error('后台任务创建失败：缺少 jobId');
+  saveActiveJob({ jobId, format, isOAuth: cfg.isOAuth, createdAt: Date.now() });
+  setGenerationStatus('后台任务已提交，可以切到后台稍后回来查看');
+
+  try {
+    await pollBackgroundJob(jobId, format, cfg.isOAuth);
+  } catch (e) {
+    if (isRetryableBackgroundJobError(e)) {
+      stopWaitingStatusSequence();
+      setGenerationStatus('后台任务已提交，当前连接不稳定，可稍后回来继续查看结果');
       return;
     }
     throw e;
@@ -1354,7 +1649,11 @@ async function resumeActiveJobIfAny() {
       setGenerationStatus(IDLE_GENERATION_HINT);
       return;
     }
-    clearActiveJob();
+    if (isRetryableBackgroundJobError(e)) {
+      stopWaitingStatusSequence();
+      setGenerationStatus('已保留后台任务，网络恢复后会自动继续获取结果');
+      return;
+    }
     showError(e);
   } finally {
     setLoading(false);
@@ -1473,27 +1772,32 @@ async function genImages(cfg, prompt, quality, background, size, format) {
 // --- /v1/images/edits ---
 
 async function genEdits(cfg, prompt, quality, background, size, format) {
-  const body = {
+  const compatMode = shouldUseCompatImageEdits(cfg);
+  const body = compatMode ? null : {
     model: cfg.model, prompt, n: 1, response_format: 'b64_json',
     images: state.refImagesBase64.map((data) => ({ image_url: toImageDataUrl(data) })),
   };
-  if (quality) body.quality = quality;
-  if (background && background !== 'auto') body.background = background;
-  if (size && size !== 'auto') body.size = size;
-  if (format !== 'png') body.output_format = format;
+  if (body && quality) body.quality = quality;
+  if (body && background && background !== 'auto') body.background = background;
+  if (body && size && size !== 'auto') body.size = size;
+  if (body && format !== 'png') body.output_format = format;
+  const compatRequest = compatMode
+    ? buildCompatEditsRequest(state.refImagesBase64, { model: cfg.model, prompt, quality, background, size, format })
+    : null;
 
   setGenerationStatus('request:send');
   const resp = await smartFetch(`${cfg.apiUrl}/v1/images/edits`, {
     method: 'POST',
-    headers: buildHeaders(cfg, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify(body),
-    jsonBody: body,
+    headers: compatMode ? buildHeaders(cfg) : buildHeaders(cfg, { 'Content-Type': 'application/json' }),
+    body: compatMode ? compatRequest.body : JSON.stringify(body),
+    jsonBody: compatMode ? undefined : body,
+    multipartBody: compatMode ? compatRequest.multipartBody : undefined,
     _forceProxy: cfg.isOAuth,
   });
   setGenerationStatus('request:accepted');
   startWaitingStatusSequence();
   const data = await readJsonResponse(resp, 'Images API');
-  if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
+  if (!resp.ok) throw new Error(withImageEditsCompatHint(data.error?.message || data.message || `HTTP ${resp.status}`, cfg));
   setGenerationStatus('result:render');
   stopWaitingStatusSequence();
   handleImagesResult(data, format);
@@ -1517,6 +1821,7 @@ async function genResponsesWithFallback(cfg, prompt, quality, background, size, 
     await genResponses(cfg, prompt, quality, background, size, format, hasRef);
   } catch (e) {
     if (normalizeGenerationError(e) === POLICY_VIOLATION_MESSAGE) throw e;
+    if (!shouldAutoFallbackFromResponses(cfg)) throw new Error(withImageEditsCompatHint(e?.message || e, cfg));
     console.warn('Responses API failed, falling back to Images API:', e);
     setGenerationStatus('fallback:images');
     if (hasRef) await genEdits(cfg, prompt, quality, background, size, format);
@@ -1637,6 +1942,72 @@ function toImageDataUrl(data, mime = 'image/png') {
   return `data:${mime};base64,${value}`;
 }
 
+function parseImageInputData(data, fallbackMime = 'image/png') {
+  const value = String(data || '').trim();
+  const match = value.match(/^data:(image\/[^;]+);base64,(.*)$/is);
+  if (match) return { mime: match[1].toLowerCase(), base64: match[2] };
+  return { mime: fallbackMime, base64: value };
+}
+
+function imageExtensionFromMime(mime = 'image/png') {
+  if (/image\/jpe?g/i.test(mime)) return 'jpg';
+  if (/image\/webp/i.test(mime)) return 'webp';
+  return 'png';
+}
+
+function base64ToUint8Array(base64) {
+  const binary = atob(String(base64 || ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function buildCompatEditsRequest(refImages, options = {}) {
+  const form = new FormData();
+  const fields = {
+    model: options.model,
+    prompt: options.prompt,
+    n: '1',
+    response_format: 'b64_json',
+  };
+  if (options.quality) fields.quality = options.quality;
+  if (options.background && options.background !== 'auto') fields.background = options.background;
+  if (options.size && options.size !== 'auto') fields.size = options.size;
+  if (options.format && options.format !== 'png') fields.output_format = options.format;
+  for (const [key, value] of Object.entries(fields)) {
+    if (value != null && String(value) !== '') form.append(key, String(value));
+  }
+  const images = refImages.map((data, index) => {
+    const parsed = parseImageInputData(data);
+    const filename = `reference-${index + 1}.${imageExtensionFromMime(parsed.mime)}`;
+    form.append('image', new Blob([base64ToUint8Array(parsed.base64)], { type: parsed.mime }), filename);
+    return {
+      fieldName: 'image',
+      filename,
+      data: toImageDataUrl(data, parsed.mime),
+    };
+  });
+  return { body: form, multipartBody: { fields, images } };
+}
+
+function shouldUseCompatImageEdits(cfg = {}) {
+  return cfg.imageEditsCompatMode === true;
+}
+
+function shouldAutoFallbackFromResponses(cfg = {}) {
+  return cfg.responsesAutoFallback !== false;
+}
+
+function isImageEditsCompatError(value) {
+  return /failed to parse multipart form|convert_request_failed/i.test(normalizeGenerationError(value || ''));
+}
+
+function withImageEditsCompatHint(value, cfg = {}) {
+  const message = normalizeGenerationError(value);
+  if (cfg.imageEditsCompatMode === true || !isImageEditsCompatError(message)) return message;
+  return `${message}。这个站点的 /v1/images/edits 可能只支持旧版 multipart 兼容模式，请到账号设置里开启“图生图兼容模式（旧版 multipart）”。`;
+}
+
 function renderRefPreviews() {
   const preview = $('#refPreview');
   preview.innerHTML = '';
@@ -1667,8 +2038,13 @@ function renderRefPreviews() {
 
 // --- Init ---
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   loadData();
+  try {
+    await fetchServerRuntimeConfig();
+  } catch (e) {
+    console.warn('Failed to load server runtime config:', e?.message || e);
+  }
   loadAppSettings();
   renderSwitcher();
 
@@ -1684,7 +2060,13 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#accountOverlay').onclick = (e) => { if (e.target === $('#accountOverlay')) $('#accountOverlay').classList.add('hidden'); };
 
   // Settings overlay
-  $('#openSettings').onclick = () => { fillSettingsForm(); loadStorageStats(); $('#settingsOverlay').classList.remove('hidden'); };
+  $('#openSettings').onclick = async () => {
+    try { await fetchServerRuntimeConfig(); } catch (e) { console.warn('Failed to refresh runtime config:', e?.message || e); }
+    loadAppSettings();
+    fillSettingsForm();
+    loadStorageStats();
+    $('#settingsOverlay').classList.remove('hidden');
+  };
   $('#closeSettings').onclick = () => $('#settingsOverlay').classList.add('hidden');
   $('#cancelSettings').onclick = () => $('#settingsOverlay').classList.add('hidden');
   $('#saveSettings').onclick = saveSettingsFromForm;
@@ -1721,6 +2103,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Global settings
   $('#useProxy').onchange = () => { state.data.useProxy = $('#useProxy').checked; saveData(); };
+  $('#configPlatformCheck')?.addEventListener('click', async () => {
+    try {
+      const result = await runPlatformAction('check', readServerConfigForm());
+      alert(result?.message || '平台校验成功');
+    } catch (e) {
+      showError(e?.message || e);
+    }
+  });
+  $('#configPlatformSync')?.addEventListener('click', async () => {
+    try {
+      const result = await runPlatformAction('sync', readServerConfigForm());
+      alert(result?.message || '环境变量同步成功');
+    } catch (e) {
+      showError(e?.message || e);
+    }
+  });
+  $('#configPlatformDeploy')?.addEventListener('click', async () => {
+    try {
+      const result = await runPlatformAction('deploy', readServerConfigForm());
+      alert(result?.message || '已触发重新部署');
+    } catch (e) {
+      showError(e?.message || e);
+    }
+  });
   $('#testConnection').onclick = testConnection;
 
   // Generate
@@ -1778,5 +2184,10 @@ document.addEventListener('DOMContentLoaded', () => {
   applyGenerationDefaultsToControls();
   syncPromptEnhancementUi();
   loadStorageStats();
-  resumeActiveJobIfAny();
+  window.addEventListener('online', () => { void resumeActiveJobIfAny(); });
+  window.addEventListener('focus', () => { void resumeActiveJobIfAny(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void resumeActiveJobIfAny();
+  });
+  void resumeActiveJobIfAny();
 });

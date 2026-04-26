@@ -1,11 +1,11 @@
 services:
   image-gen:
-    image: fogtape/image-gen:latest
-    container_name: image-gen
-    pull_policy: always
-    restart: unless-stopped
+    build: .
     ports:
       - "3000:3000"
     environment:
-      NODE_ENV: production
       PORT: 3000
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+    restart: unless-stopped

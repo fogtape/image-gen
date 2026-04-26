@@ -20,11 +20,15 @@ import {
   formatOAuthTokenError,
 } from './oauth-flow.js';
 import { enhancePrompt } from './prompt-enhancement.js';
+import { createConfigService } from './config-service.js';
+import { createPlatformHandler, getSupportedPlatforms } from './handlers/handler-factory.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.IMAGE_GEN_DATA_DIR || path.join(__dirname, 'data');
 const MAX_REF_IMAGES = 3;
+const IMAGES_API_TIMEOUT_MS = 300_000;
+const RESPONSES_API_TIMEOUT_MS = 300_000;
 const imageStore = createImageStore({ dataDir: DATA_DIR });
 const OAUTH_LOOPBACK_PORT = 1455;
 const OAUTH_SESSION_FILE = path.join(__dirname, '.oauth-sessions.json');
@@ -46,6 +50,28 @@ const OAUTH_AUTH_URL = 'https://auth.openai.com/oauth/authorize';
 const OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token';
 const OAUTH_SCOPES = 'openid email profile offline_access';
 const OAUTH_REDIRECT_URI = `http://localhost:${OAUTH_LOOPBACK_PORT}/auth/callback`;
+
+const ADMIN_TOKEN_HEADER = 'x-image-gen-admin-token';
+const configService = createConfigService({
+  isServerless: isServerlessRuntime(),
+  onReload: (nextConfig) => {
+    console.log(`[config] reloaded ${configService?.envFile || ''} (${nextConfig?.providerDefaults?.imageModel || 'gpt-image-2'})`);
+  },
+});
+if (!isServerlessRuntime()) {
+  configService.startWatcher();
+}
+
+function getRuntimeConfig() {
+  return configService.getRuntimeConfig();
+}
+
+function getPlatformHandler(platform) {
+  return createPlatformHandler(platform || getRuntimeConfig()?.deploy?.platform || 'node', {
+    configService,
+    runtimeResolver: getRuntimeConfig,
+  });
+}
 
 // --- OAuth session store (sessionId -> session, state -> sessionId, persisted, 30 min TTL) ---
 
@@ -260,7 +286,7 @@ async function handleProxy(req, res) {
     return;
   }
 
-  const { url, method, headers, body: reqBody } = parsed;
+  const { url, method, headers, body: reqBody, multipartBody } = parsed;
   if (!url) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Missing url' }));
@@ -270,8 +296,18 @@ async function handleProxy(req, res) {
   const fetchMethod = (method || 'POST').toUpperCase();
   const opts = { method: fetchMethod, headers: { ...headers } };
   if (fetchMethod !== 'GET' && reqBody != null) {
-    opts.headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(reqBody);
+    if (multipartBody?.fields) {
+      delete opts.headers['Content-Type'];
+      delete opts.headers['content-type'];
+      opts.body = buildProxyMultipartFormData(multipartBody);
+    } else {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(reqBody);
+    }
+  } else if (fetchMethod !== 'GET' && multipartBody?.fields) {
+    delete opts.headers['Content-Type'];
+    delete opts.headers['content-type'];
+    opts.body = buildProxyMultipartFormData(multipartBody);
   }
 
   try {
@@ -625,6 +661,24 @@ function baseApiUrl(apiUrl) {
   return text;
 }
 
+async function runWithTimeout(task, timeoutMs, timeoutMessage) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await task(controller.signal);
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      const error = new Error(timeoutMessage || `上游请求超时（>${Math.ceil(timeoutMs / 1000)} 秒）`);
+      error.status = 504;
+      error.code = 'UPSTREAM_TIMEOUT';
+      throw error;
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const CODEX_CLIENT_VERSION = '0.104.0';
 const CODEX_CLIENT_USER_AGENT = `codex_cli_rs/${CODEX_CLIENT_VERSION}`;
 
@@ -663,6 +717,79 @@ export function toImageDataUrl(data, mime = 'image/png') {
   const value = String(data || '').trim();
   if (/^data:image\/[^;]+;base64,/i.test(value)) return value;
   return `data:${mime};base64,${value}`;
+}
+
+function parseImageInputData(data, fallbackMime = 'image/png') {
+  const value = String(data || '').trim();
+  const match = value.match(/^data:(image\/[^;]+);base64,(.*)$/is);
+  if (match) return { mime: match[1].toLowerCase(), base64: match[2] };
+  return { mime: fallbackMime, base64: value };
+}
+
+function imageExtensionFromMime(mime = 'image/png') {
+  if (/image\/jpe?g/i.test(mime)) return 'jpg';
+  if (/image\/webp/i.test(mime)) return 'webp';
+  return 'png';
+}
+
+function appendMultipartImage(form, image, index = 0, fieldName = 'image') {
+  const source = image?.data ?? image?.dataUrl ?? image;
+  const parsed = parseImageInputData(source);
+  const name = image?.fieldName || fieldName;
+  const filename = image?.filename || `reference-${index + 1}.${imageExtensionFromMime(parsed.mime)}`;
+  form.append(name, new Blob([Buffer.from(parsed.base64, 'base64')], { type: parsed.mime }), filename);
+}
+
+function buildImagesEditsMultipartFields(payload = {}) {
+  const cfg = payload.cfg || {};
+  const fields = {
+    model: cfg.model,
+    prompt: payload.prompt,
+    n: '1',
+    response_format: 'b64_json',
+  };
+  if (payload.quality) fields.quality = payload.quality;
+  if (payload.background && payload.background !== 'auto') fields.background = payload.background;
+  if (payload.size && payload.size !== 'auto') fields.size = payload.size;
+  if (payload.format && payload.format !== 'png') fields.output_format = payload.format;
+  return fields;
+}
+
+function buildImagesEditsMultipartFormData(payload = {}) {
+  const form = new FormData();
+  const fields = buildImagesEditsMultipartFields(payload);
+  for (const [key, value] of Object.entries(fields)) {
+    if (value != null && String(value) !== '') form.append(key, String(value));
+  }
+  normalizeRefImages(payload).forEach((data, index) => appendMultipartImage(form, data, index));
+  return form;
+}
+
+function buildProxyMultipartFormData(multipartBody = {}) {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(multipartBody.fields || {})) {
+    if (value != null && String(value) !== '') form.append(key, String(value));
+  }
+  (multipartBody.images || []).forEach((image, index) => appendMultipartImage(form, image, index));
+  return form;
+}
+
+function shouldUseCompatImageEdits(cfg = {}) {
+  return cfg.imageEditsCompatMode === true;
+}
+
+function shouldAutoFallbackFromResponses(cfg = {}) {
+  return cfg.responsesAutoFallback !== false;
+}
+
+function isImageEditsCompatError(value) {
+  return /failed to parse multipart form|convert_request_failed/i.test(normalizeGenerationError(value || ''));
+}
+
+function withImageEditsCompatHint(value, cfg = {}) {
+  const message = normalizeGenerationError(value);
+  if (cfg.imageEditsCompatMode === true || !isImageEditsCompatError(message)) return message;
+  return `${message}。这个站点的 /v1/images/edits 可能只支持旧版 multipart 兼容模式，请到账号设置里开启“图生图兼容模式（旧版 multipart）”。`;
 }
 
 function normalizeRefImages(payload = {}) {
@@ -788,18 +915,23 @@ async function runImagesApiJob(payload, onProgress) {
   const cfg = payload.cfg || {};
   const format = payload.format || 'png';
   const mode = payload.mode;
-  const body = buildImagesApiBody(payload);
+  const compatMode = mode === 'edits' && shouldUseCompatImageEdits(cfg);
+  const body = compatMode ? null : buildImagesApiBody(payload);
 
   const endpoint = mode === 'edits' ? '/v1/images/edits' : '/v1/images/generations';
   onProgress('request:send', getGenerationProgressMessage('request:send'));
-  const resp = await fetch(`${baseApiUrl(cfg.apiUrl)}${endpoint}`, {
-    method: 'POST',
-    headers: buildApiHeaders(cfg, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify(body),
-  });
-  onProgress('request:accepted', getGenerationProgressMessage('request:accepted'));
-  const data = await readUpstreamJson(resp, 'Images API');
-  if (!resp.ok) throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
+  const { resp, data } = await runWithTimeout(async (signal) => {
+    const resp = await fetch(`${baseApiUrl(cfg.apiUrl)}${endpoint}`, {
+      method: 'POST',
+      headers: compatMode ? buildApiHeaders(cfg) : buildApiHeaders(cfg, { 'Content-Type': 'application/json' }),
+      body: compatMode ? buildImagesEditsMultipartFormData(payload) : JSON.stringify(body),
+      signal,
+    });
+    onProgress('request:accepted', getGenerationProgressMessage('request:accepted'));
+    const data = await readUpstreamJson(resp, 'Images API');
+    return { resp, data };
+  }, IMAGES_API_TIMEOUT_MS, 'Images API 上游响应超时，请稍后重试');
+  if (!resp.ok) throw new Error(withImageEditsCompatHint(data.error?.message || data.message || `HTTP ${resp.status}`, cfg));
   return data;
 }
 
@@ -833,13 +965,17 @@ async function runResponsesJob(payload, onProgress) {
   };
 
   onProgress('request:send', getGenerationProgressMessage('request:send'));
-  const resp = await fetch(`${baseApiUrl(cfg.apiUrl)}/v1/responses`, {
-    method: 'POST',
-    headers: buildResponsesApiHeaders(cfg, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify(body),
-  });
-  onProgress('request:accepted', getGenerationProgressMessage('request:accepted'));
-  const rawText = await readResponseTextWithProgress(resp, onProgress);
+  const { resp, rawText } = await runWithTimeout(async (signal) => {
+    const resp = await fetch(`${baseApiUrl(cfg.apiUrl)}/v1/responses`, {
+      method: 'POST',
+      headers: buildResponsesApiHeaders(cfg, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+      signal,
+    });
+    onProgress('request:accepted', getGenerationProgressMessage('request:accepted'));
+    const rawText = await readResponseTextWithProgress(resp, onProgress);
+    return { resp, rawText };
+  }, RESPONSES_API_TIMEOUT_MS, 'Responses 图片请求超时，请稍后重试');
   if (!resp.ok) {
     try {
       const data = JSON.parse(rawText);
@@ -890,6 +1026,7 @@ async function runImageJob(payload, onProgress) {
       result = await runResponsesJob(payload, onProgress);
     } catch (e) {
       if (normalizeGenerationError(e) === '非常抱歉，生成的图片可能违反了我们的内容政策。如果你认为此判断有误，请重试或修改提示语。') throw e;
+      if (!shouldAutoFallbackFromResponses(payload.cfg)) throw new Error(withImageEditsCompatHint(e?.message || e, payload.cfg || {}));
       if (!isImagesApiModel(payload.cfg?.model)) throw e;
       onProgress('fallback:images', getGenerationProgressMessage('fallback:images'));
       result = await runImagesApiJob({ ...payload, mode: normalizeRefImages(payload).length ? 'edits' : 'images' }, onProgress);
@@ -977,12 +1114,119 @@ function handleStoredImage(req, res, imageId) {
   fs.createReadStream(found.filePath).pipe(res);
 }
 
+
+
+function readAdminToken(req, parsedBody = null) {
+  const headerValue = req.headers?.[ADMIN_TOKEN_HEADER] || req.headers?.[ADMIN_TOKEN_HEADER.toLowerCase()];
+  return String(headerValue || parsedBody?.adminToken || '').trim();
+}
+
+function requireConfigAdmin(req, res, parsedBody = null) {
+  const token = readAdminToken(req, parsedBody);
+  if (!configService.verifyAdminToken(token)) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Config admin token invalid' }));
+    return false;
+  }
+  return true;
+}
+
+function handleConfigRuntime(req, res) {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    ok: true,
+    runtime: configService.getResolvedConfig(),
+    editable: configService.getEditableRuntimeConfig(),
+    schema: configService.getSchema(),
+    platforms: getSupportedPlatforms(),
+  }));
+}
+
+function handleConfigSchema(req, res) {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    ok: true,
+    schema: configService.getSchema(),
+    platforms: getSupportedPlatforms(),
+  }));
+}
+
+async function handleConfigSave(req, res) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
+  if (!requireConfigAdmin(req, res, parsed)) return;
+  try {
+    const saved = configService.setRuntimeConfig(parsed.config || parsed.runtime || parsed, { preserveSecrets: true });
+    const handler = getPlatformHandler(saved?.deploy?.platform);
+    const operations = [];
+    if (saved?.deploy?.autoSync === true) {
+      operations.push(await handler.sync());
+    }
+    if (saved?.deploy?.autoRedeploy === true) {
+      operations.push(await handler.deploy());
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, runtime: configService.getResolvedConfig(), operations }));
+  } catch (error) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: error.message || 'Failed to save runtime config' }));
+  }
+}
+
+async function handlePlatformCheck(req, res) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
+  if (!requireConfigAdmin(req, res, parsed)) return;
+  try {
+    if (parsed.config) configService.setRuntimeConfig(parsed.config, { preserveSecrets: true });
+    const handler = getPlatformHandler(parsed.platform || parsed.config?.deploy?.platform);
+    const result = await handler.check();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, result }));
+  } catch (error) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: error.message || 'Platform check failed' }));
+  }
+}
+
+async function handlePlatformSync(req, res) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
+  if (!requireConfigAdmin(req, res, parsed)) return;
+  try {
+    if (parsed.config) configService.setRuntimeConfig(parsed.config, { preserveSecrets: true });
+    const handler = getPlatformHandler(parsed.platform || parsed.config?.deploy?.platform);
+    const result = await handler.sync();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, result }));
+  } catch (error) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: error.message || 'Platform sync failed' }));
+  }
+}
+
+async function handlePlatformDeploy(req, res) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
+  if (!requireConfigAdmin(req, res, parsed)) return;
+  try {
+    if (parsed.config) configService.setRuntimeConfig(parsed.config, { preserveSecrets: true });
+    const handler = getPlatformHandler(parsed.platform || parsed.config?.deploy?.platform);
+    const result = await handler.deploy();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, result }));
+  } catch (error) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: error.message || 'Platform deploy failed' }));
+  }
+}
+
 // --- Main server ---
 
 export const server = http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Image-Gen-Admin-Token');
 
   if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
 
@@ -990,6 +1234,18 @@ export const server = http.createServer((req, res) => {
 
   if (url.pathname === '/api/proxy' && req.method === 'POST') {
     handleProxy(req, res);
+  } else if (url.pathname === '/api/config/runtime' && req.method === 'GET') {
+    handleConfigRuntime(req, res);
+  } else if (url.pathname === '/api/config/schema' && req.method === 'GET') {
+    handleConfigSchema(req, res);
+  } else if (url.pathname === '/api/config/save' && req.method === 'POST') {
+    handleConfigSave(req, res);
+  } else if (url.pathname === '/api/config/platform/check' && req.method === 'POST') {
+    handlePlatformCheck(req, res);
+  } else if (url.pathname === '/api/config/platform/sync' && req.method === 'POST') {
+    handlePlatformSync(req, res);
+  } else if (url.pathname === '/api/config/platform/deploy' && req.method === 'POST') {
+    handlePlatformDeploy(req, res);
   } else if (url.pathname === '/api/prompt/enhance' && req.method === 'POST') {
     handlePromptEnhance(req, res);
   } else if (url.pathname === '/api/jobs' && req.method === 'POST') {

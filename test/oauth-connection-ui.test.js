@@ -33,6 +33,19 @@ test('API Key 账号流式模式默认关闭，只有用户显式开启才走 Re
   assert.doesNotMatch(html, /id="editStream" checked/);
 });
 
+test('账号级兼容开关默认保持官方图生图写法，但允许单独开启旧版 multipart 与流式回退控制', () => {
+  assert.match(app, /imageEditsCompatMode: old\.imageEditsCompatMode === true/);
+  assert.match(app, /responsesAutoFallback: old\.responsesAutoFallback !== false/);
+  assert.match(app, /imageEditsCompatMode: acc \? acc\.imageEditsCompatMode === true : false/);
+  assert.match(app, /responsesAutoFallback: acc \? acc\.responsesAutoFallback !== false : true/);
+  assert.match(app, /\$\('#editResponsesAutoFallback'\)\.checked = acc \? acc\.responsesAutoFallback !== false : true/);
+  assert.match(app, /\$\('#editImageEditsCompat'\)\.checked = acc \? acc\.imageEditsCompatMode === true : false/);
+  assert.match(app, /responsesAutoFallback: \$\('#editResponsesAutoFallback'\)\.checked/);
+  assert.match(app, /imageEditsCompatMode: \$\('#editImageEditsCompat'\)\.checked/);
+  assert.match(html, /id="editResponsesAutoFallback"/);
+  assert.match(html, /id="editImageEditsCompat"/);
+});
+
 test('手动账号默认图片模型与流式主模型已拆分', () => {
   assert.match(app, /const DEFAULT_IMAGE_MODEL = 'gpt-image-2'/);
   assert.match(app, /const DEFAULT_RESPONSES_MODEL = 'gpt-5.4'/);
@@ -43,10 +56,14 @@ test('手动账号默认图片模型与流式主模型已拆分', () => {
 test('OAuth 账号编辑页隐藏流式开关并显示真实 ChatGPT 后端流程说明，首页不展示突兀流程条', () => {
   assert.doesNotMatch(html, /id="routeModeInfo"/);
   assert.match(html, /id="editStreamSection"/);
+  assert.match(html, /id="editFallbackSection"/);
+  assert.match(html, /id="editCompatSection"/);
   assert.match(html, /id="editOAuthFlowInfo"/);
   assert.match(html, /chat-requirements[\s\S]*conversation\/prepare[\s\S]*conversation/);
   assert.match(app, /function syncAccountModeUi\(/);
   assert.match(app, /editStreamSection[\s\S]*classList\.toggle\('hidden', isOAuth\)/);
+  assert.match(app, /editFallbackSection[\s\S]*classList\.toggle\('hidden', isOAuth\)/);
+  assert.match(app, /editCompatSection[\s\S]*classList\.toggle\('hidden', isOAuth\)/);
   assert.match(app, /editOAuthFlowInfo[\s\S]*classList\.toggle\('hidden', !isOAuth\)/);
   assert.match(app, /ChatGPT 后端图片流程/);
 });
