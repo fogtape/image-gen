@@ -332,7 +332,13 @@
           </div>
           <div class="form-group">
             <label for="editModel">模型</label>
-            <input type="text" id="editModel" value="gpt-5.4">
+            <input type="text" id="editModel" value="gpt-image-2">
+            <small>用于非流式 Images API 的图片模型，例如 `gpt-image-2`。</small>
+          </div>
+          <div class="form-group">
+            <label for="editResponsesModel">流式主模型</label>
+            <input type="text" id="editResponsesModel" value="gpt-5.4">
+            <small>仅在开启流式模式时使用，调用 `/v1/responses` + `image_generation`。</small>
           </div>
           <div id="editStreamSection" class="stream-mode-section">
             <label class="switch-label">

@@ -4,11 +4,16 @@ import { isPolicyViolationText, normalizeGenerationError } from './ui-feedback.j
 const CHATGPT_BASE = 'https://chatgpt.com';
 const CHATGPT_START_URL = `${CHATGPT_BASE}/`;
 const CHATGPT_FILES_URL = `${CHATGPT_BASE}/backend-api/files`;
+const CHATGPT_PROCESS_UPLOAD_URL = `${CHATGPT_BASE}/backend-api/files/process_upload_stream`;
+const CHATGPT_CODEX_RESPONSES_URL = `${CHATGPT_BASE}/backend-api/codex/responses`;
 const CHATGPT_CONVERSATION_INIT_URL = `${CHATGPT_BASE}/backend-api/conversation/init`;
 const CHATGPT_CONVERSATION_URL = `${CHATGPT_BASE}/backend-api/f/conversation`;
 const CHATGPT_CONVERSATION_PREPARE_URL = `${CHATGPT_BASE}/backend-api/f/conversation/prepare`;
 const CHATGPT_CHAT_REQUIREMENTS_URL = `${CHATGPT_BASE}/backend-api/sentinel/chat-requirements`;
 const IMAGE_BACKEND_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const CODEX_USER_AGENT = 'codex_cli_rs/0.125.0';
+const CODEX_VERSION = '0.125.0';
+const RESPONSES_MAIN_MODEL = 'gpt-5.4-mini';
 const REQUIREMENTS_DIFF = '0fffff';
 const MAX_DOWNLOAD_BYTES = 20 << 20;
 
@@ -90,11 +95,99 @@ export function buildChatGPTBackendHeaders({ accessToken, accountId, deviceId, s
   return headers;
 }
 
-export function buildConversationRequest({ prompt, parentMessageId, messageId } = {}) {
+export function toImageDataUrl(data, mime = 'image/png') {
+  const value = String(data || '').trim();
+  if (/^data:image\/[^;]+;base64,/i.test(value)) return value;
+  return `data:${mime};base64,${value}`;
+}
+
+function normalizeRefImages(input = {}) {
+  const raw = Array.isArray(input.refImagesBase64)
+    ? input.refImagesBase64
+    : (input.refImageBase64 ? [input.refImageBase64] : []);
+  if (raw.length > 3) throw new Error('最多只能上传 3 张参考图');
+  return raw.filter((item) => typeof item === 'string' && item.trim()).slice(0, 3);
+}
+
+export function buildOAuthResponsesImageBody(input = {}) {
+  const prompt = coalesce(input.prompt, 'Generate an image.');
+  const refImages = normalizeRefImages(input);
+  const action = refImages.length ? 'edit' : 'generate';
+  const outputFormat = coalesce(input.format || input.output_format, 'png');
+  const toolModel = coalesce(input.model, 'gpt-image-2');
+  const content = [
+    { type: 'input_text', text: prompt },
+    ...refImages.map((data) => ({ type: 'input_image', image_url: toImageDataUrl(data) })),
+  ];
+  const tool = {
+    type: 'image_generation',
+    action,
+    model: toolModel,
+  };
+  if (String(input.size || '').trim()) tool.size = String(input.size).trim();
+  if (String(input.quality || '').trim()) tool.quality = String(input.quality).trim();
+  if (String(input.background || '').trim()) tool.background = String(input.background).trim();
+  if (outputFormat) tool.output_format = outputFormat;
+  if (input.output_compression != null) tool.output_compression = input.output_compression;
+  if (input.partial_images != null) tool.partial_images = input.partial_images;
+  if (input.maskImageBase64 || input.mask?.image_url) {
+    tool.input_image_mask = {
+      image_url: input.mask?.image_url || toImageDataUrl(input.maskImageBase64),
+    };
+  }
+  return {
+    instructions: '',
+    model: RESPONSES_MAIN_MODEL,
+    input: [{ type: 'message', role: 'user', content }],
+    stream: true,
+    store: false,
+    reasoning: { effort: 'medium', summary: 'auto' },
+    parallel_tool_calls: true,
+    include: ['reasoning.encrypted_content'],
+    tool_choice: { type: 'image_generation' },
+    tools: [tool],
+  };
+}
+
+export function buildCodexResponsesHeaders({ accessToken, accountId, sessionId, userAgent } = {}) {
+  if (!String(accessToken || '').trim()) throw new Error('Missing OAuth access token');
+  const headers = {
+    Authorization: `Bearer ${String(accessToken).trim()}`,
+    Accept: 'text/event-stream',
+    'Content-Type': 'application/json',
+    'OpenAI-Beta': 'responses=experimental',
+    originator: 'codex_cli_rs',
+    version: CODEX_VERSION,
+    'User-Agent': coalesce(userAgent, CODEX_USER_AGENT),
+  };
+  if (String(accountId || '').trim()) headers['chatgpt-account-id'] = String(accountId).trim();
+  if (String(sessionId || '').trim()) {
+    headers.conversation_id = String(sessionId).trim();
+    headers.session_id = String(sessionId).trim();
+  }
+  return headers;
+}
+
+export function buildConversationRequest({ prompt, parentMessageId, messageId, refImages = [] } = {}) {
   const text = coalesce(prompt, 'Generate an image.');
+  const hasImages = Array.isArray(refImages) && refImages.length > 0;
+  const parts = hasImages
+    ? [
+        ...refImages.map((img) => ({
+          asset_pointer: img.pointer || `sediment://${img.id}`,
+          size_bytes: img.sizeBytes || 0,
+          width: img.width || 0,
+          height: img.height || 0,
+          mime_type: img.mimeType || 'image/png',
+          content_type: 'image_asset_pointer',
+        })),
+        text,
+      ]
+    : [text];
   return {
     action: 'next',
     client_prepare_state: 'sent',
+    attachment_mime_types: hasImages ? refImages.map((img) => img.mimeType || 'image/png') : undefined,
     parent_message_id: parentMessageId || randomUUID(),
     model: 'auto',
     timezone_offset_min: timezoneOffsetMinutes(),
@@ -119,25 +212,47 @@ export function buildConversationRequest({ prompt, parentMessageId, messageId } 
     messages: [{
       id: messageId || randomUUID(),
       author: { role: 'user' },
-      content: { content_type: 'text', parts: [text] },
+      content: { content_type: hasImages ? 'multimodal_text' : 'text', parts },
       metadata: {
+        is_visually_hidden_from_conversation: false,
+        exclude_after_next_user_message: false,
+        content_references: [],
+        search_result_groups: [],
+        search_queries: [],
+        image_results: [],
         developer_mode_connector_ids: [],
         selected_github_repos: [],
         selected_all_github_repos: false,
+        ...(hasImages ? {
+          attachments: refImages.map((img) => ({
+            name: img.id || String(img.pointer || '').replace(/^sediment:\/\//, ''),
+            id: img.id || String(img.pointer || '').replace(/^sediment:\/\//, ''),
+            size: img.sizeBytes || 0,
+            mime_type: img.mimeType || 'image/png',
+          })),
+        } : {}),
         system_hints: ['picture_v2'],
         serialization_metadata: { custom_symbol_offsets: [] },
+        real_time_audio_has_video: false,
+        dictation: false,
+        voice_mode_message: false,
+        image_gen_async: false,
+        trigger_async_ux: false,
+        writing_blocks: {},
       },
       create_time: Date.now() / 1000,
     }],
   };
 }
 
-function buildPrepareRequest({ prompt, parentMessageId, messageId } = {}) {
+function buildPrepareRequest({ prompt, parentMessageId, messageId, refImages = [] } = {}) {
+  const attachmentMimeTypes = refImages.map((img) => img.mimeType || 'image/png');
   return {
     action: 'next',
     client_prepare_state: 'success',
     fork_from_shared_post: false,
     parent_message_id: parentMessageId,
+    attachment_mime_types: attachmentMimeTypes.length ? attachmentMimeTypes : undefined,
     model: 'auto',
     timezone_offset_min: timezoneOffsetMinutes(),
     timezone: timezoneName(),
@@ -239,6 +354,73 @@ export function normalizeBase64Image(raw) {
   }
 }
 
+function inferImageMimeType(bytes, fallback = 'image/png') {
+  if (!bytes || bytes.length < 4) return fallback;
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
+  if (bytes.slice(0, 4).toString('ascii') === 'RIFF' && bytes.slice(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  return fallback;
+}
+
+function imageExtFromMime(mimeType) {
+  const mime = String(mimeType || '').toLowerCase();
+  if (mime.includes('jpeg') || mime.includes('jpg')) return 'jpg';
+  if (mime.includes('webp')) return 'webp';
+  return 'png';
+}
+
+function imageSizeFromBytes(bytes, mimeType) {
+  try {
+    if (mimeType === 'image/png' && bytes.length >= 24) {
+      return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+    }
+    if (mimeType === 'image/jpeg') {
+      let offset = 2;
+      while (offset + 9 < bytes.length) {
+        if (bytes[offset] !== 0xff) break;
+        const marker = bytes[offset + 1];
+        const len = bytes.readUInt16BE(offset + 2);
+        if (marker >= 0xc0 && marker <= 0xc3) {
+          return { height: bytes.readUInt16BE(offset + 5), width: bytes.readUInt16BE(offset + 7) };
+        }
+        offset += 2 + len;
+      }
+    }
+  } catch {}
+  return { width: 0, height: 0 };
+}
+
+export function buildFileUploadRequest({ filename, sizeBytes } = {}) {
+  return {
+    file_name: coalesce(filename, 'reference.png'),
+    file_size: Number(sizeBytes || 0),
+    use_case: 'multimodal',
+    timezone_offset_min: timezoneOffsetMinutes(),
+    reset_rate_limits: false,
+  };
+}
+
+export function buildProcessUploadRequest({ fileId, filename } = {}) {
+  return {
+    file_id: coalesce(fileId, ''),
+    use_case: 'multimodal',
+    index_for_retrieval: false,
+    file_name: coalesce(filename, 'reference.png'),
+    entry_surface: 'chat_composer',
+  };
+}
+
+function normalizeRefImageAssets(input = {}) {
+  return normalizeRefImages(input).map((raw) => {
+    const b64 = normalizeBase64Image(raw);
+    if (!b64) throw new Error('Invalid reference image');
+    const bytes = Buffer.from(b64, 'base64');
+    const mimeType = inferImageMimeType(bytes);
+    const size = imageSizeFromBytes(bytes, mimeType);
+    return { b64, bytes, mimeType, ...size };
+  });
+}
+
 function identityKey(item) {
   if (item.pointer) return `pointer:${item.pointer}`;
   if (item.downloadURL) return `download:${item.downloadURL}`;
@@ -283,6 +465,40 @@ function collectPointerMatches(text, prompt = '') {
     out.push({ pointer: match[0], prompt });
   }
   return out;
+}
+
+function extractImagesFromResponsesText(rawText) {
+  const found = [];
+  const addResult = (item = {}) => {
+    const result = normalizeBase64Image(item.result || item.b64_json || item.b64JSON || '');
+    if (!result) return;
+    found.push({
+      b64_json: result,
+      ...(item.revised_prompt ? { revised_prompt: item.revised_prompt } : {}),
+    });
+  };
+
+  const consume = (obj) => {
+    if (!obj || typeof obj !== 'object') return;
+    if (obj.type === 'response.output_item.done' && obj.item?.type === 'image_generation_call') {
+      addResult(obj.item);
+    }
+    const output = obj.response?.output || obj.output;
+    if (Array.isArray(output)) {
+      for (const item of output) {
+        if (item?.type === 'image_generation_call') addResult(item);
+      }
+    }
+  };
+
+  try { consume(JSON.parse(rawText)); } catch {}
+  for (const line of String(rawText || '').split('\n')) {
+    if (!line.startsWith('data:')) continue;
+    const s = line.slice(5).trim();
+    if (!s || s === '[DONE]') continue;
+    try { consume(JSON.parse(s)); } catch {}
+  }
+  return found;
 }
 
 function isLikelyImageDownloadURL(raw) {
@@ -366,6 +582,45 @@ function hasFileServicePointer(pointers) {
 function preferFileServicePointers(pointers) {
   const filePointers = pointers.filter((p) => String(p.pointer || '').startsWith('file-service://'));
   return filePointers.length ? mergePointers([], filePointers) : mergePointers([], pointers);
+}
+
+export function filterUploadedReferencePointers(pointers = [], refImages = []) {
+  if (!Array.isArray(refImages) || !refImages.length) return pointers;
+  const refPointerSet = new Set();
+  const refIdSet = new Set();
+  for (const img of refImages) {
+    const pointer = String(img?.pointer || '').trim();
+    const id = String(img?.id || '').trim();
+    if (pointer) refPointerSet.add(pointer);
+    if (id) {
+      refIdSet.add(id);
+      refPointerSet.add(`sediment://${id}`);
+      refPointerSet.add(`file-service://${id}`);
+    }
+  }
+  return pointers.filter((p) => {
+    const pointer = String(p?.pointer || '').trim();
+    if (pointer && refPointerSet.has(pointer)) return false;
+    const id = pointer.replace(/^(sediment|file-service):\/\//, '');
+    return !id || !refIdSet.has(id);
+  });
+}
+
+export function getImageQuotaMessage(data = {}) {
+  const blocked = Array.isArray(data?.blocked_features) ? data.blocked_features : [];
+  const imageBlock = blocked.find((item) => String(item?.name || '') === 'image_gen');
+  if (imageBlock) {
+    const reset = firstString(imageBlock.resets_after_text, imageBlock.resets_after);
+    const desc = firstString(imageBlock.description, imageBlock.title);
+    return `ChatGPT 图片生成额度已用完${reset ? `，重置时间：${reset}` : ''}${desc ? `。${desc}` : ''}`;
+  }
+  const limits = Array.isArray(data?.limits_progress) ? data.limits_progress : [];
+  const imageLimit = limits.find((item) => String(item?.feature_name || '') === 'image_gen');
+  if (imageLimit && Number(imageLimit.remaining) <= 0) {
+    const reset = firstString(imageLimit.reset_after);
+    return `ChatGPT 图片生成额度已用完${reset ? `，重置时间：${reset}` : ''}`;
+  }
+  return '';
 }
 
 export function generateRequirementsToken(userAgent = IMAGE_BACKEND_USER_AGENT) {
@@ -461,6 +716,140 @@ async function fetchChatRequirements(headers) {
   throw lastErr || new Error('chat-requirements failed');
 }
 
+function isUploadedFileReadyPayload(data = {}) {
+  if (!data || typeof data !== 'object') return false;
+  if (String(data.status || '').toLowerCase() === 'success' && String(data.download_url || '').trim()) return true;
+  if (String(data.event || '') === 'file.processing.file_ready') return true;
+  if (String(data.event || '') === 'file.processing.completed') return true;
+  return false;
+}
+
+function isFileNotReadyText(text) {
+  return /file is not ready/i.test(String(text || ''));
+}
+
+async function processUploadedFile(headers, fileId, filename) {
+  if (!String(fileId || '').trim()) return;
+  const resp = await fetchWithTimeout(CHATGPT_PROCESS_UPLOAD_URL, {
+    method: 'POST',
+    headers: mergeHeaders(headers, {
+      Accept: 'text/event-stream,application/json',
+      'Content-Type': 'application/json',
+    }),
+    body: JSON.stringify(buildProcessUploadRequest({ fileId, filename })),
+    timeoutMs: 120_000,
+  });
+  if (!resp.ok) throw await statusError(resp, 'reference image process upload failed');
+  const text = await resp.text();
+  if (!text.trim()) return;
+  let sawReady = false;
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed === '[DONE]') continue;
+    const payload = trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed;
+    try {
+      const data = JSON.parse(payload);
+      if (isUploadedFileReadyPayload(data)) sawReady = true;
+    } catch {}
+  }
+  if (!sawReady && isFileNotReadyText(text)) {
+    throw new Error('reference image process upload failed: File is not ready');
+  }
+}
+
+async function waitForUploadedFileReady(headers, fileId) {
+  if (!String(fileId || '').trim()) return;
+  let lastErr = null;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const resp = await fetchWithTimeout(`${CHATGPT_FILES_URL}/download/${fileId}`, {
+      method: 'GET',
+      headers: mergeHeaders(headers, { Accept: 'application/json', 'Content-Type': undefined }),
+      timeoutMs: 60_000,
+    });
+    const text = await readResponseText(resp);
+    if (resp.ok) {
+      try {
+        const data = JSON.parse(text);
+        if (isUploadedFileReadyPayload(data)) return data;
+      } catch {}
+      if (!isFileNotReadyText(text)) return {};
+    } else {
+      lastErr = await statusError(new Response(text, { status: resp.status, statusText: resp.statusText }), 'reference image ready check failed');
+      if (resp.status !== 404 && !isFileNotReadyText(text)) throw lastErr;
+    }
+    await sleep(750);
+  }
+  if (lastErr) throw lastErr;
+  throw new Error('reference image upload did not become ready');
+}
+
+async function uploadReferenceImage(headers, image, index = 0) {
+  const filename = `reference-${index + 1}.${imageExtFromMime(image.mimeType)}`;
+  const file = new Blob([image.bytes], { type: image.mimeType });
+  const attempts = [];
+
+  attempts.push({
+    body: JSON.stringify(buildFileUploadRequest({ filename, sizeBytes: image.bytes.length })),
+    contentType: 'application/json',
+  });
+
+  const form = new FormData();
+  form.append('file', file, filename);
+  form.append('purpose', 'vision');
+  attempts.push({ body: form, contentType: undefined });
+
+  let lastErr = null;
+  for (const attempt of attempts) {
+    const resp = await fetchWithTimeout(CHATGPT_FILES_URL, {
+      method: 'POST',
+      headers: mergeHeaders(headers, {
+        Accept: 'application/json',
+        'Content-Type': attempt.contentType,
+      }),
+      body: attempt.body,
+      timeoutMs: 120_000,
+    });
+    if (resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      const id = firstString(data.id, data.file_id, data.file?.id, data.upload?.file_id);
+      const pointer = firstString(data.asset_pointer, data.file?.asset_pointer, id ? `sediment://${id}` : '');
+      if (id || pointer) {
+        const uploadURL = firstString(data.upload_url, data.uploadURL);
+        if (uploadURL) {
+          const putResp = await fetchWithTimeout(uploadURL, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': image.mimeType,
+              'x-ms-blob-type': 'BlockBlob',
+              Origin: CHATGPT_BASE,
+              Referer: `${CHATGPT_BASE}/`,
+              'User-Agent': headers['User-Agent'] || IMAGE_BACKEND_USER_AGENT,
+            },
+            body: image.bytes,
+            timeoutMs: 120_000,
+          });
+          if (!putResp.ok) throw await statusError(putResp, 'reference image upload PUT failed');
+          await readResponseText(putResp);
+          await processUploadedFile(headers, id, filename);
+          await waitForUploadedFileReady(headers, id);
+        }
+        return {
+          id: id || pointer.replace(/^sediment:\/\//, ''),
+          pointer: pointer || `sediment://${id}`,
+          mimeType: image.mimeType,
+          sizeBytes: image.bytes.length,
+          width: image.width || 0,
+          height: image.height || 0,
+        };
+      }
+      lastErr = new Error('reference image upload returned no file id');
+    } else {
+      lastErr = await statusError(resp, 'reference image upload failed');
+    }
+  }
+  throw lastErr || new Error('reference image upload failed');
+}
+
 async function initializeConversation(headers) {
   const payload = {
     gizmo_id: null,
@@ -476,17 +865,37 @@ async function initializeConversation(headers) {
     timeoutMs: 60_000,
   });
   if (!resp.ok) throw await statusError(resp, 'conversation init failed');
-  await readResponseText(resp);
+  const text = await readResponseText(resp);
+  try {
+    const data = JSON.parse(text);
+    const quotaMessage = getImageQuotaMessage(data);
+    if (quotaMessage) {
+      const err = new Error(quotaMessage);
+      err.status = 429;
+      throw err;
+    }
+  } catch (err) {
+    if (err?.status) throw err;
+  }
 }
 
-async function prepareConversation({ headers, prompt, parentMessageId, chatToken, proofToken }) {
+async function initializeConversationBestEffort(headers) {
+  try {
+    await initializeConversation(headers);
+  } catch (err) {
+    if (err?.status === 429) throw err;
+  }
+}
+
+async function prepareConversation({ headers, prompt, parentMessageId, chatToken, proofToken, refImages = [], conduitToken }) {
   const prepareHeaders = mergeHeaders(headers, {
     Accept: '*/*',
     'Content-Type': 'application/json',
     'openai-sentinel-chat-requirements-token': chatToken,
     'openai-sentinel-proof-token': proofToken || undefined,
+    'x-conduit-token': conduitToken || undefined,
   });
-  const payload = buildPrepareRequest({ prompt, parentMessageId });
+  const payload = buildPrepareRequest({ prompt, parentMessageId, refImages });
   const resp = await fetchWithTimeout(CHATGPT_CONVERSATION_PREPARE_URL, {
     method: 'POST',
     headers: prepareHeaders,
@@ -571,7 +980,7 @@ async function resolvePointerBytes(headers, conversationId, pointer) {
   return downloadBytes(headers, downloadURL);
 }
 
-async function generateOneImage({ headers, prompt, chatReqs, onProgress }) {
+async function generateOneImage({ headers, prompt, chatReqs, onProgress, refImages = [] }) {
   const parentMessageId = randomUUID();
   const proofToken = generateProofToken({
     required: !!chatReqs?.proofofwork?.required,
@@ -581,19 +990,32 @@ async function generateOneImage({ headers, prompt, chatReqs, onProgress }) {
   });
 
   reportOAuthProgress(onProgress, 'oauth:bootstrap', '正在初始化 ChatGPT 会话');
-  await initializeConversation(headers).catch(() => {});
+  await initializeConversationBestEffort(headers);
   reportOAuthProgress(onProgress, 'oauth:prepare_conversation', '正在准备 ChatGPT 图片会话');
-  const conduitToken = await prepareConversation({
+  let conduitToken = await prepareConversation({
     headers,
     prompt,
     parentMessageId,
     chatToken: chatReqs.token,
     proofToken,
+    refImages,
   });
+  if (refImages.length) {
+    conduitToken = await prepareConversation({
+      headers,
+      prompt,
+      parentMessageId,
+      chatToken: chatReqs.token,
+      proofToken,
+      refImages,
+      conduitToken,
+    }) || conduitToken;
+  }
 
-  const convReq = buildConversationRequest({ prompt, parentMessageId });
+  const convReq = buildConversationRequest({ prompt, parentMessageId, refImages });
   const convHeaders = mergeHeaders(headers, {
-    Accept: 'text/event-stream',
+    Accept: 'text/event-stream,application/json',
+    'Cache-Control': 'no-cache',
     'Content-Type': 'application/json',
     'openai-sentinel-chat-requirements-token': chatReqs.token,
     'x-conduit-token': conduitToken || undefined,
@@ -616,7 +1038,7 @@ async function generateOneImage({ headers, prompt, chatReqs, onProgress }) {
     const polled = await pollConversation(headers, streamResult.conversationId);
     pointers = mergePointers(pointers, polled);
   }
-  pointers = preferFileServicePointers(pointers);
+  pointers = filterUploadedReferencePointers(preferFileServicePointers(pointers), refImages);
   if (!pointers.length) {
     if (isPolicyViolationText(rawText)) throw new Error(normalizeGenerationError(rawText));
     throw new Error('ChatGPT image conversation returned no downloadable images');
@@ -634,7 +1056,70 @@ async function generateOneImage({ headers, prompt, chatReqs, onProgress }) {
   return data;
 }
 
+async function generateOAuthImageViaResponses(input = {}) {
+  const onProgress = input.onProgress;
+  reportOAuthProgress(onProgress, 'oauth:prepare', '正在准备 OAuth Responses 生图请求');
+  const accessToken = String(input.accessToken || input.apiKey || '').trim();
+  const prompt = String(input.prompt || '').trim();
+  if (!accessToken) {
+    const err = new Error('Missing OAuth access token');
+    err.status = 400;
+    throw err;
+  }
+  if (!prompt) {
+    const err = new Error('Missing prompt');
+    err.status = 400;
+    throw err;
+  }
+
+  const openaiSessionId = String(input.sessionId || input.openaiSessionId || '').trim() || randomUUID();
+  const body = buildOAuthResponsesImageBody(input);
+  const headers = buildCodexResponsesHeaders({
+    accessToken,
+    accountId: input.accountId,
+    sessionId: openaiSessionId,
+    userAgent: input.userAgent,
+  });
+
+  reportOAuthProgress(onProgress, 'oauth:responses', '正在提交到 ChatGPT Codex Responses 图片通道');
+  const resp = await fetchWithTimeout(CHATGPT_CODEX_RESPONSES_URL, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+    timeoutMs: 240_000,
+  });
+  const rawText = await resp.text();
+  if (!resp.ok) {
+    let message = '';
+    try {
+      const parsed = JSON.parse(rawText);
+      message = parsed?.detail || parsed?.error?.message || parsed?.error || parsed?.message || '';
+    } catch {
+      message = rawText.slice(0, 300);
+    }
+    message = sanitizeErrorText(normalizeGenerationError(message, message));
+    const err = new Error(`OAuth Responses image request failed (${resp.status})${message ? `: ${message}` : ''}`);
+    err.status = resp.status;
+    err.body = sanitizeErrorText(rawText);
+    throw err;
+  }
+  reportOAuthProgress(onProgress, 'oauth:generating', 'ChatGPT 正在生成图片');
+  const images = extractImagesFromResponsesText(rawText);
+  if (!images.length) {
+    if (isPolicyViolationText(rawText)) throw new Error(normalizeGenerationError(rawText));
+    throw new Error('OAuth Responses image request returned no image output');
+  }
+  reportOAuthProgress(onProgress, 'oauth:done', '图片已生成，正在返回页面');
+  return {
+    created: Math.floor(Date.now() / 1000),
+    data: images.slice(0, 1),
+    openaiSessionId,
+  };
+}
+
 export async function generateOAuthImage(input = {}) {
+  const refImages = normalizeRefImages(input);
+  if (input.useResponses === true) return generateOAuthImageViaResponses(input);
   const onProgress = input.onProgress;
   reportOAuthProgress(onProgress, 'oauth:prepare', '正在准备 OAuth 生图请求');
   const accessToken = String(input.accessToken || input.apiKey || '').trim();
@@ -662,6 +1147,13 @@ export async function generateOAuthImage(input = {}) {
 
   reportOAuthProgress(onProgress, 'oauth:bootstrap', '正在初始化 ChatGPT 会话');
   await bootstrap(headers).catch(() => {});
+  await initializeConversationBestEffort(headers);
+  const inputRefImages = normalizeRefImageAssets(input);
+  const uploadedRefImages = [];
+  for (let i = 0; i < inputRefImages.length; i++) {
+    reportOAuthProgress(onProgress, 'oauth:upload', '正在上传参考图到 ChatGPT');
+    uploadedRefImages.push(await uploadReferenceImage(headers, inputRefImages[i], i));
+  }
   reportOAuthProgress(onProgress, 'oauth:requirements', '正在获取 ChatGPT 账号状态');
   const chatReqs = await fetchChatRequirements(headers);
   const unsupportedChallenge = getUnsupportedChatRequirementChallenge(chatReqs);
@@ -672,7 +1164,7 @@ export async function generateOAuthImage(input = {}) {
   const count = Math.max(1, Math.min(4, Number.parseInt(input.n || 1, 10) || 1));
   const data = [];
   for (let i = 0; i < count; i++) {
-    const items = await generateOneImage({ headers, prompt, chatReqs, onProgress });
+    const items = await generateOneImage({ headers, prompt, chatReqs, onProgress, refImages: uploadedRefImages });
     data.push(...items);
     if (data.length >= count) break;
   }

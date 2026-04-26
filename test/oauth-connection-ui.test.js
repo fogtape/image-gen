@@ -33,6 +33,13 @@ test('API Key 账号流式模式默认关闭，只有用户显式开启才走 Re
   assert.doesNotMatch(html, /id="editStream" checked/);
 });
 
+test('手动账号默认图片模型与流式主模型已拆分', () => {
+  assert.match(app, /const DEFAULT_IMAGE_MODEL = 'gpt-image-2'/);
+  assert.match(app, /const DEFAULT_RESPONSES_MODEL = 'gpt-5.4'/);
+  assert.match(html, /id="editModel" value="gpt-image-2"/);
+  assert.match(html, /id="editResponsesModel" value="gpt-5.4"/);
+});
+
 test('OAuth 账号编辑页隐藏流式开关并显示真实 ChatGPT 后端流程说明，首页不展示突兀流程条', () => {
   assert.doesNotMatch(html, /id="routeModeInfo"/);
   assert.match(html, /id="editStreamSection"/);

@@ -15,7 +15,8 @@ const ACCOUNTS_KEY = 'img-gen-accounts';
 const ACTIVE_JOB_KEY = 'img-gen-active-job';
 const APP_SETTINGS_KEY = 'img-gen-app-settings';
 const OLD_KEY = 'img-gen-settings';
-const DEFAULT_MODEL = 'gpt-5.4';
+const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
+const DEFAULT_RESPONSES_MODEL = 'gpt-5.4';
 const MAX_REF_IMAGES = 3;
 const DEFAULT_APP_SETTINGS = {
   generation: { size: 'auto', quality: 'medium', format: 'png', background: 'auto' },
@@ -356,7 +357,8 @@ function migrateOldSettings() {
         type: 'manual',
         apiUrl: old.apiUrl || '',
         apiKey: old.apiKey || '',
-        model: old.model || DEFAULT_MODEL,
+        model: old.model || DEFAULT_IMAGE_MODEL,
+        responsesModel: old.responsesModel || old.promptModel || DEFAULT_RESPONSES_MODEL,
         streamMode: old.streamMode === true,
         createdAt: Date.now(),
       };
@@ -405,7 +407,8 @@ function getEffective() {
   return {
     apiUrl: acc ? acc.apiUrl : '',
     apiKey: acc ? acc.apiKey : '',
-    model: acc ? acc.model : DEFAULT_MODEL,
+    model: acc ? acc.model : DEFAULT_IMAGE_MODEL,
+    responsesModel: acc ? (acc.responsesModel || DEFAULT_RESPONSES_MODEL) : DEFAULT_RESPONSES_MODEL,
     streamMode: acc ? acc.streamMode === true : false,
     useProxy: state.data.useProxy,
     isOAuth: acc ? acc.type === 'oauth' : false,
@@ -676,11 +679,11 @@ function syncAccountModeUi() {
     return;
   }
   if (cfg.streamMode) {
-    info.textContent = '当前模式：API Key · 流式 Responses API（/v1/responses + image_generation）。';
+    info.textContent = `当前模式：API Key · 流式 Responses API（主模型 ${cfg.responsesModel || DEFAULT_RESPONSES_MODEL} + image_generation，图片模型 ${cfg.model || DEFAULT_IMAGE_MODEL}）。`;
     info.className = 'route-mode-info responses';
     return;
   }
-  info.textContent = '当前模式：API Key · 非流式 Images API（/v1/images/generations；有参考图时走 /v1/images/edits）。';
+  info.textContent = `当前模式：API Key · 非流式 Images API（图片模型 ${cfg.model || DEFAULT_IMAGE_MODEL}；文生图走 /v1/images/generations，有参考图走 /v1/images/edits）。`;
   info.className = 'route-mode-info images';
 }
 
@@ -807,7 +810,8 @@ function openEditModal(acc) {
   $('#editName').value = acc ? (acc.name || '') : '';
   $('#editUrl').value = acc ? (acc.apiUrl || '') : '';
   $('#editKey').value = acc ? (acc.apiKey || '') : '';
-  $('#editModel').value = acc ? (acc.model || DEFAULT_MODEL) : DEFAULT_MODEL;
+  $('#editModel').value = acc ? (acc.model || DEFAULT_IMAGE_MODEL) : DEFAULT_IMAGE_MODEL;
+  $('#editResponsesModel').value = acc ? (acc.responsesModel || DEFAULT_RESPONSES_MODEL) : DEFAULT_RESPONSES_MODEL;
   const isOAuth = acc?.type === 'oauth';
   $('#editStream').checked = acc ? acc.streamMode === true : false;
   $('#editStreamSection')?.classList.toggle('hidden', isOAuth);
@@ -825,7 +829,8 @@ function saveEditModal() {
     name: $('#editName').value.trim() || '未命名',
     apiUrl: $('#editUrl').value.trim().replace(/\/+$/, ''),
     apiKey: $('#editKey').value.trim(),
-    model: $('#editModel').value.trim() || DEFAULT_MODEL,
+    model: $('#editModel').value.trim() || DEFAULT_IMAGE_MODEL,
+    responsesModel: $('#editResponsesModel').value.trim() || DEFAULT_RESPONSES_MODEL,
     streamMode: $('#editStream').checked,
   };
   if (id) {
@@ -848,7 +853,8 @@ function addOAuthAccountFromResult(r) {
     type: 'oauth',
     apiUrl: 'https://api.openai.com',
     apiKey: r.accessToken,
-    model: DEFAULT_MODEL,
+    model: DEFAULT_IMAGE_MODEL,
+    responsesModel: DEFAULT_RESPONSES_MODEL,
     streamMode: false,
     email: r.email || '',
     accountId: r.accountId || '',
@@ -1086,6 +1092,7 @@ function publicPromptCfg(cfg) {
     apiUrl: cfg.apiUrl,
     apiKey: cfg.apiKey,
     model: cfg.model,
+    responsesModel: cfg.responsesModel,
     isOAuth: cfg.isOAuth,
     accountId: cfg.accountId,
   };
@@ -1175,9 +1182,6 @@ async function generate() {
   hideGenerationErrorDialog();
 
   try {
-    if (cfg.isOAuth && hasRef) {
-      throw new Error('OAuth 登录生图已改走 ChatGPT 后端通道；当前先支持文字生图，参考图请暂用 API Key 账号。');
-    }
     if (shouldAutoEnhance) {
       finalPrompt = await requestPromptEnhancement(cfg, prompt, style, type, promptEnhancementSettingsForRequest(true));
       $('#prompt').value = finalPrompt;
@@ -1366,6 +1370,7 @@ async function genOAuthImages(cfg, prompt, quality, background, size, format) {
     openaiSessionId: cfg.openaiSessionId,
     model: cfg.model,
     prompt,
+    refImagesBase64: state.refImagesBase64.length ? state.refImagesBase64 : undefined,
     n: 1,
     quality,
     background,
@@ -1470,7 +1475,6 @@ async function genImages(cfg, prompt, quality, background, size, format) {
 async function genEdits(cfg, prompt, quality, background, size, format) {
   const body = {
     model: cfg.model, prompt, n: 1, response_format: 'b64_json',
-    image: state.refImagesBase64.map((data) => ({ type: 'base64', data })),
     images: state.refImagesBase64.map((data) => ({ image_url: toImageDataUrl(data) })),
   };
   if (quality) body.quality = quality;
@@ -1534,6 +1538,7 @@ async function genResponses(cfg, prompt, quality, background, size, format, hasR
   const imageTool = {
     type: 'image_generation',
     action: hasRef ? 'edit' : 'generate',
+    model: cfg.model || DEFAULT_IMAGE_MODEL,
     quality: quality || 'medium',
     size: size === 'auto' ? 'auto' : size,
     background: background || 'auto',
@@ -1541,10 +1546,11 @@ async function genResponses(cfg, prompt, quality, background, size, format, hasR
   };
 
   const body = {
-    model: cfg.model || DEFAULT_MODEL,
+    model: cfg.responsesModel || DEFAULT_RESPONSES_MODEL,
     input,
     stream: true,
-    tool_choice: 'required',
+    store: false,
+    tool_choice: { type: 'image_generation' },
     tools: [imageTool],
   };
 

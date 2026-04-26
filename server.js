@@ -771,7 +771,6 @@ export function buildImagesApiBody(payload = {}) {
       prompt: payload.prompt,
       n: 1,
       response_format: 'b64_json',
-      image: refImages.map((data) => ({ type: 'base64', data })),
       images: refImages.map((data) => ({ image_url: toImageDataUrl(data) })),
       ...imageOptionsFromPayload(payload),
     };
@@ -817,14 +816,15 @@ async function runResponsesJob(payload, onProgress) {
     : payload.prompt;
 
   const body = {
-    model: cfg.model,
+    model: cfg.responsesModel || 'gpt-5.4',
     input,
     stream: true,
     store: false,
-    tool_choice: 'required',
+    tool_choice: { type: 'image_generation' },
     tools: [{
       type: 'image_generation',
       action: hasRef ? 'edit' : 'generate',
+      model: cfg.model,
       quality: payload.quality || 'medium',
       size: payload.size === 'auto' ? 'auto' : payload.size,
       background: payload.background || 'auto',
@@ -875,6 +875,7 @@ async function runImageJob(payload, onProgress) {
       openaiSessionId: cfg.openaiSessionId,
       model: cfg.model,
       prompt: payload.prompt,
+      refImagesBase64: payload.refImagesBase64,
       n: 1,
       quality: payload.quality,
       background: payload.background,

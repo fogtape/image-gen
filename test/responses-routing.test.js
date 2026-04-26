@@ -15,11 +15,11 @@ async function waitForJobDone(jobId, timeoutMs = 1000) {
   throw new Error(`Timed out waiting for job ${jobId}`);
 }
 
-function makeResponsesPayload(model = 'gpt-5.4') {
+function makeResponsesPayload(model = 'gpt-image-2', responsesModel = 'gpt-5.4') {
   return {
     mode: 'responses',
     prompt: '画一个红点',
-    cfg: { apiUrl: 'https://example.test', apiKey: 'test-key', model },
+    cfg: { apiUrl: 'https://example.test', apiKey: 'test-key', model, responsesModel },
     quality: 'low',
     size: 'auto',
     background: 'auto',
@@ -56,8 +56,11 @@ test('Responses image jobs use relay-compatible Codex-style headers and store=fa
     assert.match(headers.session_id, /^[0-9a-f-]{36}$/i);
 
     const body = JSON.parse(calls[0].opts.body);
+    assert.equal(body.model, 'gpt-5.4');
     assert.equal(body.stream, true);
     assert.equal(body.store, false);
+    assert.deepEqual(body.tool_choice, { type: 'image_generation' });
+    assert.equal(body.tools[0].model, 'gpt-image-2');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -80,7 +83,7 @@ test('Responses image jobs with non-image models preserve upstream error instead
     });
   };
   try {
-    const created = imageJobStore.create(makeResponsesPayload('gpt-5.4'));
+    const created = imageJobStore.create(makeResponsesPayload('gpt-image-2', 'gpt-5.4'));
     const job = await waitForJobDone(created.id);
     assert.equal(job.status, 'failed');
     assert.equal(calls.length, 1);
