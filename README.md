@@ -30,7 +30,7 @@ Docker 镜像：`fogtape/image-gen:latest`
 - [各云平台参数怎么填](#各云平台参数怎么填)
   - [Vercel](#vercel)
   - [Netlify](#netlify)
-  - [Cloudflare](#cloudflare)
+  - [Cloudflare Pages](#cloudflare-pages)
   - [EdgeOne Pages](#edgeone-pages)
 - [环境变量清单](#环境变量清单)
 - [前端保存 + 云端同步 + 重新部署的工作流](#前端保存--云端同步--重新部署的工作流)
@@ -61,6 +61,18 @@ npx serve dist -p 3000
 ```
 
 > 仅静态托管时，服务端配置中心、OAuth 后端、后台任务、云平台环境变量同步等功能不会生效。
+
+---
+
+## 零配置 Fork 导入部署
+
+如果你只是想快速上线静态前端，可直接走 **Fork → 导入平台** 的方式：
+
+- **Vercel**：Fork 本仓库后，直接 Import Git Repository
+- **Cloudflare Pages**：Fork 本仓库后，直接 Connect to Git 导入
+- **EdgeOne Pages**：Fork 本仓库后，直接从 Git 仓库导入
+
+这三种方式都可以先完成基础页面部署，初始阶段通常无需配置环境变量；后续若要用服务端配置中心、后台任务、OAuth 后端、环境变量同步与重部署，再按本文后面的平台配置章节补齐。
 
 ---
 
@@ -352,7 +364,7 @@ Netlify 的 `projectId` 实际填的是站点 ID，不是仓库名。
 
 ---
 
-## Cloudflare
+## Cloudflare Pages
 
 ### 前端需要填写
 部署平台选择 `cloudflare` 后，需要填：
