@@ -671,7 +671,7 @@ function syncAccountModeUi() {
     return;
   }
   if (cfg.isOAuth) {
-    info.textContent = '当前模式：OAuth · Codex Responses 图片工具流程（/backend-api/codex/responses + image_generation），支持文生图和带参考图的图生图，不受 API Key 流式开关影响。';
+    info.textContent = '当前模式：OAuth · ChatGPT 后端图片流程（chat-requirements → conversation/prepare → conversation → 下载图片），不受流式开关影响。';
     info.className = 'route-mode-info oauth';
     return;
   }
@@ -1371,7 +1371,6 @@ async function genOAuthImages(cfg, prompt, quality, background, size, format) {
     background,
     size,
     format,
-    refImagesBase64: state.refImagesBase64.length ? state.refImagesBase64 : undefined,
   };
 
   setGenerationStatus('request:send');

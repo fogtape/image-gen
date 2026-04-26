@@ -9,9 +9,6 @@ import {
   isChatChallengeRequired,
   getUnsupportedChatRequirementChallenge,
   reportOAuthProgress,
-  buildOAuthCodexHeaders,
-  buildOAuthCodexImagesRequest,
-  handleOAuthImageRequestBody,
 } from '../openai-oauth-image.js';
 
 test('OAuth 生图请求使用 ChatGPT backend 头，而不是 Codex/OpenAI Images scope 头', () => {
@@ -100,83 +97,4 @@ test('reportOAuthProgress emits structured progress events and ignores missing c
     message: '正在获取 ChatGPT 账号状态',
     attempt: 1,
   }]);
-});
-
-test('OAuth Codex 图片请求按 sub2api 最新链路构造文生图 payload', () => {
-  const headers = buildOAuthCodexHeaders({ apiKey: 'oauth-token', accountId: 'acc_123' }, { 'Content-Type': 'application/json' });
-  assert.equal(headers.Authorization, 'Bearer oauth-token');
-  assert.equal(headers.Accept, 'text/event-stream');
-  assert.equal(headers['OpenAI-Beta'], 'responses=experimental');
-  assert.equal(headers.Originator, 'codex_cli_rs');
-  assert.match(headers['User-Agent'], /^codex_cli_rs\//);
-  assert.equal(headers['chatgpt-account-id'], 'acc_123');
-  assert.ok(headers.session_id);
-
-  const body = buildOAuthCodexImagesRequest({
-    prompt: '画一只猫',
-    model: 'gpt-image-2',
-    size: '1024x1024',
-    quality: 'high',
-    format: 'webp',
-  });
-
-  assert.equal(body.model, 'gpt-5.4-mini');
-  assert.equal(body.store, false);
-  assert.equal(body.stream, true);
-  assert.deepEqual(body.tool_choice, { type: 'image_generation' });
-  assert.equal(body.tools[0].type, 'image_generation');
-  assert.equal(body.tools[0].action, 'generate');
-  assert.equal(body.tools[0].model, 'gpt-image-2');
-  assert.equal(body.tools[0].size, '1024x1024');
-  assert.equal(body.tools[0].quality, 'high');
-  assert.equal(body.tools[0].output_format, 'webp');
-  assert.deepEqual(body.input[0].content, [{ type: 'input_text', text: '画一只猫' }]);
-});
-
-test('OAuth Codex 图片请求支持图生图 input_image，并走 edit action', () => {
-  const ref = Buffer.from('ref-image').toString('base64');
-  const body = buildOAuthCodexImagesRequest({
-    prompt: '把参考图改成赛博朋克风格',
-    refImagesBase64: [ref],
-    model: 'gpt-image-2',
-    format: 'png',
-  });
-
-  assert.equal(body.tools[0].action, 'edit');
-  assert.equal(body.tools[0].output_format, 'png');
-  assert.deepEqual(body.input[0].content, [
-    { type: 'input_text', text: '把参考图改成赛博朋克风格' },
-    { type: 'input_image', image_url: `data:image/png;base64,${ref}` },
-  ]);
-});
-
-test('handleOAuthImageRequestBody 使用 Codex responses 链路并解析 image_generation_call 图片', async (t) => {
-  const originalFetch = global.fetch;
-  const calls = [];
-  const b64 = Buffer.from('generated-image').toString('base64');
-  global.fetch = async (url, opts = {}) => {
-    calls.push({ url: String(url), opts });
-    return new Response([
-      `data: ${JSON.stringify({ type: 'response.output_item.done', item: { type: 'image_generation_call', result: b64, revised_prompt: 'done' } })}`,
-      'data: [DONE]',
-      '',
-    ].join('\n'), { status: 200, headers: { 'content-type': 'text/event-stream' } });
-  };
-  t.after(() => { global.fetch = originalFetch; });
-
-  const data = await handleOAuthImageRequestBody({
-    accessToken: 'oauth-token',
-    accountId: 'acc_123',
-    prompt: '生成图片',
-    refImagesBase64: [Buffer.from('ref').toString('base64')],
-  });
-
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, 'https://chatgpt.com/backend-api/codex/responses');
-  assert.equal(calls[0].opts.headers.Authorization, 'Bearer oauth-token');
-  const sent = JSON.parse(calls[0].opts.body);
-  assert.equal(sent.tools[0].type, 'image_generation');
-  assert.equal(sent.tools[0].action, 'edit');
-  assert.equal(sent.input[0].content[1].type, 'input_image');
-  assert.equal(data.data[0].b64_json, b64);
 });

@@ -33,13 +33,13 @@ test('API Key 账号流式模式默认关闭，只有用户显式开启才走 Re
   assert.doesNotMatch(html, /id="editStream" checked/);
 });
 
-test('OAuth 账号编辑页隐藏流式开关并显示真实 Codex 图片工具流程，首页不展示突兀流程条', () => {
+test('OAuth 账号编辑页隐藏流式开关并显示真实 ChatGPT 后端流程说明，首页不展示突兀流程条', () => {
   assert.doesNotMatch(html, /id="routeModeInfo"/);
   assert.match(html, /id="editStreamSection"/);
   assert.match(html, /id="editOAuthFlowInfo"/);
-  assert.match(html, /Codex Responses[\s\S]*image_generation/);
+  assert.match(html, /chat-requirements[\s\S]*conversation\/prepare[\s\S]*conversation/);
   assert.match(app, /function syncAccountModeUi\(/);
   assert.match(app, /editStreamSection[\s\S]*classList\.toggle\('hidden', isOAuth\)/);
   assert.match(app, /editOAuthFlowInfo[\s\S]*classList\.toggle\('hidden', !isOAuth\)/);
-  assert.match(app, /OAuth · Codex Responses 图片工具流程/);
+  assert.match(app, /ChatGPT 后端图片流程/);
 });
