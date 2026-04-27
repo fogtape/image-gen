@@ -29,6 +29,8 @@ const DATA_DIR = process.env.IMAGE_GEN_DATA_DIR || path.join(__dirname, 'data');
 const MAX_REF_IMAGES = 3;
 const IMAGES_API_TIMEOUT_MS = 300_000;
 const RESPONSES_API_TIMEOUT_MS = 300_000;
+const IMAGE_JOB_MAX_CONCURRENCY = Number(process.env.IMAGE_JOB_MAX_CONCURRENCY || 3);
+const IMAGE_JOB_MAX_QUEUE = Number(process.env.IMAGE_JOB_MAX_QUEUE || 12);
 const imageStore = createImageStore({ dataDir: DATA_DIR });
 const OAUTH_LOOPBACK_PORT = 1455;
 const OAUTH_SESSION_FILE = path.join(__dirname, '.oauth-sessions.json');
@@ -704,6 +706,22 @@ function isImagesApiModel(model) {
   return /^gpt-image-/i.test(String(model || '').trim());
 }
 
+function markError(error, fields = {}) {
+  if (!error || typeof error !== 'object') return error;
+  Object.assign(error, fields);
+  return error;
+}
+
+function shouldFallbackResponsesError(error) {
+  const message = normalizeGenerationError(error?.message || error || '');
+  const status = Number(error?.status || 0);
+  if (status === 401 || status === 403 || status === 429 || status === 504) return false;
+  if (/content policy|内容政策/i.test(message)) return false;
+  if (/HTTP\s+(401|403|429|504)/i.test(message)) return false;
+  return /HTTP\s+(404|405)/i.test(message)
+    || /not supported|unsupported|html 错误页面|网关错误|Bad gateway|text\/html/i.test(message);
+}
+
 function imageOptionsFromPayload(payload) {
   const out = {};
   if (payload.quality) out.quality = payload.quality;
@@ -919,6 +937,12 @@ async function runImagesApiJob(payload, onProgress) {
   const body = compatMode ? null : buildImagesApiBody(payload);
 
   const endpoint = mode === 'edits' ? '/v1/images/edits' : '/v1/images/generations';
+  onProgress('route:selected', `当前链路：${compatMode ? 'images-multipart' : 'images-json'}`, {
+    protocol: compatMode ? 'images-multipart' : 'images-json',
+    endpoint,
+    hasRef: mode === 'edits',
+    compatMode,
+  });
   onProgress('request:send', getGenerationProgressMessage('request:send'));
   const { resp, data } = await runWithTimeout(async (signal) => {
     const resp = await fetch(`${baseApiUrl(cfg.apiUrl)}${endpoint}`, {
@@ -965,6 +989,12 @@ async function runResponsesJob(payload, onProgress) {
   };
 
   onProgress('request:send', getGenerationProgressMessage('request:send'));
+  onProgress('route:selected', '当前链路：responses-sse', {
+    protocol: 'responses-sse',
+    endpoint: '/v1/responses',
+    hasRef,
+    compatMode: false,
+  });
   const { resp, rawText } = await runWithTimeout(async (signal) => {
     const resp = await fetch(`${baseApiUrl(cfg.apiUrl)}/v1/responses`, {
       method: 'POST',
@@ -979,31 +1009,63 @@ async function runResponsesJob(payload, onProgress) {
   if (!resp.ok) {
     try {
       const data = JSON.parse(rawText);
-      throw new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`));
+      throw markError(new Error(normalizeGenerationError(data.error?.message || data.message || `HTTP ${resp.status}`)), { status: resp.status, errorType: 'responses_http_error' });
     } catch (e) {
       if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;
-      throw new Error(`HTTP ${resp.status}`);
+      throw markError(new Error(`HTTP ${resp.status}`), { status: resp.status, errorType: 'responses_http_error' });
     }
   }
   return extractImagesFromResponsesText(rawText, format);
 }
 
-async function persistJobResultIfEnabled(result, payload, onProgress) {
+function createJobTrace(payload = {}) {
+  const refImages = normalizeRefImages(payload);
+  return {
+    mode: payload.mode || 'responses',
+    protocol: '',
+    endpoint: '',
+    compatMode: false,
+    fallbackAttempted: false,
+    hasRef: refImages.length > 0,
+    apiUrl: payload.cfg?.apiUrl || '',
+  };
+}
+
+async function persistJobResultIfEnabled(result, payload, onProgress, trace = null) {
   if (payload.storageSettings?.enabled === false) return result;
   onProgress('storage:save', '正在保存图片到历史记录');
   return await imageStore.persistGenerationResult(result, {
     prompt: payload.prompt,
     format: payload.format || 'png',
     watermarkSettings: payload.watermarkSettings || {},
+    trace,
   });
 }
 
 async function runImageJob(payload, onProgress) {
   const mode = payload.mode || 'responses';
   if (!String(payload.prompt || '').trim()) throw new Error('Missing prompt');
+  const trace = createJobTrace(payload);
+  const tracedProgress = (phase, message, extra = {}) => {
+    if (phase === 'route:selected') {
+      trace.protocol = extra.protocol || trace.protocol;
+      trace.endpoint = extra.endpoint || trace.endpoint;
+      trace.compatMode = extra.compatMode === true;
+      trace.hasRef = extra.hasRef === true || trace.hasRef;
+      if (trace.protocol === 'images-multipart') trace.mode = 'edits';
+      else if (trace.protocol === 'images-json' && extra.hasRef === true) trace.mode = 'edits';
+      else if (trace.protocol === 'images-json') trace.mode = 'images';
+      else if (trace.protocol === 'responses-sse') trace.mode = 'responses';
+    }
+    if (phase === 'fallback:images') trace.fallbackAttempted = true;
+    onProgress(phase, message, extra);
+  };
   let result;
   if (mode === 'oauth') {
     const cfg = payload.cfg || {};
+    trace.mode = 'oauth';
+    trace.protocol = 'oauth-stream';
+    trace.endpoint = '/api/oauth/images/stream';
     result = await handleOAuthImageRequestBody({
       accessToken: cfg.apiKey,
       accountId: cfg.accountId,
@@ -1017,30 +1079,38 @@ async function runImageJob(payload, onProgress) {
       background: payload.background,
       size: payload.size,
       format: payload.format,
-      onProgress: (event) => onProgress(event.phase || event.type || 'progress', event.message || '处理中', event),
+      onProgress: (event) => tracedProgress(event.phase || event.type || 'progress', event.message || '处理中', event),
     });
-    return await persistJobResultIfEnabled(result, payload, onProgress);
+    return await persistJobResultIfEnabled(result, payload, tracedProgress, trace);
   }
   if (mode === 'responses') {
     try {
-      result = await runResponsesJob(payload, onProgress);
+      result = await runResponsesJob(payload, tracedProgress);
     } catch (e) {
       if (normalizeGenerationError(e) === '非常抱歉，生成的图片可能违反了我们的内容政策。如果你认为此判断有误，请重试或修改提示语。') throw e;
       if (!shouldAutoFallbackFromResponses(payload.cfg)) throw new Error(withImageEditsCompatHint(e?.message || e, payload.cfg || {}));
       if (!isImagesApiModel(payload.cfg?.model)) throw e;
-      onProgress('fallback:images', getGenerationProgressMessage('fallback:images'));
-      result = await runImagesApiJob({ ...payload, mode: normalizeRefImages(payload).length ? 'edits' : 'images' }, onProgress);
+      if (!shouldFallbackResponsesError(e)) throw e;
+      e.fallbackAttempted = true;
+      trace.fallbackAttempted = true;
+      tracedProgress('fallback:images', getGenerationProgressMessage('fallback:images'));
+      result = await runImagesApiJob({ ...payload, mode: normalizeRefImages(payload).length ? 'edits' : 'images' }, tracedProgress);
     }
-    return await persistJobResultIfEnabled(result, payload, onProgress);
+    return await persistJobResultIfEnabled(result, payload, tracedProgress, trace);
   }
   if (mode === 'images' || mode === 'edits') {
-    result = await runImagesApiJob(payload, onProgress);
-    return await persistJobResultIfEnabled(result, payload, onProgress);
+    trace.mode = mode;
+    result = await runImagesApiJob(payload, tracedProgress);
+    return await persistJobResultIfEnabled(result, payload, tracedProgress, trace);
   }
   throw new Error(`Unsupported job mode: ${mode}`);
 }
 
-export const imageJobStore = createJobStore({ runner: runImageJob });
+export const imageJobStore = createJobStore({
+  runner: runImageJob,
+  maxConcurrency: IMAGE_JOB_MAX_CONCURRENCY,
+  maxQueue: IMAGE_JOB_MAX_QUEUE,
+});
 
 async function handleCreateImageJob(req, res) {
   const parsed = await readJsonBody(req, res);

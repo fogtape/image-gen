@@ -281,6 +281,71 @@ textarea { resize: vertical; }
 .btn-ghost {
   background: transparent;
   color: var(--text-2);
+}
+
+.btn-ghost:hover { background: var(--border-light); color: var(--text); }
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.toolbar-right .hint {
+  min-width: 0;
+  max-width: min(42vw, 360px);
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  display: inline-block;
+  text-align: right;
+}
+
+.btn-send { flex-shrink: 0; }
+
+.active-job-banner {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #dbeafe;
+  background: #f8fbff;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.active-job-banner.hidden { display: none; }
+.active-job-main { min-width: 0; flex: 1 1 auto; }
+.active-job-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.active-job-meta {
+  margin-top: 2px;
+  font-size: 0.74rem;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.active-job-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-2);
   padding: 8px 14px;
 }
 
@@ -1061,6 +1126,103 @@ input[type="color"] {
   color: var(--text-2);
   font-size: 0.8rem;
   border: 1px solid var(--border-light);
+}
+.storage-diagnostics {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  background: linear-gradient(180deg, rgba(249, 250, 251, 0.96), rgba(244, 247, 250, 0.96));
+}
+.storage-diagnostics.hidden { display: none; }
+.storage-diagnostics-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.storage-diagnostics-list {
+  display: grid;
+  gap: 8px;
+}
+.storage-diagnostics-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.78rem;
+}
+.storage-diagnostics-label {
+  color: var(--text-3);
+  flex: 0 0 auto;
+}
+.storage-diagnostics-value {
+  color: var(--text);
+  text-align: right;
+  min-width: 0;
+}
+.error-dialog-kind-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.error-dialog-kind {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.error-dialog-kind[data-tone="danger"] {
+  background: rgba(255, 59, 48, 0.12);
+  color: #d92d20;
+}
+.error-dialog-kind[data-tone="warning"] {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+.error-dialog-kind[data-tone="info"] {
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+}
+.error-dialog-meta {
+  font-size: 0.78rem;
+  color: var(--text-3);
+}
+.error-dialog-meta.hidden { display: none; }
+.error-dialog-suggestion {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.04);
+  color: var(--text-2);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+.error-dialog-debug {
+  margin-top: 12px;
+  border-top: 1px solid var(--border-light);
+  padding-top: 12px;
+}
+.error-dialog-debug summary {
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 0.8rem;
+}
+.error-dialog-debug-text {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #dbeafe;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .danger-zone {
   display: flex;

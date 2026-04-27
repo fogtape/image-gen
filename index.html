@@ -251,6 +251,7 @@
             </label>
             <small class="section-hint">图片保存到后端数据目录，刷新页面后仍可在历史记录中看到</small>
             <div id="storageStats" class="storage-stats">正在读取存储状态...</div>
+            <div id="storageDiagnostics" class="storage-diagnostics hidden"></div>
             <div class="danger-zone">
               <button id="clearConversationData" class="btn btn-outline" type="button">清理对话数据</button>
               <button id="clearImageData" class="btn btn-outline danger" type="button">清理图片数据</button>
@@ -474,11 +475,21 @@
               <div id="refPreview" class="ref-preview-list hidden"></div>
             </div>
             <div class="toolbar-right">
-              <span id="generationHint" class="hint">Ctrl+Enter 发送</span>
+              <span id="generationHint" class="hint" title="Ctrl+Enter 发送">Ctrl+Enter 发送</span>
               <button id="generateBtn" class="btn btn-primary btn-send">
                 <span class="btn-text">生成</span>
                 <span class="btn-loading hidden"><span class="spinner"></span></span>
               </button>
+            </div>
+          </div>
+          <div id="activeJobBanner" class="active-job-banner hidden">
+            <div class="active-job-main">
+              <div id="activeJobBannerTitle" class="active-job-title">后台任务恢复中</div>
+              <div id="activeJobBannerMeta" class="active-job-meta">正在同步任务状态…</div>
+            </div>
+            <div class="active-job-actions">
+              <button id="retryActiveJobBtn" class="btn btn-outline" type="button">立即重试</button>
+              <button id="dismissActiveJobBtn" class="btn btn-ghost" type="button">放弃任务</button>
             </div>
           </div>
         </div>
@@ -579,7 +590,16 @@
         </div>
         <div class="modal-body error-dialog-body">
           <p class="error-dialog-summary">图片没有生成成功，请查看下面的错误信息。</p>
+          <div class="error-dialog-kind-row">
+            <span id="generationErrorKind" class="error-dialog-kind" data-tone="danger">生成链路失败</span>
+            <span id="generationErrorMeta" class="error-dialog-meta hidden"></span>
+          </div>
+          <div id="generationErrorSuggestion" class="error-dialog-suggestion">建议先查看错误类别，再决定是否切换链路或重试。</div>
           <div id="generationErrorMessage" class="error-dialog-message"></div>
+          <details id="generationErrorDebug" class="error-dialog-debug">
+            <summary>调试详情</summary>
+            <pre id="generationErrorDebugText" class="error-dialog-debug-text"></pre>
+          </details>
           <div class="modal-footer error-dialog-actions">
             <button id="generationErrorConfirm" class="btn btn-primary" type="button">知道了</button>
           </div>

@@ -50,6 +50,28 @@ function detectFormatFromMime(mime, fallback) {
   return EXT_BY_MIME[mime] || fallback;
 }
 
+function sanitizeTrace(trace = {}) {
+  if (!trace || typeof trace !== 'object') return null;
+  const apiHost = (() => {
+    try {
+      return trace.apiUrl ? new URL(String(trace.apiUrl)).host : '';
+    } catch {
+      return '';
+    }
+  })();
+  const normalized = {
+    mode: trace.mode ? String(trace.mode) : '',
+    protocol: trace.protocol ? String(trace.protocol) : '',
+    endpoint: trace.endpoint ? String(trace.endpoint) : '',
+    compatMode: trace.compatMode === true,
+    fallbackAttempted: trace.fallbackAttempted === true,
+    hasRef: trace.hasRef === true,
+    apiHost,
+  };
+  if (!Object.values(normalized).some((value) => value)) return null;
+  return normalized;
+}
+
 function publicRecord(record) {
   return {
     id: record.id,
@@ -61,6 +83,7 @@ function publicRecord(record) {
     createdAt: record.createdAt,
     watermark: record.watermark || null,
     relativePath: record.relativePath,
+    trace: record.trace || null,
   };
 }
 
@@ -84,7 +107,7 @@ async function bufferFromUrl(url) {
   return { buffer: buf, mime };
 }
 
-export function createImageStore({ dataDir = path.join(process.cwd(), 'data'), now = () => Date.now(), idFactory } = {}) {
+export function createImageStore({ dataDir = path.join(process.cwd(), 'data'), now = () => Date.now(), idFactory, bufferTransformer = applyWatermarkToBuffer } = {}) {
   const root = path.resolve(dataDir);
   const imagesDir = path.join(root, IMAGE_DIR_NAME);
   const indexFile = path.join(root, INDEX_FILE_NAME);
@@ -115,7 +138,7 @@ export function createImageStore({ dataDir = path.join(process.cwd(), 'data'), n
     const id = makeId();
     const requestedFormat = safeFormat(meta.format);
     const watermark = normalizeWatermarkSettings(meta.watermarkSettings || {});
-    const finalBuffer = await applyWatermarkToBuffer(buffer, requestedFormat, watermark, new Date(timestamp));
+    const finalBuffer = await bufferTransformer(buffer, requestedFormat, watermark, new Date(timestamp));
     const relativePath = makeRelativePath(id, requestedFormat, timestamp);
     const filePath = path.join(root, relativePath);
     const resolved = path.resolve(filePath);
@@ -138,6 +161,7 @@ export function createImageStore({ dataDir = path.join(process.cwd(), 'data'), n
         timeFormat: watermark.timeFormat,
         position: watermark.position,
       } : null,
+      trace: sanitizeTrace(meta.trace),
     };
     const index = loadIndex();
     index.images.unshift(record);

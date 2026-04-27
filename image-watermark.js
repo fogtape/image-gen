@@ -1,4 +1,11 @@
-import sharp from 'sharp';
+let sharpModulePromise = null;
+
+async function getSharp() {
+  if (!sharpModulePromise) {
+    sharpModulePromise = import('sharp').then((mod) => mod.default || mod);
+  }
+  return await sharpModulePromise;
+}
 
 export const CAMERA_TIME_FORMAT = 'camera';
 
@@ -138,6 +145,7 @@ export async function applyWatermarkToBuffer(buffer, format = 'png', settings = 
   const input = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
   if (!normalized.enabled) return input;
 
+  const sharp = await getSharp();
   const image = sharp(input, { failOn: 'none' }).rotate();
   const metadata = await image.metadata();
   const width = metadata.width || 1;

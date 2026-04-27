@@ -98,7 +98,7 @@ test('生成失败会用居中弹窗提示完整错误，方便后台回来查�
   assert.match(css, /\.error-dialog/);
   assert.match(css, /\.error-dialog-message/);
   assert.match(app, /function showGenerationErrorDialog/);
-  assert.match(app, /showGenerationErrorDialog\(normalized\)/);
+  assert.match(app, /showGenerationErrorDialog\(details\)/);
   assert.match(app, /\$\('#generationErrorClose'\)\?\.addEventListener\('click', hideGenerationErrorDialog\)/);
   assert.match(app, /\$\('#generationErrorConfirm'\)\?\.addEventListener\('click', hideGenerationErrorDialog\)/);
 });

@@ -10,7 +10,11 @@ const ONE_BY_ONE_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4
 
 test('图片存储把生成结果落盘为挂载目录文件并写入轻量元数据', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'image-store-'));
-  const store = createImageStore({ dataDir: dir, now: () => new Date('2026-04-25T11:32:00Z').getTime() });
+  const store = createImageStore({
+    dataDir: dir,
+    now: () => new Date('2026-04-25T11:32:00Z').getTime(),
+    bufferTransformer: async (buffer) => Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer),
+  });
 
   const result = await store.persistGenerationResult({
     created: 123,
@@ -38,7 +42,10 @@ test('图片存储清理图片和全部数据时只删除数据目录内文件',
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'image-store-clear-'));
   const outside = path.join(os.tmpdir(), `outside-${Date.now()}.txt`);
   fs.writeFileSync(outside, 'keep');
-  const store = createImageStore({ dataDir: dir });
+  const store = createImageStore({
+    dataDir: dir,
+    bufferTransformer: async (buffer) => Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer),
+  });
 
   await store.persistGenerationResult({ data: [{ b64_json: ONE_BY_ONE_PNG }] }, { format: 'png', watermarkSettings: { enabled: false } });
   assert.equal(store.getStats().count, 1);

@@ -24,6 +24,7 @@ const BACKGROUND_JOB_POLL_TIMEOUT_MS = 15_000;
 const BACKGROUND_JOB_POLL_INTERVAL_MS = 2_000;
 const BACKGROUND_JOB_POLL_RETRY_LIMIT = 4;
 const BACKGROUND_JOB_POLL_RETRY_BASE_MS = 1_200;
+const ACTIVE_JOB_STALE_MS = 30 * 60 * 1000;
 const DEFAULT_APP_SETTINGS = {
   generation: { size: 'auto', quality: 'medium', format: 'png', background: 'auto' },
   watermark: {
@@ -120,6 +121,29 @@ function loadActiveJob() {
 
 function clearActiveJob() {
   localStorage.removeItem(ACTIVE_JOB_KEY);
+  hideActiveJobBanner();
+}
+
+function formatRelativeTime(ts) {
+  const diff = Math.max(0, Date.now() - Number(ts || 0));
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return `${sec} 秒前`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分钟前`;
+  const hour = Math.floor(min / 60);
+  return `${hour} 小时前`;
+}
+
+function showActiveJobBanner(title, meta = '') {
+  const wrap = $('#activeJobBanner');
+  if (!wrap) return;
+  $('#activeJobBannerTitle').textContent = title || '后台任务进行中';
+  $('#activeJobBannerMeta').textContent = meta || '正在等待后台任务状态…';
+  wrap.classList.remove('hidden');
+}
+
+function hideActiveJobBanner() {
+  $('#activeJobBanner')?.classList.add('hidden');
 }
 
 function loadData() {
@@ -487,6 +511,33 @@ function getEffectiveWatermarkSettings() {
   return wm;
 }
 
+function renderStorageDiagnostics(history = []) {
+  const panel = $('#storageDiagnostics');
+  if (!panel) return;
+  const latest = Array.isArray(history) ? history.find((item) => item?.trace) : null;
+  if (!latest?.trace) {
+    panel.classList.add('hidden');
+    panel.innerHTML = '';
+    return;
+  }
+  const trace = latest.trace || {};
+  const rows = [
+    ['最近链路', trace.protocol || trace.mode || '未知'],
+    ['接口', trace.endpoint || '未知'],
+    ['图生图兼容模式', trace.compatMode ? '已开启' : '未开启'],
+    ['自动回退', trace.fallbackAttempted ? '发生过' : '未发生'],
+    ['参考图', trace.hasRef ? '有' : '无'],
+    ['站点 Host', trace.apiHost || '未知'],
+  ].filter(([, value]) => value);
+  panel.innerHTML = `
+    <div class="storage-diagnostics-title">最近成功链路诊断</div>
+    <div class="storage-diagnostics-list">
+      ${rows.map(([label, value]) => `<div class="storage-diagnostics-item"><span class="storage-diagnostics-label">${label}</span><span class="storage-diagnostics-value" title="${String(value)}">${String(value)}</span></div>`).join('')}
+    </div>
+  `;
+  panel.classList.remove('hidden');
+}
+
 async function loadStorageStats() {
   const el = $('#storageStats');
   if (!el) return;
@@ -495,6 +546,7 @@ async function loadStorageStats() {
     const data = await resp.json();
     el.textContent = `已保存 ${data.count || 0} 张图片，占用 ${formatBytes(data.totalBytes || 0)}`;
     loadImageHistory(data.history || []);
+    renderStorageDiagnostics(data.history || []);
   } catch {
     el.textContent = '存储状态读取失败';
   }
@@ -740,21 +792,105 @@ function hideGenerationErrorDialog() {
   $('#generationErrorOverlay')?.classList.add('hidden');
 }
 
-function showGenerationErrorDialog(msg) {
+function classifyGenerationError(error = {}) {
+  const normalized = normalizeGenerationError(error?.message || error);
+  const type = String(error?.errorType || '').toLowerCase();
+  const status = Number(error?.status || 0) || null;
+  const code = String(error?.code || '').toUpperCase();
+
+  if (isPolicyViolationText(normalized) || type.includes('policy')) {
+    return { label: '内容策略拦截', tone: 'warning', suggestion: '请调整提示词描述，避免敏感或高风险内容。' };
+  }
+  if (type.includes('responses') || type.includes('stream') || /responses/i.test(normalized)) {
+    return { label: '流式链路异常', tone: 'info', suggestion: '可尝试关闭流式，或保留自动回退到 Images API。' };
+  }
+  if (type.includes('compat') || /multipart|兼容模式|edits/i.test(normalized)) {
+    return { label: '图生图兼容性问题', tone: 'info', suggestion: '这类站点通常需要开启图生图兼容模式（multipart）。' };
+  }
+  if (type.includes('html') || /html 错误页面|cdn|网关|502|504/i.test(normalized)) {
+    return { label: '站点网关 \/ CDN 异常', tone: 'danger', suggestion: '上游返回了网关页而不是图片 JSON，建议稍后重试或更换站点。' };
+  }
+  if (status == 404) {
+    return { label: '接口或任务不存在', tone: 'danger', suggestion: '请检查站点接口路径，后台任务恢复失败时也可能是服务端已重启。' };
+  }
+  if (status == 401 || status == 403 || code.includes('AUTH')) {
+    return { label: '鉴权失败', tone: 'danger', suggestion: '请检查 API Key / OAuth token / 站点权限是否有效。' };
+  }
+  if (status == 429 || code == 'TIMEOUT' || /timeout|超时|队列已满|稍后重试/i.test(normalized)) {
+    return { label: '上游拥塞或超时', tone: 'warning', suggestion: '可以降低并发、缩短队列，或改用非流式减少长链路失败率。' };
+  }
+  if (type.includes('images') || /model|参数|unsupported|invalid/i.test(normalized)) {
+    return { label: '模型 / 参数不兼容', tone: 'warning', suggestion: '请检查模型名、尺寸、格式，图生图站点必要时开启兼容模式。' };
+  }
+  return { label: '生成链路失败', tone: 'danger', suggestion: '建议先看下方调试详情，再决定重试、切换流式，或开启兼容模式。' };
+}
+
+function normalizeErrorDialogPayload(input) {
+  if (input instanceof Error) {
+    return {
+      message: normalizeGenerationError(input.message || input),
+      status: Number(input.status || input?.errorInfo?.status || 0) || null,
+      code: input.code || input?.errorInfo?.code || '',
+      errorType: input.errorType || input?.errorInfo?.errorType || '',
+      fallbackAttempted: input.fallbackAttempted === true || input?.errorInfo?.fallbackAttempted === true,
+      raw: input,
+    };
+  }
+  if (input && typeof input === 'object') {
+    return {
+      message: normalizeGenerationError(input.message || input.error || input),
+      status: Number(input.status || input?.errorInfo?.status || 0) || null,
+      code: input.code || input?.errorInfo?.code || '',
+      errorType: input.errorType || input?.errorInfo?.errorType || '',
+      fallbackAttempted: input.fallbackAttempted === true || input?.errorInfo?.fallbackAttempted === true,
+      raw: input.raw || input,
+    };
+  }
+  return {
+    message: normalizeGenerationError(input),
+    status: null,
+    code: '',
+    errorType: '',
+    fallbackAttempted: false,
+    raw: input,
+  };
+}
+
+function showGenerationErrorDialog(input) {
   const overlay = $('#generationErrorOverlay');
   const messageEl = $('#generationErrorMessage');
   if (!overlay || !messageEl) return;
-  messageEl.textContent = String(msg || '生成失败');
+  const details = normalizeErrorDialogPayload(input);
+  const classification = classifyGenerationError(details);
+  const chips = [];
+  if (details.status) chips.push(`HTTP ${details.status}`);
+  if (details.code) chips.push(String(details.code));
+  if (details.fallbackAttempted) chips.push('已尝试自动回退');
+  const debugLines = [
+    details.errorType ? `errorType: ${details.errorType}` : '',
+    details.status ? `status: ${details.status}` : '',
+    details.code ? `code: ${details.code}` : '',
+    details.fallbackAttempted ? 'fallbackAttempted: true' : '',
+  ].filter(Boolean);
+
+  $('#generationErrorKind').textContent = classification.label;
+  $('#generationErrorKind').dataset.tone = classification.tone || 'danger';
+  $('#generationErrorSuggestion').textContent = classification.suggestion;
+  $('#generationErrorMeta').textContent = chips.join(' · ');
+  $('#generationErrorMeta').classList.toggle('hidden', chips.length === 0);
+  messageEl.textContent = details.message || '生成失败';
+  $('#generationErrorDebugText').textContent = debugLines.join('\n') || '没有额外调试字段';
+  $('#generationErrorDebug').open = debugLines.length > 0;
   overlay.classList.remove('hidden');
   setTimeout(() => $('#generationErrorConfirm')?.focus(), 0);
 }
 
 function showError(msg) {
-  const normalized = normalizeGenerationError(msg);
+  const details = normalizeErrorDialogPayload(msg);
   const el = $('#errorMsg');
-  el.textContent = normalized;
+  el.textContent = details.message;
   el.classList.remove('hidden');
-  showGenerationErrorDialog(normalized);
+  showGenerationErrorDialog(details);
   setTimeout(() => el.classList.add('hidden'), 10000);
 }
 
@@ -794,7 +930,10 @@ function getAccurateStatusText(phaseOrMessage, message, meta = getCurrentGenerat
     'result:render': '正在渲染生成结果',
     'storage:save': '正在保存图片到历史记录',
   };
-  if (phase === '__long_wait__') return `${modeText}仍在进行，请耐心等待`;
+  if (phase === '__long_wait__') {
+    const last = state.lastStatusText && state.lastStatusText !== IDLE_GENERATION_HINT ? `（最近进度：${state.lastStatusText}）` : '';
+    return `${modeText}仍在进行，请耐心等待${last}`;
+  }
   return mapping[phase] || message || getGenerationProgressMessage(phase, String(phaseOrMessage || '正在生成图片'));
 }
 
@@ -807,6 +946,7 @@ function setGenerationStatus(phaseOrMessage, message, options = {}) {
   state.lastStatusPhase = phase;
   state.lastStatusText = text;
   hintEl.textContent = text;
+  hintEl.title = text;
 }
 
 function stopWaitingStatusSequence() {
@@ -1529,6 +1669,7 @@ async function pollBackgroundJob(jobId, format, isOAuth) {
       if (job.status === 'completed') {
         clearActiveJob();
         stopWaitingStatusSequence();
+        hideActiveJobBanner();
         setGenerationStatus('result:render');
         if (isOAuth) handleOAuthImageResult(job.result, format);
         else handleImagesResult(job.result, format);
@@ -1538,7 +1679,10 @@ async function pollBackgroundJob(jobId, format, isOAuth) {
       if (job.status === 'failed') {
         clearActiveJob();
         stopWaitingStatusSequence();
-        throw new Error(normalizeGenerationError(job.error || '后台生成失败'));
+        hideActiveJobBanner();
+        const err = new Error(normalizeGenerationError(job.error || '后台生成失败'));
+        if (job.errorInfo) Object.assign(err, job.errorInfo, { errorInfo: job.errorInfo });
+        throw err;
       }
       await sleep(BACKGROUND_JOB_POLL_INTERVAL_MS);
     } catch (e) {
@@ -1547,7 +1691,9 @@ async function pollBackgroundJob(jobId, format, isOAuth) {
       if (retryCount > BACKGROUND_JOB_POLL_RETRY_LIMIT) throw e;
       stopWaitingStatusSequence();
       const delay = backgroundJobBackoffMs(retryCount);
-      setGenerationStatus(`后台任务连接波动，${Math.ceil(delay / 1000)} 秒后自动重试`);
+      const retryText = `后台任务连接波动，第 ${retryCount}/${BACKGROUND_JOB_POLL_RETRY_LIMIT} 次重试，${Math.ceil(delay / 1000)} 秒后自动重试`;
+      setGenerationStatus(retryText);
+      showActiveJobBanner('后台任务连接波动', retryText);
       await sleep(delay);
       startWaitingStatusSequence();
     }
@@ -1556,7 +1702,7 @@ async function pollBackgroundJob(jobId, format, isOAuth) {
 
 function isBackgroundJobsUnavailableError(error) {
   const message = normalizeGenerationError(error?.message || error || '');
-  return /HTTP\s+(404|405|408|429|5\d\d)|Failed to fetch|NetworkError|Not Found|Method not allowed|timeout|timed out|超时/i.test(message);
+  return /HTTP\s+(405|408|429|5\d\d)|Failed to fetch|NetworkError|Method not allowed|timeout|timed out|超时/i.test(message);
 }
 
 function isRetryableBackgroundJobError(error) {
@@ -1573,7 +1719,7 @@ function isMissingBackgroundJobError(error) {
 }
 
 async function genDirectImagesAfterJobFallback(cfg, prompt, quality, background, size, format, hasRef) {
-  setGenerationStatus('云平台后台任务不可用，改用浏览器直连生成');
+  setGenerationStatus('当前部署未启用后台任务，已改用浏览器直连生成');
   if (cfg.isOAuth) return await genOAuthImages(cfg, prompt, quality, background, size, format);
   if (cfg.streamMode) return await genResponsesWithFallback(cfg, prompt, quality, background, size, format, hasRef);
   if (hasRef) return await genEdits(cfg, prompt, quality, background, size, format);
@@ -1621,13 +1767,17 @@ async function genBackgroundImages(cfg, prompt, quality, background, size, forma
   if (!jobId) throw new Error('后台任务创建失败：缺少 jobId');
   saveActiveJob({ jobId, format, isOAuth: cfg.isOAuth, createdAt: Date.now() });
   setGenerationStatus('后台任务已提交，可以切到后台稍后回来查看');
+  showActiveJobBanner('后台任务已提交', '你可以切到后台，稍后回到页面继续恢复结果');
 
   try {
     await pollBackgroundJob(jobId, format, cfg.isOAuth);
   } catch (e) {
     if (isRetryableBackgroundJobError(e)) {
       stopWaitingStatusSequence();
-      setGenerationStatus('后台任务已提交，当前连接不稳定，可稍后回来继续查看结果');
+      const active = loadActiveJob();
+      const createdAtText = active?.createdAt ? `创建于 ${formatRelativeTime(active.createdAt)}` : '任务可能仍在后台执行';
+      showActiveJobBanner('后台任务仍在进行', `${createdAtText}，网络恢复后会自动继续获取结果`);
+      setGenerationStatus('已保留后台任务，网络恢复后会自动继续获取结果');
       return;
     }
     throw e;
@@ -1637,8 +1787,15 @@ async function genBackgroundImages(cfg, prompt, quality, background, size, forma
 async function resumeActiveJobIfAny() {
   const active = loadActiveJob();
   if (!active?.jobId || state.generating) return;
+  if (active.createdAt && Date.now() - Number(active.createdAt) > ACTIVE_JOB_STALE_MS) {
+    clearActiveJob();
+    setGenerationStatus(IDLE_GENERATION_HINT);
+    return;
+  }
   setLoading(true);
   $('#errorMsg').classList.add('hidden');
+  const createdAtText = active.createdAt ? `创建于 ${formatRelativeTime(active.createdAt)}` : '正在恢复任务';
+  showActiveJobBanner('正在恢复后台生成任务', createdAtText);
   setGenerationStatus('正在恢复后台生成任务');
   try {
     await pollBackgroundJob(active.jobId, active.format || 'png', !!active.isOAuth);
@@ -1646,11 +1803,15 @@ async function resumeActiveJobIfAny() {
     if (isMissingBackgroundJobError(e)) {
       clearActiveJob();
       stopWaitingStatusSequence();
+      showActiveJobBanner('后台任务已失效', '任务记录可能已过期或服务已重启，无法继续恢复');
       setGenerationStatus(IDLE_GENERATION_HINT);
+      setTimeout(() => hideActiveJobBanner(), 5000);
       return;
     }
     if (isRetryableBackgroundJobError(e)) {
       stopWaitingStatusSequence();
+      const meta = active.createdAt ? `创建于 ${formatRelativeTime(active.createdAt)}，网络恢复后会自动继续获取结果` : '网络恢复后会自动继续获取结果';
+      showActiveJobBanner('已保留后台任务', meta);
       setGenerationStatus('已保留后台任务，网络恢复后会自动继续获取结果');
       return;
     }
@@ -2080,6 +2241,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('#clearConversationData').onclick = async () => { try { await clearStorageData('conversations'); } catch (e) { showError(e); } };
   $('#clearImageData').onclick = async () => { if (!confirm('确定清理已保存的图片？账号不会删除。')) return; try { await clearStorageData('images'); } catch (e) { showError(e); } };
   $('#clearAllData').onclick = async () => { if (!confirm('确定清理对话和图片数据？账号不会删除。')) return; try { await clearStorageData('all'); clearActiveJob(); $('#prompt').value = ''; } catch (e) { showError(e); } };
+  $('#retryActiveJobBtn')?.addEventListener('click', () => { void resumeActiveJobIfAny(); });
+  $('#dismissActiveJobBtn')?.addEventListener('click', () => { clearActiveJob(); setGenerationStatus(IDLE_GENERATION_HINT); });
 
   // Add manual account
   $('#addManualBtn').onclick = () => openEditModal(null);
