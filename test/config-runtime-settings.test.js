@@ -41,9 +41,11 @@ test('前端已支持读取/保存服务端 runtime config 并驱动默认账号
   assert.match(app, /function getServerCapabilities/);
   assert.match(app, /function canUseProxyMultipart/);
   assert.match(app, /function canPersistImagesOnServer/);
+  assert.match(app, /function canUseConfigSaveApi/);
   assert.match(app, /function getProviderDefaults/);
   assert.match(app, /providerDefaults\.imageModel/);
   assert.match(app, /providerDefaults\.responsesModel/);
   assert.match(app, /providerDefaults\.imageEditsCompatMode/);
   assert.match(app, /providerDefaults\.forceProxy/);
+  assert.match(read('config-service.js'), /canUseConfigSaveApi:\s*true/);
 });

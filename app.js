@@ -599,7 +599,32 @@ function canUseStorageApi() {
   return getServerCapabilities().canUseStorageApi !== false;
 }
 
+function canUseConfigSaveApi() {
+  return getServerCapabilities().canUseConfigSaveApi !== false;
+}
+
+function markConfigApiUnavailable(status = 0) {
+  state.serverCapabilities = {
+    ...(state.serverCapabilities || {}),
+    canUseConfigSaveApi: false,
+  };
+  const error = new Error('当前部署未提供服务端配置保存接口，本次仅保存本地页面设置');
+  error.status = status;
+  error.code = 'CONFIG_SAVE_UNAVAILABLE';
+  error.context = 'settings';
+  return error;
+}
+
+function isConfigSaveUnavailableError(error) {
+  return error?.code === 'CONFIG_SAVE_UNAVAILABLE'
+    || error?.status === 404
+    || /HTTP 404|not found|configuration save api/i.test(String(error?.message || error || ''));
+}
+
 async function saveServerRuntimeConfig(config) {
+  if (!canUseConfigSaveApi()) {
+    throw markConfigApiUnavailable();
+  }
   const adminToken = ($('#configAdminToken')?.value || '').trim();
   saveConfigAdminToken(adminToken);
   const resp = await fetch('/api/config/save', {
@@ -608,7 +633,14 @@ async function saveServerRuntimeConfig(config) {
     body: JSON.stringify({ config }),
   });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  if (resp.status === 404) throw markConfigApiUnavailable(resp.status);
+  if (!resp.ok) {
+    const error = new Error(data.error || `HTTP ${resp.status}`);
+    error.status = resp.status;
+    error.code = 'CONFIG_SAVE_FAILED';
+    error.context = 'settings';
+    throw error;
+  }
   state.serverConfig = data.runtime || state.serverConfig;
   state.serverCapabilities = data.meta?.capabilities || data.capabilities || state.serverCapabilities;
   return data;
@@ -1007,7 +1039,13 @@ async function saveSettingsFromForm() {
   const nextAppSettings = readSettingsForm();
   const nextServerConfig = readServerConfigForm();
   try {
-    const saved = await saveServerRuntimeConfig(nextServerConfig);
+    let saved = null;
+    try {
+      saved = await saveServerRuntimeConfig(nextServerConfig);
+    } catch (e) {
+      if (!isConfigSaveUnavailableError(e)) throw e;
+      console.warn(e?.message || e);
+    }
     state.appSettings = nextAppSettings;
     saveAppSettings();
     if (saved?.runtime) {
@@ -1017,8 +1055,9 @@ async function saveSettingsFromForm() {
     applyGenerationDefaultsToControls();
     syncPromptEnhancementUi();
     closeDialog($('#settingsOverlay'));
+    notifyAction(saved?.runtime ? '设置已保存' : '本地设置已保存；当前部署不支持服务端配置保存');
   } catch (e) {
-    showError(e?.message || e);
+    showError({ ...(typeof e === 'object' && e ? e : {}), message: e?.message || e, context: 'settings' });
   }
 }
 

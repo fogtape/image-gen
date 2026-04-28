@@ -121,6 +121,15 @@ test('生成失败会用居中弹窗提示完整错误，方便后台回来查�
   assert.match(app, /\$\('#generationErrorConfirm'\)\?\.addEventListener\('click', hideGenerationErrorDialog\)/);
 });
 
+test('设置保存失败会标记为设置错误，不再显示成图片生成失败', () => {
+  assert.match(errorDialog, /code\.startsWith\('CONFIG_'\) \|\| error\.context === 'settings'/);
+  assert.match(errorDialog, /kind:\s*'设置保存失败'/);
+  assert.match(app, /function canUseConfigSaveApi/);
+  assert.match(app, /function markConfigApiUnavailable/);
+  assert.match(app, /code = 'CONFIG_SAVE_UNAVAILABLE'/);
+  assert.match(app, /if \(resp\.status === 404\) throw markConfigApiUnavailable\(resp\.status\)/);
+});
+
 test('设置界面样式保持简洁并适配移动端', () => {
   assert.match(css, /\.settings-grid/);
   assert.match(css, /\.watermark-preview/);
@@ -134,6 +143,7 @@ test('设置保存先等待服务端成功，再提交本地偏好', () => {
   const saveFn = app.match(/async function saveSettingsFromForm\(\) \{([\s\S]*?)\n\}/)?.[1] || '';
   assert.ok(saveFn.indexOf('await saveServerRuntimeConfig(nextServerConfig)') < saveFn.indexOf('state.appSettings = nextAppSettings'));
   assert.ok(saveFn.indexOf('state.appSettings = nextAppSettings') < saveFn.indexOf('saveAppSettings()'));
+  assert.match(saveFn, /isConfigSaveUnavailableError/);
   assert.ok(saveFn.indexOf('showError') > saveFn.indexOf('catch'));
 });
 

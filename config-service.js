@@ -376,6 +376,7 @@ export function createConfigService({ isServerless = false, onReload } = {}) {
         canPersistLocalEnv: !isServerless,
         canManageConfig: true,
         canUseConfigApi: true,
+        canUseConfigSaveApi: true,
         canUseProxy: true,
         canProxySse: true,
         canProxyMultipart: !isServerless,

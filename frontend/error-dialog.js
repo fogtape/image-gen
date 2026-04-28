@@ -22,6 +22,13 @@ export function classifyGenerationError(error = {}) {
   const message = normalizeGenerationError(error.message || error.error || error);
   const code = String(error.code || error.type || '').toUpperCase();
   const status = Number(error.status || error.httpStatus || 0);
+  if (code.startsWith('CONFIG_') || error.context === 'settings') {
+    return {
+      kind: '设置保存失败',
+      suggestion: '本地偏好可以继续保存；如果要修改服务端默认配置，请确认当前部署提供配置 API，并检查配置管理口令。',
+      debug: error.debug || code,
+    };
+  }
   if (isPolicyViolationText(message) || code.includes('POLICY')) {
     return {
       kind: '内容策略限制',
