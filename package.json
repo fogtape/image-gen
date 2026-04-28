@@ -10,7 +10,7 @@
     "dev": "node server.js",
     "start": "node server.js",
     "build": "node scripts/build-static.js",
-    "test": "node --test test/*.js api/oauth/test.js",
+    "test": "node --test --test-concurrency=1 test/*.js api/oauth/test.js",
     "test:docker:packaging": "node --test test/docker-packaging.test.js",
     "smoke:docker": "node scripts/docker-smoke-test.mjs",
     "ci:release-gate": "npm test && npm run build && npm run smoke:docker"

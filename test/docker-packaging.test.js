@@ -107,6 +107,7 @@ test('Docker 静态构建阶段会带上 frontend ES modules 产物', () => {
 test('Docker 发布前有质量门禁和可跳过烟测入口', () => {
   assert.equal(packageJson.scripts['test:docker:packaging'], 'node --test test/docker-packaging.test.js');
   assert.equal(packageJson.scripts['smoke:docker'], 'node scripts/docker-smoke-test.mjs');
+  assert.match(packageJson.scripts.test, /--test-concurrency=1/);
   assert.match(packageJson.scripts['ci:release-gate'], /npm test/);
   assert.match(packageJson.scripts['ci:release-gate'], /npm run build/);
   assert.match(packageJson.scripts['ci:release-gate'], /npm run smoke:docker/);
