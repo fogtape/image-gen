@@ -2,7 +2,7 @@
 
 > 适用项目：`/data/data/com.termux/files/home/image-gen`
 > 创建日期：2026-04-28（Asia/Shanghai）
-> 当前阶段：P3 已完成，等待下一轮指令
+> 当前阶段：P3 已完成；CI release gate 热修进行中
 > 来源：2026-04-28 并行全面审查（后端/API/安全、前端/UX、测试/构建/产品缺口）
 > 维护规则：**每完成一个小步，必须立刻更新本文档对应状态、完成时间、变更证据和验证结果**，避免遗漏。
 
@@ -74,6 +74,35 @@ npm test
 | P1 | 后端、serverless、部署一致性 | ✅ 已完成 | P1.1-P1.9 已完成 | Node/Vercel/Netlify 行为一致且有限制 |
 | P2 | 前端可访问性和状态一致性 | ✅ 已完成 | P2.1-P2.10 已完成 | 关键交互可键盘操作，状态不误导用户 |
 | P3 | 测试、文档、维护性和功能建议 | ✅ 已完成 | P3.1、P3.3-P3.7 已完成；P3.2 延后到下一轮 E2E | CI/文档/结构能支撑后续迭代 |
+
+## 1.1 CI release gate 热修记录
+
+### CI.1 修复 GitHub Actions 中 timeout 测试被取消
+
+- **状态**：✅ 已完成（本地 release gate 通过，等待远程 Docker Publish 复验）
+- **开始时间**：2026-04-28 16:57 CST
+- **完成时间**：2026-04-28 16:58 CST
+- **目标**：修复 Docker Publish / release gate 中 `npm test` 出现 `cancelledByParent`，导致 `test/image-storage.test.js` 与 `test/proxy-executor.test.js` 后续用例被取消的问题。
+- **根因判断**：相关测试用例使用永不 resolve 的 mock `fetch` 来等待生产代码的 timeout abort；但生产 timeout 调用了 `timeout.unref?.()`，在 CI 的 Node test runner 中可能让事件循环提前判定空闲，父测试结束时仍有 pending Promise，于是同文件后续 sibling tests 被标记为 `cancelledByParent`。
+- **推荐实现**：
+  1. 让真实超时保护保持 event loop ref 状态，确保待决上游请求一定会等到 abort。
+  2. 保留 `finally { clearTimeout(timeout) }`，正常快速响应不会留下计时器。
+  3. 重跑相关文件和全量 release gate，确认 `cancelled` 归零。
+- **完成判断**：
+  - `node --test test/image-storage.test.js test/proxy-executor.test.js` 通过，且 `cancelled 0`。
+  - `npm run ci:release-gate` 通过。
+  - 推送后 Docker Publish 工作流通过。
+- **变更证据**：
+  - `image-storage.js`：远程图片下载 timeout 不再 `unref()`。
+  - `proxy-executor.js`：代理上游 timeout 不再 `unref()`。
+- **验证结果**：
+  ```bash
+  node --check image-storage.js && node --check proxy-executor.js
+  node --test test/image-storage.test.js test/proxy-executor.test.js
+  npm run ci:release-gate
+  ```
+  结果：语法检查通过；专项 18 tests，18 pass，0 fail，0 cancelled；release gate 通过，`npm test` 为 202 tests，202 pass，0 fail，0 cancelled，`npm run build` 通过，Docker smoke 因本地无 docker 命令按脚本跳过。
+- **关联/后续**：提交并用四号账号推送后，观察远程 Docker Publish 工作流是否通过。
 
 ---
 

@@ -165,7 +165,6 @@ export async function runProxyUpstream({ target, opts }, {
 } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), limits.timeoutMs);
-  timeout.unref?.();
   try {
     const resp = await fetchImpl(target.href, { ...opts, signal: controller.signal });
     const contentType = resp.headers.get('content-type') || 'application/json';

@@ -284,7 +284,6 @@ async function bufferFromUrl(url) {
   const limits = getRemoteImageDownloadLimits();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), limits.timeoutMs);
-  timeout.unref?.();
   try {
     let resp;
     for (let redirectCount = 0; ; redirectCount += 1) {
