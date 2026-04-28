@@ -1,4 +1,9 @@
 import { handleOAuthImageRequestBody } from '../../openai-oauth-image.js';
+import {
+  assertTextBodyWithinLimit,
+  getImageJobBodyLimitBytes,
+  validateImagePayloadLimits,
+} from '../../request-limits.js';
 
 export async function handler(event) {
   if (event.httpMethod === 'OPTIONS') {
@@ -15,7 +20,18 @@ export async function handler(event) {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
 
   let parsed;
-  try { parsed = JSON.parse(event.body || '{}'); } catch {
+  try {
+    assertTextBodyWithinLimit(event.body || '', { maxBytes: getImageJobBodyLimitBytes() });
+    parsed = JSON.parse(event.body || '{}');
+    validateImagePayloadLimits(parsed);
+  } catch (e) {
+    if (e.status === 413) {
+      return {
+        statusCode: 413,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: e.message || '请求体过大' }),
+      };
+    }
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) };
   }
 

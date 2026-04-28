@@ -22,18 +22,39 @@ import {
 import { enhancePrompt } from './prompt-enhancement.js';
 import { createConfigService } from './config-service.js';
 import { createPlatformHandler, getSupportedPlatforms } from './handlers/handler-factory.js';
-
+import {
+  getProxyAllowedHosts,
+  isExplicitLocalDevProxyAllowed,
+  validateApiBaseUrl,
+} from './proxy-policy.js';
+import { prepareProxyRequest, runProxyUpstream } from './proxy-executor.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.IMAGE_GEN_DATA_DIR || path.join(__dirname, 'data');
+const STATIC_ROOT = path.resolve(process.env.IMAGE_GEN_STATIC_DIR || path.join(__dirname, 'dist'));
 const MAX_REF_IMAGES = 3;
 const IMAGES_API_TIMEOUT_MS = 300_000;
 const RESPONSES_API_TIMEOUT_MS = 300_000;
-const IMAGE_JOB_MAX_CONCURRENCY = Number(process.env.IMAGE_JOB_MAX_CONCURRENCY || 3);
-const IMAGE_JOB_MAX_QUEUE = Number(process.env.IMAGE_JOB_MAX_QUEUE || 12);
+
+function boundedIntEnv(name, fallback, min, max) {
+  const raw = Number.parseInt(process.env[name] || '', 10);
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.min(max, Math.max(min, raw));
+}
+
+const IMAGE_JOB_MAX_CONCURRENCY = boundedIntEnv('IMAGE_JOB_MAX_CONCURRENCY', 3, 1, 10);
+const IMAGE_JOB_MAX_QUEUE = boundedIntEnv('IMAGE_JOB_MAX_QUEUE', 12, 1, 100);
+const IMAGE_JOB_TTL_MS = boundedIntEnv('IMAGE_JOB_TTL_MS', 30 * 60 * 1000, 60_000, 24 * 60 * 60 * 1000);
+const IMAGE_JOB_PENDING_TIMEOUT_MS = boundedIntEnv('IMAGE_JOB_PENDING_TIMEOUT_MS', 15 * 60 * 1000, 10_000, 60 * 60 * 1000);
+const IMAGE_JOB_RUNNING_TIMEOUT_MS = boundedIntEnv('IMAGE_JOB_RUNNING_TIMEOUT_MS', 15 * 60 * 1000, 10_000, 60 * 60 * 1000);
+const IMAGE_JOB_MAX_COUNT = 4;
+const JSON_BODY_LIMIT_BYTES = Math.min(50 * 1024 * 1024, Math.max(1024, Number(process.env.IMAGE_GEN_JSON_BODY_LIMIT_BYTES || 10 * 1024 * 1024)));
+const IMAGE_JOB_BODY_LIMIT_BYTES = Math.min(80 * 1024 * 1024, Math.max(1024 * 1024, Number(process.env.IMAGE_GEN_IMAGE_JOB_BODY_LIMIT_BYTES || 30 * 1024 * 1024)));
+const REF_IMAGE_MAX_BYTES = Math.min(30 * 1024 * 1024, Math.max(1024, Number(process.env.IMAGE_GEN_REF_IMAGE_MAX_BYTES || 8 * 1024 * 1024)));
+const REF_IMAGES_TOTAL_MAX_BYTES = Math.min(80 * 1024 * 1024, Math.max(1024, Number(process.env.IMAGE_GEN_REF_IMAGES_TOTAL_MAX_BYTES || 24 * 1024 * 1024)));
 const imageStore = createImageStore({ dataDir: DATA_DIR });
 const OAUTH_LOOPBACK_PORT = 1455;
-const OAUTH_SESSION_FILE = path.join(__dirname, '.oauth-sessions.json');
+const OAUTH_SESSION_FILE = process.env.IMAGE_GEN_OAUTH_SESSION_FILE || path.join(__dirname, '.oauth-sessions.json');
 
 const MIME = {
   '.html': 'text/html',
@@ -54,12 +75,74 @@ const OAUTH_SCOPES = 'openid email profile offline_access';
 const OAUTH_REDIRECT_URI = `http://localhost:${OAUTH_LOOPBACK_PORT}/auth/callback`;
 
 const ADMIN_TOKEN_HEADER = 'x-image-gen-admin-token';
+const STATIC_DENY_SEGMENTS = new Set(['config', 'data', 'api', 'handlers', 'node_modules', 'scripts', 'test', 'netlify']);
+const STATIC_DENY_FILES = new Set([
+  'server.js',
+  'config-service.js',
+  'openai-oauth-image.js',
+  'oauth-flow.js',
+  'package.json',
+  'package-lock.json',
+  '.oauth-sessions.json',
+]);
 const configService = createConfigService({
   isServerless: isServerlessRuntime(),
   onReload: (nextConfig) => {
     console.log(`[config] reloaded ${configService?.envFile || ''} (${nextConfig?.providerDefaults?.imageModel || 'gpt-image-2'})`);
   },
 });
+
+function parseOriginList(value = '') {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+}
+
+function parseHostHeader(value = '') {
+  try {
+    return new URL(`http://${String(value || '').trim()}`).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function isLocalDevHostname(hostname = '') {
+  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
+
+function resolveAllowedCorsOrigin(req) {
+  const origin = String(req.headers.origin || '').trim().replace(/\/+$/, '');
+  if (!origin) return '';
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return '';
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+
+  const explicitOrigins = new Set(parseOriginList(process.env.IMAGE_GEN_ALLOWED_ORIGINS));
+  if (explicitOrigins.has(origin)) return origin;
+
+  const requestHost = String(req.headers.host || '').toLowerCase();
+  if (parsed.host.toLowerCase() === requestHost) return origin;
+
+  const requestHostname = parseHostHeader(requestHost);
+  if (isLocalDevHostname(parsed.hostname) && isLocalDevHostname(requestHostname)) return origin;
+  return '';
+}
+
+function applyCorsHeaders(req, res) {
+  const allowedOrigin = resolveAllowedCorsOrigin(req);
+  if (allowedOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Image-Gen-Admin-Token');
+}
 if (!isServerlessRuntime()) {
   configService.startWatcher();
 }
@@ -68,10 +151,15 @@ function getRuntimeConfig() {
   return configService.getRuntimeConfig();
 }
 
+function getResolvedRuntimeConfig() {
+  return configService.getResolvedConfig();
+}
+
 function getPlatformHandler(platform) {
-  return createPlatformHandler(platform || getRuntimeConfig()?.deploy?.platform || 'node', {
+  const resolved = getResolvedRuntimeConfig();
+  return createPlatformHandler(platform || resolved?.deploy?.platform || 'node', {
     configService,
-    runtimeResolver: getRuntimeConfig,
+    runtimeResolver: getResolvedRuntimeConfig,
   });
 }
 
@@ -85,6 +173,25 @@ export function newOAuthSessionId() {
   return crypto.randomBytes(16).toString('hex');
 }
 
+function oauthSessionSigningSecret() {
+  return String(
+    process.env.IMAGE_GEN_OAUTH_SESSION_SECRET
+    || process.env.IMAGE_GEN_ADMIN_TOKEN
+    || `image-gen-oauth-session:${OAUTH_CLIENT_ID}`
+  );
+}
+
+function signOAuthSessionPayload(payload) {
+  return crypto.createHmac('sha256', oauthSessionSigningSecret()).update(payload).digest('base64url');
+}
+
+function safeEqualString(a = '', b = '') {
+  const left = Buffer.from(String(a));
+  const right = Buffer.from(String(b));
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
 export function makeStatelessOAuthSessionId(session) {
   const payload = {
     state: session?.state || '',
@@ -92,13 +199,16 @@ export function makeStatelessOAuthSessionId(session) {
     redirectUri: session?.redirectUri || OAUTH_REDIRECT_URI,
     createdAt: Number(session?.createdAt || Date.now()),
   };
-  return `pkce_${Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')}`;
+  const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  return `pkce_${encoded}.${signOAuthSessionPayload(encoded)}`;
 }
 
 export function getOAuthSessionFromStatelessId(sessionId) {
   if (!sessionId || !String(sessionId).startsWith('pkce_')) return null;
   try {
-    const raw = Buffer.from(String(sessionId).slice(5), 'base64url').toString('utf8');
+    const [encoded, signature] = String(sessionId).slice(5).split('.');
+    if (!encoded || !signature || !safeEqualString(signOAuthSessionPayload(encoded), signature)) return null;
+    const raw = Buffer.from(encoded, 'base64url').toString('utf8');
     const payload = JSON.parse(raw);
     const createdAt = Number(payload.createdAt || 0);
     if (!payload.state || !payload.codeVerifier || !createdAt) return null;
@@ -144,12 +254,67 @@ export function deleteOAuthSession(sessionId) {
   saveOAuthSessions();
 }
 
+function isTokenLikeOAuthKey(key = '') {
+  return /^(accessToken|refreshToken|access_token|refresh_token|id_token|token)$/i.test(String(key || ''))
+    || /token$/i.test(String(key || ''));
+}
+
+function sanitizeOAuthPersistedValue(value) {
+  if (Array.isArray(value)) return value.map(sanitizeOAuthPersistedValue);
+  if (!value || typeof value !== 'object') return value;
+  const out = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'result' || isTokenLikeOAuthKey(key)) continue;
+    out[key] = sanitizeOAuthPersistedValue(child);
+  }
+  return out;
+}
+
+function sanitizeOAuthSessionForDisk(session = {}) {
+  if (!session || typeof session !== 'object') return null;
+  if (session.status === 'success') return null;
+  return sanitizeOAuthPersistedValue(session);
+}
+
+function writeOAuthSessionsAtomic(data) {
+  const tmp = `${OAUTH_SESSION_FILE}.${process.pid}.${Date.now()}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  let fd = null;
+  try {
+    fd = fs.openSync(tmp, 'w', 0o600);
+    fs.writeFileSync(fd, JSON.stringify(data));
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(tmp, OAUTH_SESSION_FILE);
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch {}
+    }
+    try { fs.rmSync(tmp, { force: true }); } catch {}
+  }
+}
+
 function saveOAuthSessions() {
   try {
-    const data = [...oauthSessions.entries()].map(([sessionId, session]) => [sessionId, session]);
-    fs.writeFileSync(OAUTH_SESSION_FILE, JSON.stringify(data), { mode: 0o600 });
+    const data = [];
+    for (const [sessionId, session] of oauthSessions.entries()) {
+      const persistedSession = sanitizeOAuthSessionForDisk(session);
+      if (persistedSession) data.push([sessionId, persistedSession]);
+    }
+    writeOAuthSessionsAtomic(data);
   } catch (e) {
     console.warn('Failed to save OAuth sessions:', e.message);
+  }
+}
+
+function backupCorruptOAuthSessionFile() {
+  try {
+    if (!fs.existsSync(OAUTH_SESSION_FILE)) return;
+    const backup = `${OAUTH_SESSION_FILE}.corrupt.${Date.now()}`;
+    fs.renameSync(OAUTH_SESSION_FILE, backup);
+    writeOAuthSessionsAtomic([]);
+  } catch (error) {
+    console.warn('Failed to backup corrupt OAuth sessions:', error.message);
   }
 }
 
@@ -163,11 +328,14 @@ function loadOAuthSessions() {
       if (!Array.isArray(item) || item.length !== 2) continue;
       const [sessionId, session] = item;
       if (!sessionId || !session || now - Number(session.createdAt || 0) > SESSION_TTL) continue;
-      oauthSessions.set(sessionId, session);
-      indexOAuthSession(sessionId, session);
+      const persistedSession = sanitizeOAuthSessionForDisk(session);
+      if (!persistedSession) continue;
+      oauthSessions.set(sessionId, persistedSession);
+      indexOAuthSession(sessionId, persistedSession);
     }
   } catch (e) {
     console.warn('Failed to load OAuth sessions:', e.message);
+    backupCorruptOAuthSessionFile();
   }
 }
 
@@ -224,7 +392,7 @@ function ensureLoopbackServer() {
         session.error = error || 'Missing code';
       }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end('<html><body><h2>登录失败</h2><p>请关闭此窗口重试。</p><script>window.close()</script></body></html>');
+      res.end(renderOAuthLoopbackPage('登录失败', '请关闭此窗口重试。'));
       return;
     }
 
@@ -234,13 +402,13 @@ function ensureLoopbackServer() {
       saveOAuthSessions();
 
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end('<html><body><h2>登录成功</h2><p>可以关闭此窗口了。</p><script>window.close()</script></body></html>');
+      res.end(renderOAuthLoopbackPage('登录成功', '可以关闭此窗口了。'));
     } catch (e) {
       session.status = 'error';
       session.error = e.message;
       saveOAuthSessions();
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end('<html><body><h2>登录失败</h2><p>' + e.message + '</p><script>window.close()</script></body></html>');
+      res.end(renderOAuthLoopbackPage('登录失败', e.message || '请关闭此窗口重试。'));
     }
   });
 
@@ -261,16 +429,68 @@ function ensureLoopbackServer() {
   });
 }
 
+export function escapeHtml(value = '') {
+  return String(value).replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
+}
+
+export function renderOAuthLoopbackPage(title, message) {
+  return [
+    '<!doctype html>',
+    '<html><head><meta charset="utf-8"><title>',
+    escapeHtml(title),
+    '</title></head><body><h2>',
+    escapeHtml(title),
+    '</h2><p>',
+    escapeHtml(message),
+    '</p><script>window.close()</script></body></html>',
+  ].join('');
+}
+
 // --- Static file serving ---
 
 function serveStatic(req, res) {
-  let filePath = path.join(__dirname, req.url === '/' ? 'index.html' : req.url);
-  const ext = path.extname(filePath);
-  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+  let pathname = '/';
+  try {
+    pathname = decodeURIComponent(new URL(req.url || '/', 'http://localhost').pathname);
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Bad Request');
+    return;
+  }
+
+  if (pathname === '/') pathname = '/index.html';
+  const segments = pathname.split('/').filter(Boolean);
+  const blocked = segments.some((segment) => (
+    segment === '.'
+    || segment === '..'
+    || segment.startsWith('.')
+    || STATIC_DENY_SEGMENTS.has(segment)
+    || STATIC_DENY_FILES.has(segment)
+  ));
+  const filePath = path.resolve(STATIC_ROOT, `.${pathname}`);
+  const insideStaticRoot = filePath === STATIC_ROOT || filePath.startsWith(`${STATIC_ROOT}${path.sep}`);
+  if (blocked || !insideStaticRoot) {
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Forbidden');
+    return;
+  }
+
+  let stat = null;
+  try {
+    stat = fs.statSync(filePath);
+  } catch {}
+  if (!stat || stat.isDirectory()) {
     res.writeHead(404);
     res.end('Not Found');
     return;
   }
+  const ext = path.extname(filePath);
   res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
   fs.createReadStream(filePath).pipe(res);
 }
@@ -278,8 +498,8 @@ function serveStatic(req, res) {
 // --- Proxy handler ---
 
 async function handleProxy(req, res) {
-  let body = '';
-  for await (const chunk of req) body += chunk;
+  const body = await readRequestText(req, res, { limitBytes: IMAGE_JOB_BODY_LIMIT_BYTES });
+  if (body == null) return;
 
   let parsed;
   try { parsed = JSON.parse(body); } catch {
@@ -288,59 +508,45 @@ async function handleProxy(req, res) {
     return;
   }
 
-  const { url, method, headers, body: reqBody, multipartBody } = parsed;
-  if (!url) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Missing url' }));
+  let prepared;
+  try {
+    prepared = prepareProxyRequest(parsed, {
+      allowedHosts: getProxyAllowedHosts({ runtimeConfig: configService.getResolvedConfig() }),
+      allowLocalHttp: isExplicitLocalDevProxyAllowed(),
+      allowMultipart: true,
+      buildMultipartBody: buildProxyMultipartFormData,
+    });
+  } catch (e) {
+    const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 400;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: e.message || 'Proxy request is invalid' }));
     return;
   }
 
-  const fetchMethod = (method || 'POST').toUpperCase();
-  const opts = { method: fetchMethod, headers: { ...headers } };
-  if (fetchMethod !== 'GET' && reqBody != null) {
-    if (multipartBody?.fields) {
-      delete opts.headers['Content-Type'];
-      delete opts.headers['content-type'];
-      opts.body = buildProxyMultipartFormData(multipartBody);
-    } else {
-      opts.headers['Content-Type'] = 'application/json';
-      opts.body = JSON.stringify(reqBody);
-    }
-  } else if (fetchMethod !== 'GET' && multipartBody?.fields) {
-    delete opts.headers['Content-Type'];
-    delete opts.headers['content-type'];
-    opts.body = buildProxyMultipartFormData(multipartBody);
-  }
-
   try {
-    const resp = await fetch(url, opts);
-    const ct = resp.headers.get('content-type') || 'application/json';
-
-    if (ct.includes('text/event-stream')) {
-      res.writeHead(resp.status, {
-        'Content-Type': 'text/event-stream',
+    const result = await runProxyUpstream(prepared, {
+      onStreamStart: ({ status, contentType }) => res.writeHead(status, {
+        'Content-Type': contentType || 'text/event-stream',
         'Cache-Control': 'no-cache',
-        'Access-Control-Allow-Origin': '*',
-      });
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(decoder.decode(value, { stream: true }));
-      }
+      }),
+      onStreamChunk: (chunk) => res.write(chunk),
+    });
+    if (result.stream) {
       res.end();
     } else {
-      const data = await resp.text();
-      res.writeHead(resp.status, {
-        'Content-Type': ct,
-        'Access-Control-Allow-Origin': '*',
+      res.writeHead(result.status, {
+        'Content-Type': result.contentType,
       });
-      res.end(data);
+      res.end(result.body);
     }
   } catch (e) {
-    res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: e.message }));
+    const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 502;
+    if (res.headersSent) {
+      res.end();
+      return;
+    }
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: e.message || 'Proxy upstream request failed' }));
   }
 }
 
@@ -425,11 +631,6 @@ function handleOAuthStatus(req, res, sessionKey) {
   let sessionId = sessionKey;
   let session = getOAuthSessionById(sessionId);
   if (!session) {
-    const found = getOAuthSessionByState(sessionKey);
-    sessionId = found.sessionId;
-    session = found.session;
-  }
-  if (!session) {
     session = getOAuthSessionFromStatelessId(sessionKey);
     if (session) sessionId = sessionKey;
   }
@@ -452,15 +653,8 @@ function handleOAuthStatus(req, res, sessionKey) {
 }
 
 async function handleOAuthExchange(req, res) {
-  let body = '';
-  for await (const chunk of req) body += chunk;
-
-  let parsed;
-  try { parsed = JSON.parse(body || '{}'); } catch {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Invalid JSON' }));
-    return;
-  }
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
 
   const callbackInput = parsed.callbackUrl || parsed.code || '';
   const sessionId = String(parsed.sessionId || '').trim();
@@ -508,15 +702,8 @@ async function handleOAuthExchange(req, res) {
 }
 
 async function handleOAuthRefresh(req, res) {
-  let body = '';
-  for await (const chunk of req) body += chunk;
-
-  let parsed;
-  try { parsed = JSON.parse(body); } catch {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Invalid JSON' }));
-    return;
-  }
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
 
   const { refreshToken } = parsed;
   if (!refreshToken) {
@@ -567,16 +754,118 @@ export function formatSseEvent(event, data) {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
-async function readJsonBody(req, res) {
+function payloadTooLargeError(message = '请求体过大') {
+  const error = new Error(message);
+  error.status = 413;
+  return error;
+}
+
+async function readRequestText(req, res, { limitBytes = JSON_BODY_LIMIT_BYTES } = {}) {
+  const declaredLength = Number(req.headers?.['content-length'] || 0);
+  if (declaredLength > limitBytes) {
+    res.writeHead(413, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: '请求体过大，请减少参考图数量或压缩图片后重试' }));
+    return null;
+  }
+
   let body = '';
-  for await (const chunk of req) body += chunk;
+  let receivedBytes = 0;
+  for await (const chunk of req) {
+    receivedBytes += Buffer.byteLength(chunk);
+    if (receivedBytes > limitBytes) {
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: '请求体过大，请减少参考图数量或压缩图片后重试' }));
+      return null;
+    }
+    body += chunk;
+  }
+  return body;
+}
+
+async function readJsonBody(req, res, { limitBytes = JSON_BODY_LIMIT_BYTES, allowEmpty = true, emptyValue = {} } = {}) {
+  const body = await readRequestText(req, res, { limitBytes });
+  if (body == null) return null;
+  if (!String(body).trim()) {
+    if (allowEmpty) return emptyValue;
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Invalid JSON' }));
+    return null;
+  }
   try {
-    return JSON.parse(body || '{}');
+    return JSON.parse(body);
   } catch {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Invalid JSON' }));
     return null;
   }
+}
+
+function decodedBase64Bytes(base64 = '') {
+  const clean = String(base64 || '').replace(/\s/g, '');
+  if (!clean) return 0;
+  const padding = clean.endsWith('==') ? 2 : (clean.endsWith('=') ? 1 : 0);
+  return Math.max(0, Math.floor((clean.length * 3) / 4) - padding);
+}
+
+function imageDataByteLength(data, fallbackMime = 'image/png') {
+  const parsed = parseImageInputData(data, fallbackMime);
+  return decodedBase64Bytes(parsed.base64);
+}
+
+function assertImageDataSize(data, { maxBytes = REF_IMAGE_MAX_BYTES, message = '参考图过大，请压缩后重试' } = {}) {
+  const bytes = imageDataByteLength(data);
+  if (bytes > maxBytes) throw payloadTooLargeError(message);
+  return bytes;
+}
+
+function assertRefImagesWithinLimits(images = []) {
+  let totalBytes = 0;
+  for (const image of images) {
+    totalBytes += assertImageDataSize(image);
+    if (totalBytes > REF_IMAGES_TOTAL_MAX_BYTES) throw payloadTooLargeError('参考图总大小过大，请减少数量或压缩后重试');
+  }
+}
+
+function normalizeMaskImage(payload = {}) {
+  const raw = payload.maskImageBase64 || payload.mask || payload.maskImage || '';
+  if (typeof raw !== 'string' || !raw.trim()) return '';
+  const mask = raw.trim();
+  assertImageDataSize(mask, { message: 'mask 图片过大，请压缩后重试' });
+  return mask;
+}
+
+function assertMaskUsageForMode(payload = {}, mode = payload.mode) {
+  const mask = normalizeMaskImage(payload);
+  if (!mask) return '';
+  const refImages = normalizeRefImages(payload);
+  if (!refImages.length) {
+    throw markError(new Error('mask 需要搭配参考图使用'), { status: 400, code: 'MASK_REQUIRES_REFERENCE' });
+  }
+  if (mode !== 'edits') {
+    throw markError(new Error('mask 目前仅支持 Images edits 链路'), { status: 400, code: 'MASK_UNSUPPORTED_MODE' });
+  }
+  return mask;
+}
+
+function collectDataImageStrings(value, out = [], depth = 0) {
+  if (depth > 8 || value == null) return out;
+  if (typeof value === 'string') {
+    if (/^data:image\/[^;]+;base64,/i.test(value)) out.push(value);
+    return out;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectDataImageStrings(item, out, depth + 1));
+    return out;
+  }
+  if (typeof value === 'object') {
+    Object.values(value).forEach((item) => collectDataImageStrings(item, out, depth + 1));
+  }
+  return out;
+}
+
+function assertEmbeddedDataImagesWithinLimits(value) {
+  const images = collectDataImageStrings(value);
+  assertRefImagesWithinLimits(images);
 }
 
 async function handleOAuthTest(req, res) {
@@ -594,10 +883,11 @@ async function handleOAuthTest(req, res) {
 }
 
 async function handleOAuthImages(req, res) {
-  const parsed = await readJsonBody(req, res);
+  const parsed = await readJsonBody(req, res, { limitBytes: IMAGE_JOB_BODY_LIMIT_BYTES });
   if (!parsed) return;
 
   try {
+    assertRefImagesWithinLimits(normalizeRefImages(parsed));
     const data = await handleOAuthImageRequestBody(parsed);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
@@ -613,7 +903,11 @@ async function handlePromptEnhance(req, res) {
   if (!parsed) return;
 
   try {
-    const result = await enhancePrompt(parsed);
+    const result = await enhancePrompt({
+      ...parsed,
+      allowedHosts: getProxyAllowedHosts({ runtimeConfig: configService.getResolvedConfig() }),
+      allowLocalHttp: isExplicitLocalDevProxyAllowed(),
+    });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   } catch (e) {
@@ -624,15 +918,23 @@ async function handlePromptEnhance(req, res) {
 }
 
 async function handleOAuthImagesStream(req, res) {
-  const parsed = await readJsonBody(req, res);
+  const parsed = await readJsonBody(req, res, { limitBytes: IMAGE_JOB_BODY_LIMIT_BYTES });
   if (!parsed) return;
+
+  try {
+    assertRefImagesWithinLimits(normalizeRefImages(parsed));
+  } catch (e) {
+    const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 400;
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: e.message || 'OAuth image request is invalid' }));
+    return;
+  }
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
-    'Access-Control-Allow-Origin': '*',
   });
   res.flushHeaders?.();
 
@@ -658,18 +960,49 @@ async function handleOAuthImagesStream(req, res) {
 // --- Background image jobs ---
 
 function baseApiUrl(apiUrl) {
-  const text = String(apiUrl || '').trim().replace(/\/+$/, '');
-  if (!text) throw new Error('Missing API address');
-  return text;
+  return validateApiBaseUrl(apiUrl, {
+    allowedHosts: getProxyAllowedHosts({ runtimeConfig: configService.getResolvedConfig() }),
+    allowLocalHttp: isExplicitLocalDevProxyAllowed(),
+  }).baseUrl;
 }
 
-async function runWithTimeout(task, timeoutMs, timeoutMessage) {
+function makeJobCancelledError(message = '后台任务已取消') {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  error.code = 'JOB_CANCELLED';
+  error.status = 499;
+  return error;
+}
+
+function isAbortError(error) {
+  return error?.name === 'AbortError' || error?.code === 'ABORT_ERR' || error?.code === 'JOB_CANCELLED';
+}
+
+function throwIfJobAborted(signal) {
+  if (signal?.aborted) throw makeJobCancelledError();
+}
+
+async function runWithTimeout(task, timeoutMs, timeoutMessage, externalSignal = null) {
+  throwIfJobAborted(externalSignal);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let abortReason = '';
+  const abortFromExternal = () => {
+    abortReason = 'external';
+    try { controller.abort(externalSignal?.reason || makeJobCancelledError()); } catch { controller.abort(); }
+  };
+  if (externalSignal?.aborted) abortFromExternal();
+  else externalSignal?.addEventListener?.('abort', abortFromExternal, { once: true });
+  const timer = setTimeout(() => {
+    abortReason = 'timeout';
+    controller.abort();
+  }, timeoutMs);
   try {
     return await task(controller.signal);
   } catch (e) {
-    if (e?.name === 'AbortError') {
+    if (isAbortError(e)) {
+      if (abortReason === 'external' || externalSignal?.aborted || e?.code === 'JOB_CANCELLED') {
+        throw makeJobCancelledError();
+      }
       const error = new Error(timeoutMessage || `上游请求超时（>${Math.ceil(timeoutMs / 1000)} 秒）`);
       error.status = 504;
       error.code = 'UPSTREAM_TIMEOUT';
@@ -678,6 +1011,7 @@ async function runWithTimeout(task, timeoutMs, timeoutMessage) {
     throw e;
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener?.('abort', abortFromExternal);
   }
 }
 
@@ -750,12 +1084,17 @@ function imageExtensionFromMime(mime = 'image/png') {
   return 'png';
 }
 
-function appendMultipartImage(form, image, index = 0, fieldName = 'image') {
+function appendMultipartImage(form, image, index = 0, fieldName = 'image', options = {}) {
   const source = image?.data ?? image?.dataUrl ?? image;
+  assertImageDataSize(source, { message: options.message || '参考图过大，请压缩后重试' });
   const parsed = parseImageInputData(source);
   const name = image?.fieldName || fieldName;
   const filename = image?.filename || `reference-${index + 1}.${imageExtensionFromMime(parsed.mime)}`;
   form.append(name, new Blob([Buffer.from(parsed.base64, 'base64')], { type: parsed.mime }), filename);
+}
+
+function getMultipartImageSource(image) {
+  return image?.data ?? image?.dataUrl ?? image;
 }
 
 function buildImagesEditsMultipartFields(payload = {}) {
@@ -773,14 +1112,22 @@ function buildImagesEditsMultipartFields(payload = {}) {
   return fields;
 }
 
-function buildImagesEditsMultipartFormData(payload = {}) {
+export function buildImagesEditsMultipartFormData(payload = {}) {
   const form = new FormData();
   const fields = buildImagesEditsMultipartFields(payload);
   for (const [key, value] of Object.entries(fields)) {
     if (value != null && String(value) !== '') form.append(key, String(value));
   }
-  normalizeRefImages(payload).forEach((data, index) => appendMultipartImage(form, data, index));
+  const refImages = normalizeRefImages(payload);
+  const mask = normalizeMaskImage(payload);
+  if (mask && !refImages.length) throw new Error('mask 需要搭配参考图使用');
+  refImages.forEach((data, index) => appendMultipartImage(form, data, index));
+  if (mask) appendMultipartImage(form, { data: mask, fieldName: 'mask', filename: 'mask.png' }, 0, 'mask', { message: 'mask 图片过大，请压缩后重试' });
   return form;
+}
+
+function isMultipartMaskImage(image = {}) {
+  return String(image?.fieldName || '').toLowerCase() === 'mask';
 }
 
 function buildProxyMultipartFormData(multipartBody = {}) {
@@ -788,7 +1135,16 @@ function buildProxyMultipartFormData(multipartBody = {}) {
   for (const [key, value] of Object.entries(multipartBody.fields || {})) {
     if (value != null && String(value) !== '') form.append(key, String(value));
   }
-  (multipartBody.images || []).forEach((image, index) => appendMultipartImage(form, image, index));
+  const images = Array.isArray(multipartBody.images) ? multipartBody.images : [];
+  const referenceImages = images.filter((image) => !isMultipartMaskImage(image));
+  const maskImages = images.filter(isMultipartMaskImage);
+  if (multipartBody.mask || multipartBody.maskImageBase64) {
+    maskImages.push({ fieldName: 'mask', filename: 'mask.png', data: multipartBody.mask || multipartBody.maskImageBase64 });
+  }
+  assertRefImagesWithinLimits(referenceImages.map(getMultipartImageSource));
+  maskImages.forEach((image) => assertImageDataSize(getMultipartImageSource(image), { message: 'mask 图片过大，请压缩后重试' }));
+  referenceImages.forEach((image, index) => appendMultipartImage(form, image, index));
+  maskImages.forEach((image, index) => appendMultipartImage(form, image, index, 'mask', { message: 'mask 图片过大，请压缩后重试' }));
   return form;
 }
 
@@ -815,7 +1171,9 @@ function normalizeRefImages(payload = {}) {
     ? payload.refImagesBase64
     : (payload.refImageBase64 ? [payload.refImageBase64] : []);
   if (raw.length > MAX_REF_IMAGES) throw new Error('最多只能上传 3 张参考图');
-  return raw.filter((item) => typeof item === 'string' && item.trim()).slice(0, MAX_REF_IMAGES);
+  const images = raw.filter((item) => typeof item === 'string' && item.trim()).slice(0, MAX_REF_IMAGES);
+  assertRefImagesWithinLimits(images);
+  return images;
 }
 
 function extractImagesFromResponsesText(rawText, format = 'png') {
@@ -911,12 +1269,15 @@ export function buildImagesApiBody(payload = {}) {
   const mode = payload.mode;
   const refImages = normalizeRefImages(payload);
   if (mode === 'edits') {
+    const mask = normalizeMaskImage(payload);
+    if (mask && !refImages.length) throw new Error('mask 需要搭配参考图使用');
     return {
       model: cfg.model,
       prompt: payload.prompt,
       n: 1,
       response_format: 'b64_json',
       images: refImages.map((data) => ({ image_url: toImageDataUrl(data) })),
+      ...(mask ? { mask: toImageDataUrl(mask) } : {}),
       ...imageOptionsFromPayload(payload),
     };
   }
@@ -929,7 +1290,8 @@ export function buildImagesApiBody(payload = {}) {
   };
 }
 
-async function runImagesApiJob(payload, onProgress) {
+async function runImagesApiJob(payload, onProgress, signal = null) {
+  throwIfJobAborted(signal);
   const cfg = payload.cfg || {};
   const format = payload.format || 'png';
   const mode = payload.mode;
@@ -954,12 +1316,13 @@ async function runImagesApiJob(payload, onProgress) {
     onProgress('request:accepted', getGenerationProgressMessage('request:accepted'));
     const data = await readUpstreamJson(resp, 'Images API');
     return { resp, data };
-  }, IMAGES_API_TIMEOUT_MS, 'Images API 上游响应超时，请稍后重试');
+  }, IMAGES_API_TIMEOUT_MS, 'Images API 上游响应超时，请稍后重试', signal);
   if (!resp.ok) throw new Error(withImageEditsCompatHint(data.error?.message || data.message || `HTTP ${resp.status}`, cfg));
   return data;
 }
 
-async function runResponsesJob(payload, onProgress) {
+async function runResponsesJob(payload, onProgress, signal = null) {
+  throwIfJobAborted(signal);
   const cfg = payload.cfg || {};
   const refImages = normalizeRefImages(payload);
   const hasRef = refImages.length > 0;
@@ -1005,7 +1368,7 @@ async function runResponsesJob(payload, onProgress) {
     onProgress('request:accepted', getGenerationProgressMessage('request:accepted'));
     const rawText = await readResponseTextWithProgress(resp, onProgress);
     return { resp, rawText };
-  }, RESPONSES_API_TIMEOUT_MS, 'Responses 图片请求超时，请稍后重试');
+  }, RESPONSES_API_TIMEOUT_MS, 'Responses 图片请求超时，请稍后重试', signal);
   if (!resp.ok) {
     try {
       const data = JSON.parse(rawText);
@@ -1031,19 +1394,86 @@ function createJobTrace(payload = {}) {
   };
 }
 
+function sanitizeBatchId(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return text.replace(/[^a-zA-Z0-9._:-]/g, '').slice(0, 80);
+}
+
+function normalizeImageJobCount(value) {
+  if (value == null || value === '') return 1;
+  const count = Number(value);
+  if (!Number.isInteger(count) || count < 1 || count > IMAGE_JOB_MAX_COUNT) {
+    throw markError(new Error(`生成数量必须是 1-${IMAGE_JOB_MAX_COUNT}`), { status: 400, code: 'INVALID_IMAGE_JOB_COUNT' });
+  }
+  return count;
+}
+
+function normalizeImageJobPayload(payload = {}) {
+  const count = normalizeImageJobCount(payload.count);
+  return {
+    ...payload,
+    count,
+    batchId: sanitizeBatchId(payload.batchId) || `batch_${crypto.randomUUID()}`,
+    batchCount: count,
+  };
+}
+
 async function persistJobResultIfEnabled(result, payload, onProgress, trace = null) {
   if (payload.storageSettings?.enabled === false) return result;
   onProgress('storage:save', '正在保存图片到历史记录');
-  return await imageStore.persistGenerationResult(result, {
+  const cfg = payload.cfg || {};
+  const hasRef = normalizeRefImages(payload).length > 0;
+  const stored = await imageStore.persistGenerationResult(result, {
     prompt: payload.prompt,
     format: payload.format || 'png',
+    size: payload.size || 'auto',
+    quality: payload.quality || '',
+    background: payload.background || 'auto',
+    mode: payload.mode || '',
+    hasRef,
     watermarkSettings: payload.watermarkSettings || {},
     trace,
+    batchId: payload.batchId,
+    batchIndex: payload.batchIndex,
+    batchCount: payload.batchCount || payload.count,
+    model: cfg.model || payload.model || '',
+    accountName: cfg.accountName || '',
+    accountHost: cfg.accountHost || cfg.apiUrl || '',
+    generation: {
+      prompt: payload.prompt,
+      size: payload.size || 'auto',
+      quality: payload.quality || '',
+      format: payload.format || 'png',
+      background: payload.background || 'auto',
+      mode: payload.mode || '',
+      model: cfg.model || payload.model || '',
+      hasRef,
+    },
   });
+  const items = Array.isArray(stored?.data) ? stored.data : [];
+  const failures = items.filter((item) => item?.storageError);
+  const successes = items.filter((item) => item?.persisted === true);
+  if (failures.length && successes.length) {
+    onProgress('storage:partial', `图片历史部分保存失败（${failures.length} 张）`, {
+      storageErrors: failures.slice(0, 3).map((item) => item.storageError),
+    });
+  } else if (failures.length) {
+    onProgress('storage:error', `图片历史保存失败（${failures.length} 张）`, {
+      storageErrors: failures.slice(0, 3).map((item) => item.storageError),
+    });
+  } else if (successes.length) {
+    onProgress('storage:done', `已保存 ${successes.length} 张图片到历史记录`);
+  }
+  return stored;
 }
 
-async function runImageJob(payload, onProgress) {
+async function runSingleImageJob(payload, onProgress, signal = null) {
+  throwIfJobAborted(signal);
   const mode = payload.mode || 'responses';
+  const refImages = normalizeRefImages(payload);
+  assertRefImagesWithinLimits(refImages);
+  assertMaskUsageForMode(payload, mode);
   if (!String(payload.prompt || '').trim()) throw new Error('Missing prompt');
   const trace = createJobTrace(payload);
   const tracedProgress = (phase, message, extra = {}) => {
@@ -1079,14 +1509,16 @@ async function runImageJob(payload, onProgress) {
       background: payload.background,
       size: payload.size,
       format: payload.format,
+      signal,
       onProgress: (event) => tracedProgress(event.phase || event.type || 'progress', event.message || '处理中', event),
     });
     return await persistJobResultIfEnabled(result, payload, tracedProgress, trace);
   }
   if (mode === 'responses') {
     try {
-      result = await runResponsesJob(payload, tracedProgress);
+      result = await runResponsesJob(payload, tracedProgress, signal);
     } catch (e) {
+      if (isAbortError(e)) throw e;
       if (normalizeGenerationError(e) === '非常抱歉，生成的图片可能违反了我们的内容政策。如果你认为此判断有误，请重试或修改提示语。') throw e;
       if (!shouldAutoFallbackFromResponses(payload.cfg)) throw new Error(withImageEditsCompatHint(e?.message || e, payload.cfg || {}));
       if (!isImagesApiModel(payload.cfg?.model)) throw e;
@@ -1094,36 +1526,107 @@ async function runImageJob(payload, onProgress) {
       e.fallbackAttempted = true;
       trace.fallbackAttempted = true;
       tracedProgress('fallback:images', getGenerationProgressMessage('fallback:images'));
-      result = await runImagesApiJob({ ...payload, mode: normalizeRefImages(payload).length ? 'edits' : 'images' }, tracedProgress);
+      result = await runImagesApiJob({ ...payload, mode: normalizeRefImages(payload).length ? 'edits' : 'images' }, tracedProgress, signal);
     }
     return await persistJobResultIfEnabled(result, payload, tracedProgress, trace);
   }
   if (mode === 'images' || mode === 'edits') {
     trace.mode = mode;
-    result = await runImagesApiJob(payload, tracedProgress);
+    result = await runImagesApiJob(payload, tracedProgress, signal);
     return await persistJobResultIfEnabled(result, payload, tracedProgress, trace);
   }
   throw new Error(`Unsupported job mode: ${mode}`);
 }
 
+async function runImageJob(payload, onProgress, signal = null) {
+  throwIfJobAborted(signal);
+  const normalized = normalizeImageJobPayload(payload);
+  const count = normalized.count;
+  const batchId = normalized.batchId;
+  if (count === 1) {
+    return await runSingleImageJob({
+      ...normalized,
+      batchIndex: normalized.batchIndex || 1,
+      batchCount: normalized.batchCount || 1,
+    }, onProgress, signal);
+  }
+
+  const data = [];
+  const errors = [];
+  for (let index = 1; index <= count; index += 1) {
+    throwIfJobAborted(signal);
+    onProgress('batch:item:start', `正在生成第 ${index}/${count} 张`, { batchId, batchIndex: index, batchCount: count });
+    try {
+      const single = await runSingleImageJob({
+        ...normalized,
+        count: 1,
+        batchId,
+        batchIndex: index,
+        batchCount: count,
+      }, onProgress, signal);
+      const items = Array.isArray(single?.data) ? single.data : [];
+      for (const item of items) {
+        data.push({ ...item, batchId, batchIndex: item?.batchIndex || index, batchCount: item?.batchCount || count });
+      }
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      const message = normalizeGenerationError(error?.message || error || '生成失败');
+      errors.push({ batchIndex: index, message });
+      data.push({ failed: true, error: message, batchId, batchIndex: index, batchCount: count });
+      onProgress('batch:item:error', `第 ${index}/${count} 张生成失败`, { batchId, batchIndex: index, batchCount: count, error: message });
+    }
+  }
+
+  const successCount = data.filter((item) => !item?.failed).length;
+  if (!successCount) {
+    const error = new Error(`批量生成失败：${errors[0]?.message || '没有成功生成图片'}`);
+    error.code = 'BATCH_ALL_FAILED';
+    error.batchId = batchId;
+    error.batchErrors = errors;
+    throw error;
+  }
+  if (errors.length) {
+    onProgress('batch:partial', `批量生成部分完成：成功 ${successCount}/${count} 张`, {
+      batchId,
+      batchCount: count,
+      batchErrors: errors.slice(0, 3),
+    });
+  } else {
+    onProgress('batch:done', `批量生成完成：${successCount}/${count} 张`, { batchId, batchCount: count });
+  }
+  return {
+    created: Math.floor(Date.now() / 1000),
+    data,
+    batchId,
+    batchCount: count,
+    errors,
+  };
+}
+
 export const imageJobStore = createJobStore({
   runner: runImageJob,
+  ttlMs: IMAGE_JOB_TTL_MS,
+  maxPendingMs: IMAGE_JOB_PENDING_TIMEOUT_MS,
+  maxRunningMs: IMAGE_JOB_RUNNING_TIMEOUT_MS,
   maxConcurrency: IMAGE_JOB_MAX_CONCURRENCY,
   maxQueue: IMAGE_JOB_MAX_QUEUE,
 });
 
 async function handleCreateImageJob(req, res) {
-  const parsed = await readJsonBody(req, res);
+  const parsed = await readJsonBody(req, res, { limitBytes: IMAGE_JOB_BODY_LIMIT_BYTES });
   if (!parsed) return;
   try {
+    const jobPayload = normalizeImageJobPayload(parsed);
+    assertRefImagesWithinLimits(normalizeRefImages(jobPayload));
+    assertMaskUsageForMode(jobPayload, jobPayload.mode);
     if (isServerlessRuntime()) {
       const progress = [];
       const onProgress = (phase, message, extra = {}) => {
         progress.push({ phase, message, ...extra, at: Date.now() });
       };
       const serverlessPayload = {
-        ...parsed,
-        storageSettings: { ...(parsed.storageSettings || {}), enabled: false },
+        ...jobPayload,
+        storageSettings: { ...(jobPayload.storageSettings || {}), enabled: false },
       };
       const result = await runImageJob(serverlessPayload, onProgress);
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1131,11 +1634,13 @@ async function handleCreateImageJob(req, res) {
       return;
     }
 
-    const job = imageJobStore.create(parsed);
+    const job = imageJobStore.create(jobPayload);
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ jobId: job.id, ...job }));
   } catch (e) {
-    const status = /missing prompt|missing api|missing oauth|missing access token/i.test(e.message || '') ? 400 : 500;
+    const status = e.status && e.status >= 400 && e.status < 600
+      ? e.status
+      : (/missing prompt|missing api|missing oauth|missing access token|最多只能上传/i.test(e.message || '') ? 400 : 500);
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: e.message || 'Failed to create job' }));
   }
@@ -1152,14 +1657,45 @@ function handleGetImageJob(req, res, jobId) {
   res.end(JSON.stringify(job));
 }
 
+function handleCancelImageJob(req, res, jobId) {
+  const job = imageJobStore.cancel(jobId);
+  if (!job) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Job not found or expired' }));
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, jobId: job.id, job }));
+}
+
 function handleStorageStats(req, res) {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(imageStore.getStats()));
 }
 
+function parseFavoriteQuery(value) {
+  const text = String(value || '').toLowerCase();
+  if (text === 'true' || text === '1' || text === 'yes') return true;
+  if (text === 'false' || text === '0' || text === 'no') return false;
+  return null;
+}
+
+function handleStorageHistory(req, res, url) {
+  const result = imageStore.listHistory({
+    query: url.searchParams.get('query') || '',
+    favorite: parseFavoriteQuery(url.searchParams.get('favorite')),
+    limit: url.searchParams.get('limit') || 60,
+    cursor: url.searchParams.get('cursor') || 0,
+    batchId: url.searchParams.get('batchId') || '',
+  });
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(result));
+}
+
 async function handleStorageClear(req, res) {
   const parsed = await readJsonBody(req, res);
   if (!parsed) return;
+  if (!requireConfigAdmin(req, res, parsed)) return;
   try {
     const result = imageStore.clear(parsed.scope || 'images');
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1184,6 +1720,47 @@ function handleStoredImage(req, res, imageId) {
   fs.createReadStream(found.filePath).pipe(res);
 }
 
+async function handleImageMetaPatch(req, res, imageId) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
+  if (!requireConfigAdmin(req, res, parsed)) return;
+  try {
+    const image = await imageStore.updateMeta(imageId, {
+      favorite: parsed.favorite,
+      tags: parsed.tags,
+    });
+    if (!image) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Image not found' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, image }));
+  } catch (e) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: e.message || 'Failed to update image metadata' }));
+  }
+}
+
+async function handleDeleteStoredImage(req, res, imageId) {
+  const parsed = await readJsonBody(req, res, { allowEmpty: true, emptyValue: {} });
+  if (!parsed) return;
+  if (!requireConfigAdmin(req, res, parsed)) return;
+  try {
+    const result = await imageStore.deleteImage(imageId);
+    if (!result) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Image not found' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  } catch (e) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: e.message || 'Failed to delete image' }));
+  }
+}
+
 
 
 function readAdminToken(req, parsedBody = null) {
@@ -1191,22 +1768,57 @@ function readAdminToken(req, parsedBody = null) {
   return String(headerValue || parsedBody?.adminToken || '').trim();
 }
 
+function normalizeRemoteAddress(address = '') {
+  const value = String(address || '').trim();
+  if (!value) return '';
+  if (value.startsWith('::ffff:')) return value.slice('::ffff:'.length);
+  if (value === '0:0:0:0:0:0:0:1') return '::1';
+  return value;
+}
+
+function isLocalAdminRequest(req) {
+  const address = normalizeRemoteAddress(req?.socket?.remoteAddress || req?.connection?.remoteAddress || '');
+  return address === '::1' || address === 'localhost' || address === '127.0.0.1' || /^127\./.test(address);
+}
+
 function requireConfigAdmin(req, res, parsedBody = null) {
   const token = readAdminToken(req, parsedBody);
-  if (!configService.verifyAdminToken(token)) {
+  if (!configService.verifyAdminToken(token, { isLocalRequest: isLocalAdminRequest(req) })) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Config admin token invalid' }));
+    res.end(JSON.stringify({ error: 'Admin authentication required' }));
     return false;
   }
   return true;
 }
 
 function handleConfigRuntime(req, res) {
+  const runtime = configService.getRuntimeConfig();
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
     ok: true,
-    runtime: configService.getResolvedConfig(),
-    editable: configService.getEditableRuntimeConfig(),
+    runtime: runtime.config,
+    meta: {
+      schemaVersion: runtime.schemaVersion,
+      configVersion: runtime.configVersion,
+      capabilities: runtime.capabilities,
+    },
+    schema: configService.getSchema(),
+    platforms: getSupportedPlatforms(),
+  }));
+}
+
+function handleConfigEditable(req, res) {
+  if (!requireConfigAdmin(req, res)) return;
+  const editable = configService.getEditableRuntimeConfig();
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    ok: true,
+    runtime: editable.config,
+    meta: {
+      schemaVersion: editable.schemaVersion,
+      configVersion: editable.configVersion,
+      capabilities: editable.capabilities,
+    },
     schema: configService.getSchema(),
     platforms: getSupportedPlatforms(),
   }));
@@ -1226,7 +1838,8 @@ async function handleConfigSave(req, res) {
   if (!parsed) return;
   if (!requireConfigAdmin(req, res, parsed)) return;
   try {
-    const saved = configService.setRuntimeConfig(parsed.config || parsed.runtime || parsed, { preserveSecrets: true });
+    configService.setRuntimeConfig(parsed.config || parsed.runtime || parsed, { preserveSecrets: true });
+    const saved = configService.getResolvedConfig();
     const handler = getPlatformHandler(saved?.deploy?.platform);
     const operations = [];
     if (saved?.deploy?.autoSync === true) {
@@ -1235,8 +1848,18 @@ async function handleConfigSave(req, res) {
     if (saved?.deploy?.autoRedeploy === true) {
       operations.push(await handler.deploy());
     }
+    const editable = configService.getEditableRuntimeConfig();
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, runtime: configService.getResolvedConfig(), operations }));
+    res.end(JSON.stringify({
+      ok: true,
+      runtime: editable.config,
+      meta: {
+        schemaVersion: editable.schemaVersion,
+        configVersion: editable.configVersion,
+        capabilities: editable.capabilities,
+      },
+      operations,
+    }));
   } catch (error) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: error.message || 'Failed to save runtime config' }));
@@ -1249,7 +1872,8 @@ async function handlePlatformCheck(req, res) {
   if (!requireConfigAdmin(req, res, parsed)) return;
   try {
     if (parsed.config) configService.setRuntimeConfig(parsed.config, { preserveSecrets: true });
-    const handler = getPlatformHandler(parsed.platform || parsed.config?.deploy?.platform);
+    const saved = configService.getResolvedConfig();
+    const handler = getPlatformHandler(parsed.platform || saved?.deploy?.platform);
     const result = await handler.check();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, result }));
@@ -1265,7 +1889,8 @@ async function handlePlatformSync(req, res) {
   if (!requireConfigAdmin(req, res, parsed)) return;
   try {
     if (parsed.config) configService.setRuntimeConfig(parsed.config, { preserveSecrets: true });
-    const handler = getPlatformHandler(parsed.platform || parsed.config?.deploy?.platform);
+    const saved = configService.getResolvedConfig();
+    const handler = getPlatformHandler(parsed.platform || saved?.deploy?.platform);
     const result = await handler.sync();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, result }));
@@ -1281,7 +1906,8 @@ async function handlePlatformDeploy(req, res) {
   if (!requireConfigAdmin(req, res, parsed)) return;
   try {
     if (parsed.config) configService.setRuntimeConfig(parsed.config, { preserveSecrets: true });
-    const handler = getPlatformHandler(parsed.platform || parsed.config?.deploy?.platform);
+    const saved = configService.getResolvedConfig();
+    const handler = getPlatformHandler(parsed.platform || saved?.deploy?.platform);
     const result = await handler.deploy();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, result }));
@@ -1293,60 +1919,112 @@ async function handlePlatformDeploy(req, res) {
 
 // --- Main server ---
 
+function sendJsonError(res, status, message) {
+  if (res.writableEnded) return;
+  if (res.headersSent) {
+    res.end();
+    return;
+  }
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: message }));
+}
+
+function dispatchRoute(req, res, handler) {
+  Promise.resolve()
+    .then(handler)
+    .catch((error) => {
+      console.error('Unhandled route error:', error?.message || error);
+      sendJsonError(res, 500, 'Internal Server Error');
+    });
+}
+
+function safeDecodePathComponent(value, res) {
+  try {
+    return decodeURIComponent(value || '');
+  } catch {
+    sendJsonError(res, 400, 'Bad request path');
+    return null;
+  }
+}
+
 export const server = http.createServer((req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Image-Gen-Admin-Token');
+  try {
+    applyCorsHeaders(req, res);
 
-  if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
+    if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
 
-  const url = new URL(req.url, `http://localhost:${PORT}`);
+    const url = new URL(req.url, `http://localhost:${PORT}`);
+    const run = (handler) => dispatchRoute(req, res, handler);
 
-  if (url.pathname === '/api/proxy' && req.method === 'POST') {
-    handleProxy(req, res);
-  } else if (url.pathname === '/api/config/runtime' && req.method === 'GET') {
-    handleConfigRuntime(req, res);
-  } else if (url.pathname === '/api/config/schema' && req.method === 'GET') {
-    handleConfigSchema(req, res);
-  } else if (url.pathname === '/api/config/save' && req.method === 'POST') {
-    handleConfigSave(req, res);
-  } else if (url.pathname === '/api/config/platform/check' && req.method === 'POST') {
-    handlePlatformCheck(req, res);
-  } else if (url.pathname === '/api/config/platform/sync' && req.method === 'POST') {
-    handlePlatformSync(req, res);
-  } else if (url.pathname === '/api/config/platform/deploy' && req.method === 'POST') {
-    handlePlatformDeploy(req, res);
-  } else if (url.pathname === '/api/prompt/enhance' && req.method === 'POST') {
-    handlePromptEnhance(req, res);
-  } else if (url.pathname === '/api/jobs' && req.method === 'POST') {
-    handleCreateImageJob(req, res);
-  } else if (url.pathname.startsWith('/api/jobs/') && req.method === 'GET') {
-    const jobId = decodeURIComponent(url.pathname.split('/api/jobs/')[1] || '');
-    handleGetImageJob(req, res, jobId);
-  } else if (url.pathname === '/api/storage' && req.method === 'GET') {
-    handleStorageStats(req, res);
-  } else if (url.pathname === '/api/storage/clear' && req.method === 'POST') {
-    handleStorageClear(req, res);
-  } else if (url.pathname.startsWith('/api/images/') && req.method === 'GET') {
-    const imageId = decodeURIComponent(url.pathname.split('/api/images/')[1] || '');
-    handleStoredImage(req, res, imageId);
-  } else if (url.pathname === '/api/oauth/start' && req.method === 'POST') {
-    handleOAuthStart(req, res);
-  } else if (url.pathname.startsWith('/api/oauth/status/') && req.method === 'GET') {
-    const state = url.pathname.split('/api/oauth/status/')[1];
-    handleOAuthStatus(req, res, state);
-  } else if (url.pathname === '/api/oauth/exchange' && req.method === 'POST') {
-    handleOAuthExchange(req, res);
-  } else if (url.pathname === '/api/oauth/refresh' && req.method === 'POST') {
-    handleOAuthRefresh(req, res);
-  } else if (url.pathname === '/api/oauth/test' && req.method === 'POST') {
-    handleOAuthTest(req, res);
-  } else if (url.pathname === '/api/oauth/images' && req.method === 'POST') {
-    handleOAuthImages(req, res);
-  } else if (url.pathname === '/api/oauth/images/stream' && req.method === 'POST') {
-    handleOAuthImagesStream(req, res);
-  } else {
-    serveStatic(req, res);
+    if (url.pathname === '/api/proxy' && req.method === 'POST') {
+      return run(() => handleProxy(req, res));
+    } else if (url.pathname === '/api/config/runtime' && req.method === 'GET') {
+      return run(() => handleConfigRuntime(req, res));
+    } else if (url.pathname === '/api/config/editable' && req.method === 'GET') {
+      return run(() => handleConfigEditable(req, res));
+    } else if (url.pathname === '/api/config/schema' && req.method === 'GET') {
+      return run(() => handleConfigSchema(req, res));
+    } else if (url.pathname === '/api/config/save' && req.method === 'POST') {
+      return run(() => handleConfigSave(req, res));
+    } else if (url.pathname === '/api/config/platform/check' && req.method === 'POST') {
+      return run(() => handlePlatformCheck(req, res));
+    } else if (url.pathname === '/api/config/platform/sync' && req.method === 'POST') {
+      return run(() => handlePlatformSync(req, res));
+    } else if (url.pathname === '/api/config/platform/deploy' && req.method === 'POST') {
+      return run(() => handlePlatformDeploy(req, res));
+    } else if (url.pathname === '/api/prompt/enhance' && req.method === 'POST') {
+      return run(() => handlePromptEnhance(req, res));
+    } else if (url.pathname === '/api/jobs' && req.method === 'POST') {
+      return run(() => handleCreateImageJob(req, res));
+    } else if (url.pathname.startsWith('/api/jobs/') && url.pathname.endsWith('/cancel') && req.method === 'POST') {
+      const rawJobId = url.pathname.slice('/api/jobs/'.length, -'/cancel'.length).replace(/\/+$/, '');
+      const jobId = safeDecodePathComponent(rawJobId, res);
+      if (jobId === null) return;
+      return run(() => handleCancelImageJob(req, res, jobId));
+    } else if (url.pathname.startsWith('/api/jobs/') && req.method === 'GET') {
+      const jobId = safeDecodePathComponent(url.pathname.split('/api/jobs/')[1] || '', res);
+      if (jobId === null) return;
+      return run(() => handleGetImageJob(req, res, jobId));
+    } else if (url.pathname === '/api/storage/history' && req.method === 'GET') {
+      return run(() => handleStorageHistory(req, res, url));
+    } else if (url.pathname === '/api/storage' && req.method === 'GET') {
+      return run(() => handleStorageStats(req, res));
+    } else if (url.pathname === '/api/storage/clear' && req.method === 'POST') {
+      return run(() => handleStorageClear(req, res));
+    } else if (url.pathname.startsWith('/api/images/') && url.pathname.endsWith('/meta') && req.method === 'PATCH') {
+      const rawImageId = url.pathname.slice('/api/images/'.length, -'/meta'.length).replace(/\/+$/, '');
+      const imageId = safeDecodePathComponent(rawImageId, res);
+      if (imageId === null) return;
+      return run(() => handleImageMetaPatch(req, res, imageId));
+    } else if (url.pathname.startsWith('/api/images/') && req.method === 'DELETE') {
+      const imageId = safeDecodePathComponent(url.pathname.split('/api/images/')[1] || '', res);
+      if (imageId === null) return;
+      return run(() => handleDeleteStoredImage(req, res, imageId));
+    } else if (url.pathname.startsWith('/api/images/') && req.method === 'GET') {
+      const imageId = safeDecodePathComponent(url.pathname.split('/api/images/')[1] || '', res);
+      if (imageId === null) return;
+      return run(() => handleStoredImage(req, res, imageId));
+    } else if (url.pathname === '/api/oauth/start' && req.method === 'POST') {
+      return run(() => handleOAuthStart(req, res));
+    } else if (url.pathname.startsWith('/api/oauth/status/') && req.method === 'GET') {
+      const state = safeDecodePathComponent(url.pathname.split('/api/oauth/status/')[1] || '', res);
+      if (state === null) return;
+      return run(() => handleOAuthStatus(req, res, state));
+    } else if (url.pathname === '/api/oauth/exchange' && req.method === 'POST') {
+      return run(() => handleOAuthExchange(req, res));
+    } else if (url.pathname === '/api/oauth/refresh' && req.method === 'POST') {
+      return run(() => handleOAuthRefresh(req, res));
+    } else if (url.pathname === '/api/oauth/test' && req.method === 'POST') {
+      return run(() => handleOAuthTest(req, res));
+    } else if (url.pathname === '/api/oauth/images' && req.method === 'POST') {
+      return run(() => handleOAuthImages(req, res));
+    } else if (url.pathname === '/api/oauth/images/stream' && req.method === 'POST') {
+      return run(() => handleOAuthImagesStream(req, res));
+    }
+    return run(() => serveStatic(req, res));
+  } catch (error) {
+    console.error('Unhandled request dispatch error:', error?.message || error);
+    sendJsonError(res, 500, 'Internal Server Error');
   }
 });
 

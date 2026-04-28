@@ -9,6 +9,7 @@ test('服务端已接入统一配置中心与平台配置 API', () => {
   assert.match(server, /createConfigService/);
   assert.match(server, /createPlatformHandler/);
   assert.match(server, /\/api\/config\/runtime/);
+  assert.match(server, /\/api\/config\/editable/);
   assert.match(server, /\/api\/config\/save/);
   assert.match(server, /\/api\/config\/platform\/check/);
   assert.match(server, /\/api\/config\/platform\/sync/);
@@ -34,7 +35,12 @@ test('前端已支持读取/保存服务端 runtime config 并驱动默认账号
   const app = read('app.js');
   assert.match(app, /CONFIG_ADMIN_TOKEN_KEY/);
   assert.match(app, /async function fetchServerRuntimeConfig/);
+  assert.match(app, /async function fetchEditableRuntimeConfig/);
   assert.match(app, /async function saveServerRuntimeConfig/);
+  assert.match(app, /serverCapabilities/);
+  assert.match(app, /function getServerCapabilities/);
+  assert.match(app, /function canUseProxyMultipart/);
+  assert.match(app, /function canPersistImagesOnServer/);
   assert.match(app, /function getProviderDefaults/);
   assert.match(app, /providerDefaults\.imageModel/);
   assert.match(app, /providerDefaults\.responsesModel/);

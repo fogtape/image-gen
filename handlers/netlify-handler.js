@@ -1,15 +1,8 @@
 import { BaseHandler } from './base-handler.js';
+import { fetchJsonWithTimeout } from './platform-fetch.js';
 
 async function fetchJson(url, options = {}) {
-  const resp = await fetch(url, options);
-  const text = await resp.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  if (!resp.ok) {
-    const message = typeof data === 'object' && data ? (data.message || data.error || data.code) : text;
-    throw new Error(message || `HTTP ${resp.status}`);
-  }
-  return data;
+  return fetchJsonWithTimeout(url, options);
 }
 
 export class NetlifyHandler extends BaseHandler {
@@ -30,7 +23,7 @@ export class NetlifyHandler extends BaseHandler {
   async check() {
     const { accountId, projectId, token } = this.requireParams();
     const envs = await this.listEnv(accountId, projectId, token);
-    return { ok: true, platform: 'netlify', message: 'Netlify 平台参数校验通过。', details: { accountId, projectId, envCount: Array.isArray(envs) ? envs.length : 0, tokenPreview: this.sanitizeSecretPreview(token) } };
+    return { ok: true, platform: 'netlify', message: 'Netlify 平台参数校验通过。', details: { accountId, projectId, envCount: Array.isArray(envs) ? envs.length : 0, apiTokenConfigured: true } };
   }
   async sync() {
     const { accountId, projectId, token } = this.requireParams();

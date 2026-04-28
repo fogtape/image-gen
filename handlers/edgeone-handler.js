@@ -1,16 +1,13 @@
 import { BaseHandler } from './base-handler.js';
+import { fetchJsonWithTimeout, redactMessage } from './platform-fetch.js';
 
 async function postJson(token, data) {
-  const resp = await fetch('https://pages-api.cloud.tencent.com/v1', {
+  const json = await fetchJsonWithTimeout('https://pages-api.cloud.tencent.com/v1', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
-  });
-  const text = await resp.text();
-  let json = null;
-  try { json = text ? JSON.parse(text) : null; } catch { json = text; }
-  if (!resp.ok) throw new Error((json && json.message) || text || `HTTP ${resp.status}`);
-  if (json?.Code && json.Code !== 0 && json?.data?.Code !== 0) throw new Error(json?.Message || json?.data?.Message || 'EdgeOne API failed');
+  }, { redactions: [token] });
+  if (json?.Code && json.Code !== 0 && json?.data?.Code !== 0) throw new Error(redactMessage(json?.Message || json?.data?.Message || 'EdgeOne API failed', [token]));
   return json;
 }
 
@@ -25,9 +22,17 @@ export class EdgeoneHandler extends BaseHandler {
     return { projectId, token: apiToken };
   }
   async check() {
-    const { projectId, token } = this.requireParams();
-    const result = await postJson(token, { Action: 'ModifyPagesProjectEnvs', ProjectId: projectId });
-    return { ok: true, platform: 'edgeone', message: 'EdgeOne 平台参数校验通过。', details: { projectId, tokenPreview: this.sanitizeSecretPreview(token), rawCode: result?.Code || result?.data?.Code || 0 } };
+    const { projectId } = this.requireParams();
+    return {
+      ok: true,
+      platform: 'edgeone',
+      message: 'EdgeOne 本地平台参数校验通过；检查动作不会写入云端环境变量，请使用“同步环境变量”执行实际更新。',
+      details: {
+        projectId,
+        apiTokenConfigured: true,
+        remoteWrite: false,
+      },
+    };
   }
   async sync() {
     const { projectId, token } = this.requireParams();

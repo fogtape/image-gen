@@ -72,7 +72,7 @@ test('云平台静态部署没有后台任务 API 时会回退到浏览器直连
   assert.match(app, /HTTP\\s\+\(404\|405\|408\|429\|5\\d\\d\)/);
   assert.match(app, /async function genDirectImagesAfterJobFallback/);
   assert.match(app, /job = await createBackgroundJob\(payload\);[\s\S]*if \(isBackgroundJobsUnavailableError\(e\)\)/s);
-  assert.match(app, /await genDirectImagesAfterJobFallback\(cfg, prompt, quality, background, size, format, hasRef\)/);
+  assert.match(app, /await genDirectImagesAfterJobFallback\(cfg, prompt, quality, background, size, format, hasRef, actualCount(?:, resultMeta)?\)/);
 });
 
 test('Vercel serverless 后台任务同步完成并直接返回结果，避免跨实例轮询丢失', () => {
@@ -89,8 +89,8 @@ test('Vercel serverless 后台任务同步完成并直接返回结果，避免�
 test('前端能处理 serverless 直接完成结果，刷新遇到过期后台任务不弹错误', () => {
   const app = read('app.js');
   assert.match(app, /if \(job\.status === 'completed'\) \{/);
-  assert.match(app, /handleOAuthImageResult\(job\.result, format\)/);
-  assert.match(app, /handleImagesResult\(job\.result, format\)/);
+  assert.match(app, /handleOAuthImageResult\(job\.result, format(?:, resultMeta)?\)/);
+  assert.match(app, /handleImagesResult\(job\.result, format(?:, resultMeta)?\)/);
   assert.match(app, /function isMissingBackgroundJobError\(error\)/);
   assert.match(app, /if \(isMissingBackgroundJobError\(e\)\) \{[\s\S]*clearActiveJob\(\)[\s\S]*return;[\s\S]*\}/);
 });
@@ -100,4 +100,30 @@ test('README 覆盖 Vercel、Cloudflare Pages、EdgeOne Pages 的零配置 Fork 
   for (const phrase of ['Vercel', 'Cloudflare Pages', 'EdgeOne Pages', 'Fork', '无需配置环境变量']) {
     assert.match(readme, new RegExp(phrase));
   }
+});
+
+test('README 平台能力矩阵明确各部署形态的后端能力和降级边界', () => {
+  const readme = read('README.md');
+  for (const phrase of [
+    '## 平台能力矩阵',
+    '服务端代理 `/api/proxy`',
+    'OAuth 后端',
+    '后台任务',
+    '图片持久化',
+    '服务端配置保存',
+    '平台同步/重部署',
+    'Node / VPS',
+    'Docker / Compose',
+    'Vercel',
+    'Netlify',
+    'Cloudflare Pages',
+    'EdgeOne Pages',
+  ]) {
+    assert.match(readme, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+  assert.match(readme, /\| Netlify \|[\s\S]*缺 `start\/exchange\/status\/stream`[\s\S]*配置中心和后台任务需 Node\/Vercel 形态/);
+  assert.match(readme, /\| Cloudflare Pages \|[\s\S]*纯静态 Pages 构建[\s\S]*管理外部 Worker\/Script env/);
+  assert.match(readme, /\| EdgeOne Pages \|[\s\S]*纯静态 Pages 构建[\s\S]*调用 Pages API/);
+  assert.match(readme, /保存服务端配置时会自动执行平台变量同步和重新部署/);
+  assert.match(readme, /接口响应的 `operations`/);
 });

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 const app = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 const server = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
 const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const stateSource = fs.readFileSync(new URL('../frontend/state.js', import.meta.url), 'utf8');
 
 function oauthBranchSource() {
   const start = app.indexOf('if (cfg.isOAuth) {', app.indexOf('async function testConnection'));
@@ -66,4 +67,28 @@ test('OAuth 账号编辑页隐藏流式开关并显示真实 ChatGPT 后端流�
   assert.match(app, /editCompatSection[\s\S]*classList\.toggle\('hidden', isOAuth\)/);
   assert.match(app, /editOAuthFlowInfo[\s\S]*classList\.toggle\('hidden', !isOAuth\)/);
   assert.match(app, /ChatGPT 后端图片流程/);
+});
+
+test('OAuth 轮询支持取消、去重和登录按钮防重入', () => {
+  assert.match(stateSource, /oauthPollTimer:\s*null/);
+  assert.match(stateSource, /oauthPollSessionId:\s*null/);
+  assert.match(stateSource, /oauthPollGeneration:\s*0/);
+  assert.match(stateSource, /oauthLoginInProgress:\s*false/);
+  assert.match(stateSource, /oauthCompletedKeys:\s*new Set\(\)/);
+  assert.match(app, /function clearOAuthPolling\(\)/);
+  assert.match(app, /clearTimeout\(state\.oauthPollTimer\)/);
+  assert.match(app, /function beginOAuthPolling\(sessionId\)/);
+  assert.match(app, /state\.oauthPollGeneration = \(state\.oauthPollGeneration \|\| 0\) \+ 1/);
+  assert.match(app, /function isCurrentOAuthPoll\(sessionId, generation\)/);
+  assert.match(app, /state\.oauthPendingSessionId === sessionId/);
+  assert.match(app, /function scheduleOAuthPoll\(callback, delayMs\)/);
+  assert.match(app, /if \(state\.oauthLoginInProgress\) return/);
+  assert.match(app, /setOAuthLoginBusy\(true\)/);
+  assert.match(app, /setAttribute\('aria-busy', isBusy \? 'true' : 'false'\)/);
+  assert.match(app, /async function pollOAuthStatus\(oauthState, generation = beginOAuthPolling\(oauthState\)\)/);
+  assert.match(app, /if \(!isCurrentOAuthPoll\(oauthState, generation\)\) return/);
+  assert.match(app, /scheduleOAuthPoll\(poll, 2000\)/);
+  assert.match(app, /scheduleOAuthPoll\(poll, 3000\)/);
+  assert.match(app, /clearOAuthPolling\(\);\s*\n\s*\$\('#oauthExchangeBtn'\)\.disabled = true/);
+  assert.match(app, /state\.oauthCompletedKeys\.has\(dedupeKey\)/);
 });

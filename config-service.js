@@ -4,8 +4,8 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const CONFIG_DIR = path.join(__dirname, 'config');
-export const ENV_FILE = path.join(CONFIG_DIR, '.env');
+export const CONFIG_DIR = process.env.IMAGE_GEN_CONFIG_DIR || path.join(__dirname, 'config');
+export const ENV_FILE = process.env.IMAGE_GEN_ENV_FILE || path.join(CONFIG_DIR, '.env');
 export const ENV_EXAMPLE_FILE = path.join(CONFIG_DIR, '.env.example');
 
 const DEFAULT_RUNTIME_CONFIG = {
@@ -117,6 +117,13 @@ function parseNumber(value, fallback = 0) {
   if (value === undefined || value === null || value === '') return fallback;
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
+}
+
+function safeEqualString(left = '', right = '') {
+  const a = Buffer.from(String(left), 'utf8');
+  const b = Buffer.from(String(right), 'utf8');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
 }
 
 function normalizeEnvValue(value, type, fallback) {
@@ -286,7 +293,9 @@ function toPublicConfig(config) {
     deploy: {
       platform: cfg.deploy.platform,
       accountId: cfg.deploy.accountId ? '***已配置***' : '',
+      accountIdConfigured: !!cfg.deploy.accountId,
       projectId: cfg.deploy.projectId ? '***已配置***' : '',
+      projectIdConfigured: !!cfg.deploy.projectId,
       apiTokenConfigured: !!cfg.deploy.apiToken,
       autoSync: cfg.deploy.autoSync,
       autoRedeploy: cfg.deploy.autoRedeploy,
@@ -342,15 +351,15 @@ function writeEnvFile(envMap) {
 }
 
 export function createConfigService({ isServerless = false, onReload } = {}) {
-  ensureConfigFiles();
-  let currentEnv = fs.existsSync(ENV_FILE) ? parseEnvFile(fs.readFileSync(ENV_FILE, 'utf8')) : {};
+  if (!isServerless) ensureConfigFiles();
+  let currentEnv = !isServerless && fs.existsSync(ENV_FILE) ? parseEnvFile(fs.readFileSync(ENV_FILE, 'utf8')) : {};
   let currentConfig = mergeConfigWithEnv(DEFAULT_RUNTIME_CONFIG, { ...currentEnv, ...process.env });
   let configVersion = crypto.createHash('sha1').update(JSON.stringify(currentConfig)).digest('hex').slice(0, 12);
   let watcher = null;
   let reloadTimer = null;
 
   function refreshFromDisk() {
-    currentEnv = fs.existsSync(ENV_FILE) ? parseEnvFile(fs.readFileSync(ENV_FILE, 'utf8')) : {};
+    currentEnv = !isServerless && fs.existsSync(ENV_FILE) ? parseEnvFile(fs.readFileSync(ENV_FILE, 'utf8')) : {};
     currentConfig = mergeConfigWithEnv(DEFAULT_RUNTIME_CONFIG, { ...currentEnv, ...process.env });
     configVersion = crypto.createHash('sha1').update(JSON.stringify(currentConfig)).digest('hex').slice(0, 12);
     onReload?.(getRuntimeConfig());
@@ -366,6 +375,15 @@ export function createConfigService({ isServerless = false, onReload } = {}) {
         runtime: isServerless ? 'serverless' : 'node',
         canPersistLocalEnv: !isServerless,
         canManageConfig: true,
+        canUseConfigApi: true,
+        canUseProxy: true,
+        canProxySse: true,
+        canProxyMultipart: !isServerless,
+        canUseOAuthBackend: true,
+        canUseBackgroundJobs: true,
+        backgroundJobsInline: isServerless,
+        canPersistImages: !isServerless,
+        canUseStorageApi: !isServerless,
         supportedDeployPlatforms: ['node', 'vercel', 'netlify', 'cloudflare', 'edgeone'],
       },
     };
@@ -426,9 +444,15 @@ function getEnvMapForPlatformSync(config = currentConfig) {
       deploy: {
         ...currentConfig.deploy,
         ...(nextConfig.deploy || {}),
+        accountId: preserveSecrets && nextConfig?.deploy && !('accountId' in nextConfig.deploy)
+          ? currentConfig.deploy.accountId
+          : String(nextConfig?.deploy?.accountId ?? currentConfig.deploy.accountId ?? ''),
+        projectId: preserveSecrets && nextConfig?.deploy && !('projectId' in nextConfig.deploy)
+          ? currentConfig.deploy.projectId
+          : String(nextConfig?.deploy?.projectId ?? currentConfig.deploy.projectId ?? ''),
         apiToken: preserveSecrets && nextConfig?.deploy && !('apiToken' in nextConfig.deploy)
           ? currentConfig.deploy.apiToken
-          : String(nextConfig?.deploy?.apiToken || currentConfig.deploy.apiToken || ''),
+          : String(nextConfig?.deploy?.apiToken ?? currentConfig.deploy.apiToken ?? ''),
       },
       adminToken: preserveSecrets && !('adminToken' in (nextConfig || {}))
         ? currentConfig.adminToken
@@ -442,10 +466,11 @@ function getEnvMapForPlatformSync(config = currentConfig) {
     return getRuntimeConfig();
   }
 
-  function verifyAdminToken(candidate = '') {
+  function verifyAdminToken(candidate = '', { isLocalRequest = false } = {}) {
     const expected = String(currentConfig.adminToken || '').trim();
-    if (!expected) return !isServerless;
-    return String(candidate || '').trim() === expected;
+    if (expected) return safeEqualString(String(candidate || '').trim(), expected);
+    const allowInsecureLocalAdmin = parseBoolean(process.env.IMAGE_GEN_ALLOW_INSECURE_LOCAL_ADMIN, false);
+    return !isServerless && allowInsecureLocalAdmin && isLocalRequest === true;
   }
 
   function startWatcher() {

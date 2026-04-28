@@ -1,15 +1,8 @@
 import { BaseHandler } from './base-handler.js';
+import { fetchJsonWithTimeout } from './platform-fetch.js';
 
 async function fetchJson(url, options = {}) {
-  const resp = await fetch(url, options);
-  const text = await resp.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  if (!resp.ok) {
-    const message = typeof data === 'object' && data ? (data.errors?.[0]?.message || data.messages?.[0]?.message) : text;
-    throw new Error(message || `HTTP ${resp.status}`);
-  }
-  return data;
+  return fetchJsonWithTimeout(url, options);
 }
 
 export class CloudflareHandler extends BaseHandler {
@@ -31,7 +24,7 @@ export class CloudflareHandler extends BaseHandler {
     const { accountId, projectId, token } = this.requireParams();
     const data = await this.getSettings(accountId, projectId, token);
     const bindings = Array.isArray(data?.result?.bindings) ? data.result.bindings : [];
-    return { ok: true, platform: 'cloudflare', message: 'Cloudflare 平台参数校验通过。', details: { accountId, projectId, bindingCount: bindings.length, tokenPreview: this.sanitizeSecretPreview(token) } };
+    return { ok: true, platform: 'cloudflare', message: 'Cloudflare 平台参数校验通过。', details: { accountId, projectId, bindingCount: bindings.length, apiTokenConfigured: true } };
   }
   async sync() {
     const { accountId, projectId, token } = this.requireParams();

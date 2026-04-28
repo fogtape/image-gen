@@ -14,12 +14,16 @@ test('账号设置提供图生图兼容模式与流式失败回退开关', () =>
 });
 
 test('前端图生图兼容模式支持 multipart 直连与代理透传', () => {
-  assert.match(app, /async function genEdits\(cfg, prompt, quality, background, size, format\)/);
+  assert.match(app, /async function genEdits\(cfg, prompt, quality, background, size, format, resultMeta = \{\}\)/);
   assert.match(app, /const compatMode = shouldUseCompatImageEdits\(cfg\);/);
-  assert.match(app, /buildCompatEditsRequest\(state\.refImagesBase64, \{ model: cfg\.model, prompt, quality, background, size, format \}\)/);
+  assert.match(app, /buildCompatEditsRequest\(state\.refImagesBase64, \{ model: cfg\.model, prompt, quality, background, size, format, maskImageBase64 \}\)/);
   assert.match(app, /multipartBody: compatMode \? compatRequest\.multipartBody : undefined/);
   assert.match(app, /form\.append\('image', new Blob/);
+  assert.match(app, /form\.append\('mask', new Blob/);
+  assert.match(app, /fieldName: 'mask'/);
   assert.match(app, /multipartBody: opts\.multipartBody/);
+  assert.match(app, /当前部署的代理不支持 multipart 图生图/);
+  assert.match(app, /canUseProxyMultipart\(\)/);
 });
 
 test('前后端都支持关闭流式失败自动回退', () => {
@@ -32,6 +36,7 @@ test('服务端兼容模式会把 /v1\\/images\\/edits 改为 multipart，并对
   assert.match(server, /compatMode = mode === 'edits' && shouldUseCompatImageEdits\(cfg\)/);
   assert.match(server, /body: compatMode \? buildImagesEditsMultipartFormData\(payload\) : JSON\.stringify\(body\)/);
   assert.match(server, /function buildProxyMultipartFormData\(multipartBody = \{\}\)/);
+  assert.match(server, /isMultipartMaskImage/);
   assert.match(server, /withImageEditsCompatHint/);
   assert.match(server, /图生图兼容模式（旧版 multipart）/);
 });

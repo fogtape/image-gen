@@ -37,3 +37,28 @@ test('生成按钮加载态隐藏文字和加载图标时布局稳定', () => {
   assert.match(loading, /min-width\s*:\s*28px\s*;/);
   assert.match(loading, /justify-content\s*:\s*center\s*;/);
 });
+
+test('移动端顶部栏和后台任务 banner 在 320-360px 有溢出兜底', () => {
+  const topbarLeft = ruleBody('.topbar-left,\n.topbar-right');
+  assert.match(topbarLeft, /min-width\s*:\s*0\s*;/);
+
+  const logo = ruleBody('.logo');
+  assert.match(logo, /min-width\s*:\s*0\s*;/);
+
+  const logoSpan = ruleBody('.logo span');
+  assert.match(logoSpan, /overflow\s*:\s*hidden\s*;/);
+  assert.match(logoSpan, /text-overflow\s*:\s*ellipsis\s*;/);
+  assert.match(logoSpan, /white-space\s*:\s*nowrap\s*;/);
+
+  const switcher = ruleBody('.switcher-btn');
+  assert.match(switcher, /min-width\s*:\s*0\s*;/);
+  const switcherName = ruleBody('.switcher-name');
+  assert.match(switcherName, /min-width\s*:\s*0\s*;/);
+
+  assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.active-job-banner\s*\{[\s\S]*?flex-direction:\s*column/);
+  assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.active-job-actions\s*\{[\s\S]*?flex-wrap:\s*wrap/);
+  assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.active-job-actions \.btn\s*\{[\s\S]*?min-height:\s*40px/);
+  assert.match(css, /@media \(max-width: 360px\)[\s\S]*?\.logo span\s*\{[\s\S]*?display:\s*none/);
+  assert.match(css, /@media \(max-width: 360px\)[\s\S]*?\.active-job-actions\s*\{[\s\S]*?flex-direction:\s*column/);
+  assert.match(css, /@media \(max-width: 360px\)[\s\S]*?\.active-job-actions \.btn\s*\{[\s\S]*?width:\s*100%/);
+});

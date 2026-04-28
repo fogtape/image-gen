@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { validateApiBaseUrl } from './proxy-policy.js';
 
 export const DEFAULT_PROMPT_ENHANCEMENT_SETTINGS = Object.freeze({
   enabled: false,
@@ -39,10 +40,8 @@ export function resolvePromptModel(cfg = {}, settings = {}) {
   return String(settings.model || cfg.promptModel || cfg.model || 'gpt-5.4-mini').trim();
 }
 
-function baseApiUrl(apiUrl) {
-  const text = String(apiUrl || '').trim().replace(/\/+$/, '');
-  if (!text) throw new Error('Missing API address');
-  return text;
+function baseApiUrl(apiUrl, policy = {}) {
+  return validateApiBaseUrl(apiUrl, policy).baseUrl;
 }
 
 function buildSystemPrompt(settings) {
@@ -64,7 +63,15 @@ function buildUserPrompt({ prompt, style = '', type = '' }) {
   return lines.join('\n');
 }
 
-export function buildPromptEnhancementRequest({ cfg = {}, prompt = '', style = '', type = '', settings: rawSettings = {} } = {}) {
+export function buildPromptEnhancementRequest({
+  cfg = {},
+  prompt = '',
+  style = '',
+  type = '',
+  settings: rawSettings = {},
+  allowedHosts,
+  allowLocalHttp,
+} = {}) {
   const text = String(prompt || '').trim();
   if (!text) throw new Error('Missing prompt');
   const settings = normalizePromptEnhancementSettings(rawSettings);
@@ -76,7 +83,7 @@ export function buildPromptEnhancementRequest({ cfg = {}, prompt = '', style = '
   if (endpoint === 'responses') {
     return {
       endpoint,
-      url: `${baseApiUrl(cfg.apiUrl)}/v1/responses`,
+      url: `${baseApiUrl(cfg.apiUrl, { allowedHosts, allowLocalHttp })}/v1/responses`,
       body: {
         model,
         input: `${system}\n\n${user}`,
@@ -88,7 +95,7 @@ export function buildPromptEnhancementRequest({ cfg = {}, prompt = '', style = '
 
   return {
     endpoint,
-    url: `${baseApiUrl(cfg.apiUrl)}/v1/chat/completions`,
+    url: `${baseApiUrl(cfg.apiUrl, { allowedHosts, allowLocalHttp })}/v1/chat/completions`,
     body: {
       model,
       messages: [
@@ -157,8 +164,17 @@ function safeErrorMessage(value) {
   return text.replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***').replace(/Bearer\s+[A-Za-z0-9._~+\-/]+=*/gi, 'Bearer ***');
 }
 
-export async function enhancePrompt({ cfg = {}, prompt = '', style = '', type = '', settings = {}, fetchImpl = fetch } = {}) {
-  const request = buildPromptEnhancementRequest({ cfg, prompt, style, type, settings });
+export async function enhancePrompt({
+  cfg = {},
+  prompt = '',
+  style = '',
+  type = '',
+  settings = {},
+  allowedHosts,
+  allowLocalHttp,
+  fetchImpl = fetch,
+} = {}) {
+  const request = buildPromptEnhancementRequest({ cfg, prompt, style, type, settings, allowedHosts, allowLocalHttp });
   const resp = await fetchImpl(request.url, {
     method: 'POST',
     headers: buildPromptEnhancementHeaders(cfg, { 'Content-Type': 'application/json' }),

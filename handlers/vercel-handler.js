@@ -1,15 +1,8 @@
 import { BaseHandler } from './base-handler.js';
+import { fetchJsonWithTimeout } from './platform-fetch.js';
 
 async function fetchJson(url, options = {}) {
-  const resp = await fetch(url, options);
-  const text = await resp.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-  if (!resp.ok) {
-    const message = typeof data === 'object' && data ? (data.error?.message || data.message || data.error?.code) : text;
-    throw new Error(message || `HTTP ${resp.status}`);
-  }
-  return data;
+  return fetchJsonWithTimeout(url, options);
 }
 
 export class VercelHandler extends BaseHandler {
@@ -46,7 +39,7 @@ export class VercelHandler extends BaseHandler {
       details: {
         projectId,
         envCount: envs.length,
-        tokenPreview: this.sanitizeSecretPreview(token),
+        apiTokenConfigured: true,
       },
     };
   }

@@ -19,7 +19,7 @@ function makeResponsesPayload(model = 'gpt-image-2', responsesModel = 'gpt-5.4')
   return {
     mode: 'responses',
     prompt: '画一个红点',
-    cfg: { apiUrl: 'https://example.test', apiKey: 'test-key', model, responsesModel },
+    cfg: { apiUrl: 'https://api.openai.com', apiKey: 'test-key', model, responsesModel },
     quality: 'low',
     size: 'auto',
     background: 'auto',
@@ -43,7 +43,7 @@ test('Responses image jobs use relay-compatible Codex-style headers and store=fa
     const job = await waitForJobDone(created.id);
     assert.equal(job.status, 'completed');
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, 'https://example.test/v1/responses');
+    assert.equal(calls[0].url, 'https://api.openai.com/v1/responses');
 
     const headers = calls[0].opts.headers;
     assert.equal(headers.Authorization, 'Bearer test-key');
@@ -87,9 +87,100 @@ test('Responses image jobs with non-image models preserve upstream error instead
     const job = await waitForJobDone(created.id);
     assert.equal(job.status, 'failed');
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, 'https://example.test/v1/responses');
+    assert.equal(calls[0].url, 'https://api.openai.com/v1/responses');
     assert.match(job.error, /HTTP 502|502 Bad gateway/i);
     assert.doesNotMatch(job.error, /images endpoint requires an image model/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('后台图片任务拒绝未允许的本机 apiUrl 且不会触发上游 fetch', async () => {
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  globalThis.fetch = async () => {
+    callCount += 1;
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const created = imageJobStore.create({
+      ...makeResponsesPayload(),
+      cfg: {
+        apiUrl: 'http://127.0.0.1:9',
+        apiKey: 'test-key',
+        model: 'gpt-image-2',
+        responsesModel: 'gpt-5.4',
+      },
+    });
+    const job = await waitForJobDone(created.id);
+    assert.equal(job.status, 'failed');
+    assert.equal(callCount, 0);
+    assert.match(job.error, /API address protocol|API address host|allowlisted/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('后台图片任务支持 count/batchId 批量生成并给每张结果标记序号', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    calls.push({ url: String(url), opts });
+    return new Response(`event: response.output_item.done\ndata: {"type":"response.output_item.done","item":{"type":"image_generation_call","result":"${ONE_BY_ONE_PNG_B64}"}}\n\n`, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    });
+  };
+  try {
+    const created = imageJobStore.create({
+      ...makeResponsesPayload(),
+      count: 3,
+      batchId: 'batch-test-3',
+    });
+    const job = await waitForJobDone(created.id);
+    assert.equal(job.status, 'completed');
+    assert.equal(calls.length, 3);
+    assert.equal(job.result.batchId, 'batch-test-3');
+    assert.equal(job.result.batchCount, 3);
+    assert.equal(job.result.data.length, 3);
+    assert.deepEqual(job.result.data.map((item) => item.batchIndex), [1, 2, 3]);
+    assert.deepEqual(job.result.data.map((item) => item.batchCount), [3, 3, 3]);
+    assert.deepEqual(job.result.data.map((item) => item.batchId), ['batch-test-3', 'batch-test-3', 'batch-test-3']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('后台批量生成单张失败不影响其他成功结果', async () => {
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  globalThis.fetch = async () => {
+    callCount += 1;
+    if (callCount === 2) {
+      return new Response(JSON.stringify({ error: { message: 'upstream one image failed' } }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response(`event: response.output_item.done\ndata: {"type":"response.output_item.done","item":{"type":"image_generation_call","result":"${ONE_BY_ONE_PNG_B64}"}}\n\n`, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    });
+  };
+  try {
+    const created = imageJobStore.create({
+      ...makeResponsesPayload(),
+      count: 3,
+      batchId: 'batch-partial',
+    });
+    const job = await waitForJobDone(created.id);
+    assert.equal(job.status, 'completed');
+    assert.equal(callCount, 3);
+    assert.equal(job.result.data.filter((item) => !item.failed).length, 2);
+    assert.equal(job.result.data.filter((item) => item.failed).length, 1);
+    assert.equal(job.result.data[1].failed, true);
+    assert.match(job.result.data[1].error, /upstream one image failed|HTTP 500/);
+    assert.equal(job.progress.some((item) => item.phase === 'batch:partial'), true);
   } finally {
     globalThis.fetch = originalFetch;
   }

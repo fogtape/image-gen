@@ -7,5 +7,15 @@ npm-debug.log*
 .DS_Store
 .env
 .env.*
+config/.env
+config/*.local
+config/*.secret
+!config/.env.example
+data
+.oauth-sessions.json
+.tmp*
+*.log
+*.pid
+dist
 README.md
 test

@@ -4,6 +4,8 @@ import fs from 'node:fs';
 
 const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const app = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+const errorDialog = fs.readFileSync(new URL('../frontend/error-dialog.js', import.meta.url), 'utf8');
+const stateSource = fs.readFileSync(new URL('../frontend/state.js', import.meta.url), 'utf8');
 const css = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
 
 test('顶部提供独立设置入口并包含生成、水印、存储分组', () => {
@@ -19,6 +21,7 @@ test('设置面板支持默认尺寸质量格式和成熟水印配置', () => {
     'settingsDefaultSize',
     'settingsDefaultQuality',
     'settingsDefaultFormat',
+    'settingsDefaultCount',
     'watermarkEnabled',
     'watermarkTemporaryMode',
     'watermarkMode',
@@ -37,12 +40,12 @@ test('设置面板支持默认尺寸质量格式和成熟水印配置', () => {
 
 test('设置默认尺寸选项与首页尺寸选项保持一致，并对齐官方常用比例', () => {
   const settingsMatch = html.match(/<select id="settingsDefaultSize">([\s\S]*?)<\/select>/);
-  const homepageMatch = html.match(/<div class="custom-select" id="sizeSelect"[\s\S]*?<div class="cs-dropdown hidden">([\s\S]*?)<\/div>\s*<\/div>/);
+  const homepageMatch = html.match(/<div class="custom-select" id="sizeSelect"[\s\S]*?<div class="cs-dropdown hidden"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/);
   assert.ok(settingsMatch, 'settings default size select should exist');
   assert.ok(homepageMatch, 'homepage size select should exist');
 
   const settingsSizes = [...settingsMatch[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]);
-  const homepageSizes = [...homepageMatch[1].matchAll(/class="cs-item" data-value="([^"]+)"/g)].map((m) => m[1]);
+  const homepageSizes = [...homepageMatch[1].matchAll(/class="[^"]*\bcs-item\b[^"]*"[^>]*data-value="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(settingsSizes, homepageSizes);
   assert.deepEqual(settingsSizes, ['auto', '1024x1024', '1056x1408', '864x1536', '1408x1056', '1536x864']);
 });
@@ -54,6 +57,12 @@ test('设置会参与后台生成任务且不依赖刷新内存结果', () => {
   assert.match(app, /storageSettings:/);
   assert.match(app, /loadImageHistory/);
   assert.match(app, /clearStorageData/);
+  assert.match(html, /清理页面对话/);
+  assert.match(html, /清理服务端图片/);
+  assert.match(html, /清理页面和图片/);
+  assert.match(app, /if \(scope === 'conversations'\)[\s\S]*?return;/);
+  assert.match(app, /if \(scope === 'all'\)[\s\S]*?clearActiveJob\(\)/);
+  assert.match(app, /headers:\s*getConfigRequestHeaders\(\)/);
 });
 
 test('提示词增强默认关闭，开启后可选择自动或手动修饰', () => {
@@ -69,8 +78,17 @@ test('提示词增强默认关闭，开启后可选择自动或手动修饰', ()
   assert.match(html, /id="promptEnhancementMode"/);
   assert.match(html, /id="promptEnhancementLanguage"/);
   assert.doesNotMatch(html, /id="promptEnhancementOutput"/);
-  assert.match(app, /promptEnhancement:\s*\{[^}]*enabled:\s*false[^}]*runMode:\s*'manual'/s);
+  assert.match(stateSource, /promptEnhancement:\s*\{[^}]*enabled:\s*false[^}]*runMode:\s*'manual'/s);
   assert.match(app, /syncPromptEnhancementUi/);
+});
+
+test('生成数量默认值可在设置和首页选择，范围限制为 1-4 张', () => {
+  assert.match(html, /id="countSelect"[\s\S]*value="1"[^>]*>1 张[\s\S]*value="4"[^>]*>4 张/);
+  assert.match(html, /id="settingsDefaultCount"[\s\S]*value="1"[^>]*>1 张[\s\S]*value="4"[^>]*>4 张/);
+  assert.match(stateSource, /generation:\s*\{[^}]*count:\s*1/s);
+  assert.match(app, /function getGenerationCount/);
+  assert.match(app, /setSelectValue\('countSelect', String\(g\.count \|\| 1\)\)/);
+  assert.match(app, /setSelectValue\('settingsDefaultCount', String\(settings\.generation\.count \|\| 1\)\)/);
 });
 
 test('手动模式显示修饰按钮且生成按钮不调用修饰接口，自动模式相反', () => {
@@ -97,8 +115,8 @@ test('生成失败会用居中弹窗提示完整错误，方便后台回来查�
   assert.match(html, /id="generationErrorConfirm"/);
   assert.match(css, /\.error-dialog/);
   assert.match(css, /\.error-dialog-message/);
-  assert.match(app, /function showGenerationErrorDialog/);
-  assert.match(app, /showGenerationErrorDialog\(details\)/);
+  assert.match(errorDialog, /function showGenerationErrorDialog/);
+  assert.match(errorDialog, /showGenerationErrorDialog\(details\)/);
   assert.match(app, /\$\('#generationErrorClose'\)\?\.addEventListener\('click', hideGenerationErrorDialog\)/);
   assert.match(app, /\$\('#generationErrorConfirm'\)\?\.addEventListener\('click', hideGenerationErrorDialog\)/);
 });
@@ -108,4 +126,27 @@ test('设置界面样式保持简洁并适配移动端', () => {
   assert.match(css, /\.watermark-preview/);
   assert.match(css, /\.danger-zone/);
   assert.match(css, /@media \(max-width: 640px\)/);
+});
+
+test('设置保存先等待服务端成功，再提交本地偏好', () => {
+  assert.match(app, /const nextAppSettings = readSettingsForm\(\)/);
+  assert.match(app, /const nextServerConfig = readServerConfigForm\(\)/);
+  const saveFn = app.match(/async function saveSettingsFromForm\(\) \{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.ok(saveFn.indexOf('await saveServerRuntimeConfig(nextServerConfig)') < saveFn.indexOf('state.appSettings = nextAppSettings'));
+  assert.ok(saveFn.indexOf('state.appSettings = nextAppSettings') < saveFn.indexOf('saveAppSettings()'));
+  assert.ok(saveFn.indexOf('showError') > saveFn.indexOf('catch'));
+});
+
+test('masked deploy 字段留空保存会保留，输入新值才覆盖或无现有值才删除', () => {
+  assert.match(app, /function setExistingSecretHint/);
+  assert.match(app, /dataset\.hasExisting = 'true'/);
+  assert.match(app, /setExistingSecretHint\('deployAccountId', maskedAccountId/);
+  assert.match(app, /setExistingSecretHint\('deployProjectId', maskedProjectId/);
+  assert.match(app, /setExistingSecretHint\('deployApiToken', cfg\.deploy\?\.apiTokenConfigured === true/);
+  assert.match(app, /function assignDeployFieldFromInput\(deploy, id, fieldName\)/);
+  assert.match(app, /if \(el\?\.dataset\?\.hasExisting === 'true'\) return/);
+  assert.match(app, /delete deploy\[fieldName\]/);
+  assert.match(app, /assignDeployFieldFromInput\(deploy, 'deployAccountId', 'accountId'\)/);
+  assert.match(app, /assignDeployFieldFromInput\(deploy, 'deployProjectId', 'projectId'\)/);
+  assert.match(app, /assignDeployFieldFromInput\(deploy, 'deployApiToken', 'apiToken'\)/);
 });

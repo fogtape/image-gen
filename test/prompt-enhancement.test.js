@@ -18,22 +18,29 @@ test('提示词增强默认关闭，模型为空时跟随账号模型', () => {
 });
 
 test('API Key 账号构造 chat/completions 文本请求且不携带图片工具参数', () => {
-  const req = buildPromptEnhancementRequest({
-    cfg: { apiUrl: 'https://api.example.com/', apiKey: 'sk-test', model: 'gpt-image-1', promptModel: 'gpt-5.4-mini' },
-    prompt: '一只猫',
-    style: 'cinematic',
-    type: 'poster',
-    settings: { mode: 'professional', language: 'zh' },
-  });
+  const oldAllowedHosts = process.env.IMAGE_GEN_PROXY_ALLOWED_HOSTS;
+  process.env.IMAGE_GEN_PROXY_ALLOWED_HOSTS = 'api.example.com';
+  try {
+    const req = buildPromptEnhancementRequest({
+      cfg: { apiUrl: 'https://api.example.com/', apiKey: 'sk-test', model: 'gpt-image-1', promptModel: 'gpt-5.4-mini' },
+      prompt: '一只猫',
+      style: 'cinematic',
+      type: 'poster',
+      settings: { mode: 'professional', language: 'zh' },
+    });
 
-  assert.equal(req.url, 'https://api.example.com/v1/chat/completions');
-  assert.equal(req.body.model, 'gpt-5.4-mini');
-  assert.equal(req.body.messages[0].role, 'system');
-  assert.equal(req.body.messages.at(-1).role, 'user');
-  const bodyText = JSON.stringify(req.body);
-  assert.doesNotMatch(bodyText, /image_generation/);
-  assert.doesNotMatch(bodyText, /tool_choice/);
-  assert.doesNotMatch(bodyText, /output_format|size|quality|background/);
+    assert.equal(req.url, 'https://api.example.com/v1/chat/completions');
+    assert.equal(req.body.model, 'gpt-5.4-mini');
+    assert.equal(req.body.messages[0].role, 'system');
+    assert.equal(req.body.messages.at(-1).role, 'user');
+    const bodyText = JSON.stringify(req.body);
+    assert.doesNotMatch(bodyText, /image_generation/);
+    assert.doesNotMatch(bodyText, /tool_choice/);
+    assert.doesNotMatch(bodyText, /output_format|size|quality|background/);
+  } finally {
+    if (oldAllowedHosts === undefined) delete process.env.IMAGE_GEN_PROXY_ALLOWED_HOSTS;
+    else process.env.IMAGE_GEN_PROXY_ALLOWED_HOSTS = oldAllowedHosts;
+  }
 });
 
 test('OAuth 账号构造 responses 文本请求且不携带 image_generation tool', () => {
@@ -65,4 +72,11 @@ test('可从 chat/completions 和 responses 响应中提取干净提示词', () 
 test('清理增强结果时去掉解释性前缀并拒绝空内容', () => {
   assert.equal(sanitizeEnhancedPrompt('优化后的提示词：夕阳下的山谷'), '夕阳下的山谷');
   assert.throws(() => sanitizeEnhancedPrompt('   '), /未返回有效提示词/);
+});
+
+test('提示词增强拒绝未允许的本机 API 地址', () => {
+  assert.throws(() => buildPromptEnhancementRequest({
+    cfg: { apiUrl: 'http://127.0.0.1:3000', apiKey: 'sk-test', model: 'gpt-image-1' },
+    prompt: '一只猫',
+  }), /API address protocol|API address host/);
 });

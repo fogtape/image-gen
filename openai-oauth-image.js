@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { isPolicyViolationText, normalizeGenerationError } from './ui-feedback.js';
+import { isLocalOrPrivateHost } from './proxy-policy.js';
 
 const CHATGPT_BASE = 'https://chatgpt.com';
 const CHATGPT_START_URL = `${CHATGPT_BASE}/`;
@@ -16,6 +17,9 @@ const CODEX_VERSION = '0.125.0';
 const RESPONSES_MAIN_MODEL = 'gpt-5.4-mini';
 const REQUIREMENTS_DIFF = '0fffff';
 const MAX_DOWNLOAD_BYTES = 20 << 20;
+const IMAGE_DOWNLOAD_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_IMAGE_DOWNLOAD_REDIRECTS = 5;
+const ALLOWED_IMAGE_DOWNLOAD_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 function randomUUID() {
   return crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
@@ -505,7 +509,7 @@ function isLikelyImageDownloadURL(raw) {
   const text = String(raw || '').trim();
   if (!text) return false;
   if (text.toLowerCase().startsWith('data:image/')) return true;
-  if (!/^https?:\/\//i.test(text)) return false;
+  if (!/^https:\/\//i.test(text)) return false;
   const lower = text.toLowerCase();
   return lower.includes('/download') || /\.(png|jpe?g|webp)(\?|$)/.test(lower);
 }
@@ -953,27 +957,92 @@ async function fetchDownloadURL(headers, conversationId, pointer) {
   throw new Error('fetch image download url failed');
 }
 
-async function downloadBytes(headers, url) {
+function validateImageDownloadUrl(rawUrl) {
+  let target;
+  try {
+    target = new URL(String(rawUrl || ''));
+  } catch {
+    throw new Error('image download URL is invalid');
+  }
+  if (target.protocol !== 'https:') throw new Error('image download URL protocol is not allowed');
+  if (isLocalOrPrivateHost(target.hostname)) throw new Error('image download URL host is not allowed');
+  return target;
+}
+
+function headersForImageDownload(headers, target) {
+  if (target.origin === CHATGPT_BASE) {
+    return mergeHeaders(headers, { Accept: 'image/*,*/*;q=0.8', 'Content-Type': undefined });
+  }
+  return { 'User-Agent': headers['User-Agent'] || IMAGE_BACKEND_USER_AGENT };
+}
+
+async function readImageResponseBodyWithLimit(resp, maxBytes = MAX_DOWNLOAD_BYTES) {
+  if (!resp.body?.getReader) {
+    const buf = Buffer.from(await resp.arrayBuffer());
+    if (buf.length > maxBytes) throw new Error('download image is too large');
+    return buf;
+  }
+  const reader = resp.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      total += chunk.length;
+      if (total > maxBytes) throw new Error('download image is too large');
+      chunks.push(chunk);
+    }
+  } finally {
+    reader.releaseLock?.();
+  }
+  return Buffer.concat(chunks, total);
+}
+
+export async function downloadBytes(headers, url) {
   if (String(url || '').toLowerCase().startsWith('data:image/')) {
     const b64 = normalizeBase64Image(url);
     if (!b64) throw new Error('invalid data image url');
-    return Buffer.from(b64, 'base64');
+    const buf = Buffer.from(b64, 'base64');
+    if (buf.length > MAX_DOWNLOAD_BYTES) throw new Error('download image is too large');
+    return buf;
   }
-  const downloadHeaders = String(url || '').startsWith(CHATGPT_BASE)
-    ? mergeHeaders(headers, { Accept: 'image/*,*/*;q=0.8', 'Content-Type': undefined })
-    : { 'User-Agent': headers['User-Agent'] || IMAGE_BACKEND_USER_AGENT };
-  const resp = await fetchWithTimeout(url, { method: 'GET', headers: downloadHeaders, timeoutMs: 120_000 });
+  let target = validateImageDownloadUrl(url);
+  let resp;
+  for (let redirectCount = 0; ; redirectCount += 1) {
+    resp = await fetchWithTimeout(target.href, {
+      method: 'GET',
+      headers: headersForImageDownload(headers, target),
+      timeoutMs: 120_000,
+      redirect: 'manual',
+    });
+    if (!IMAGE_DOWNLOAD_REDIRECT_STATUSES.has(resp.status)) break;
+    if (redirectCount >= MAX_IMAGE_DOWNLOAD_REDIRECTS) throw new Error('image download redirect limit exceeded');
+    const location = resp.headers.get('location');
+    if (!location) throw new Error('image download redirect location is missing');
+    let nextUrl;
+    try {
+      nextUrl = new URL(location, target.href);
+    } catch {
+      throw new Error('image download redirect location is invalid');
+    }
+    target = validateImageDownloadUrl(nextUrl.href);
+  }
   if (!resp.ok) throw await statusError(resp, 'download image bytes failed');
+  const mime = (resp.headers.get('content-type') || '').split(';')[0].toLowerCase();
+  if (!ALLOWED_IMAGE_DOWNLOAD_MIME.has(mime)) throw new Error('unsupported image download content type');
   const len = Number(resp.headers.get('content-length') || 0);
   if (len > MAX_DOWNLOAD_BYTES) throw new Error('download image is too large');
-  const arrayBuffer = await resp.arrayBuffer();
-  const buf = Buffer.from(arrayBuffer);
-  if (buf.length > MAX_DOWNLOAD_BYTES) throw new Error('download image is too large');
-  return buf;
+  return readImageResponseBodyWithLimit(resp, MAX_DOWNLOAD_BYTES);
 }
 
 async function resolvePointerBytes(headers, conversationId, pointer) {
-  if (pointer.b64JSON) return Buffer.from(pointer.b64JSON, 'base64');
+  if (pointer.b64JSON) {
+    const buf = Buffer.from(pointer.b64JSON, 'base64');
+    if (buf.length > MAX_DOWNLOAD_BYTES) throw new Error('download image is too large');
+    return buf;
+  }
   if (pointer.downloadURL) return downloadBytes(headers, pointer.downloadURL);
   if (!pointer.pointer) throw new Error('image asset is missing pointer, url, and base64 data');
   const downloadURL = await fetchDownloadURL(headers, conversationId, pointer.pointer);

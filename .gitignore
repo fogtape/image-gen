@@ -7,3 +7,8 @@ dist
 data
 
 config/.env
+
+# Local runtime/test artifacts
+.tmp*
+*.log
+*.pid

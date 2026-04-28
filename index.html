@@ -18,19 +18,19 @@
         </div>
       </div>
       <div class="topbar-right">
-        <button class="topbar-btn" id="openSettings" type="button" title="设置">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        <button class="topbar-btn" id="openSettings" type="button" title="设置" aria-label="打开设置">
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
         <div class="account-switcher" id="accountSwitcher">
-          <button class="switcher-btn" id="switcherBtn">
+          <button class="switcher-btn" id="switcherBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="switcherDropdown">
             <span class="switcher-dot" id="switcherDot"></span>
             <span class="switcher-name" id="switcherName">未配置</span>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
           </button>
-          <div class="switcher-dropdown hidden" id="switcherDropdown">
+          <div class="switcher-dropdown hidden" id="switcherDropdown" role="menu" aria-label="账号切换">
             <div class="dropdown-list" id="dropdownList"></div>
             <div class="dropdown-divider"></div>
-            <button class="dropdown-item dropdown-manage" id="dropdownManage">
+            <button class="dropdown-item dropdown-manage" id="dropdownManage" type="button" role="menuitem" tabindex="-1">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
               管理账号
             </button>
@@ -40,11 +40,11 @@
     </nav>
 
     <!-- Settings Overlay -->
-    <div id="settingsOverlay" class="overlay hidden">
+    <div id="settingsOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
       <div class="modal modal-settings">
         <div class="modal-header">
-          <h2>设置</h2>
-          <button id="closeSettings" class="close-btn">&times;</button>
+          <h2 id="settingsTitle">设置</h2>
+          <button id="closeSettings" class="close-btn" type="button" aria-label="关闭设置">&times;</button>
         </div>
         <div class="modal-body settings-body">
           <section class="settings-section">
@@ -86,6 +86,15 @@
                   <option value="auto">自动</option>
                   <option value="opaque">不透明</option>
                   <option value="transparent">透明</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="settingsDefaultCount">默认数量</label>
+                <select id="settingsDefaultCount">
+                  <option value="1">1 张</option>
+                  <option value="2">2 张</option>
+                  <option value="3">3 张</option>
+                  <option value="4">4 张</option>
                 </select>
               </div>
             </div>
@@ -253,13 +262,40 @@
             <div id="storageStats" class="storage-stats">正在读取存储状态...</div>
             <div id="storageDiagnostics" class="storage-diagnostics hidden"></div>
             <div class="danger-zone">
-              <button id="clearConversationData" class="btn btn-outline" type="button">清理对话数据</button>
-              <button id="clearImageData" class="btn btn-outline danger" type="button">清理图片数据</button>
-              <button id="clearAllData" class="btn btn-outline danger" type="button">清理全部</button>
+              <button id="clearConversationData" class="btn btn-outline" type="button">清理页面对话</button>
+              <button id="clearImageData" class="btn btn-outline danger" type="button">清理服务端图片</button>
+              <button id="clearAllData" class="btn btn-outline danger" type="button">清理页面和图片</button>
             </div>
           </section>
 
-
+          <section class="settings-section" id="backupSettingsSection">
+            <h3>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="M8 11l4 4 4-4"/><path d="M5 21h14"/></svg>
+              <span>导入 / 导出</span>
+            </h3>
+            <small class="section-hint">安全导出不会包含 API key、OAuth token、Cookie、session；完整导出必须先用密码加密。</small>
+            <div class="settings-grid">
+              <div class="form-group wide">
+                <label for="backupPassword">完整加密导出 / 导入密码</label>
+                <input type="password" id="backupPassword" placeholder="用于加密完整备份；安全导出可留空">
+              </div>
+            </div>
+            <div class="backup-actions">
+              <button id="exportSafeBackup" class="btn btn-outline" type="button">安全导出</button>
+              <button id="exportEncryptedBackup" class="btn btn-outline" type="button">完整加密导出</button>
+              <button id="importBackupPick" class="btn btn-ghost" type="button">选择导入文件</button>
+              <input id="importBackupFile" type="file" accept="application/json" hidden>
+            </div>
+            <div class="settings-inline settings-inline-check-grid">
+              <label><input type="checkbox" id="importBackupAccounts" checked> 导入账号</label>
+              <label><input type="checkbox" id="importBackupSettings" checked> 导入设置</label>
+              <label><input type="checkbox" id="importBackupTemplates" checked> 导入模板</label>
+            </div>
+            <div id="importBackupPreview" class="backup-preview hidden" aria-live="polite"></div>
+            <div class="backup-actions">
+              <button id="confirmImportBackup" class="btn btn-primary" type="button" disabled>确认导入预览内容</button>
+            </div>
+          </section>
 
           <div class="modal-footer">
             <button id="cancelSettings" class="btn btn-ghost">取消</button>
@@ -270,11 +306,11 @@
     </div>
 
     <!-- Account Management Overlay -->
-    <div id="accountOverlay" class="overlay hidden">
+    <div id="accountOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="accountTitle">
       <div class="modal modal-lg">
         <div class="modal-header">
-          <h2>账号管理</h2>
-          <button id="closeAccount" class="close-btn">&times;</button>
+          <h2 id="accountTitle">账号管理</h2>
+          <button id="closeAccount" class="close-btn" type="button" aria-label="关闭账号管理">&times;</button>
         </div>
         <div class="modal-body">
           <!-- Action buttons -->
@@ -380,11 +416,11 @@
     </div>
 
     <!-- Add/Edit Account Modal -->
-    <div id="editOverlay" class="overlay hidden">
+    <div id="editOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="editTitle">
       <div class="modal">
         <div class="modal-header">
           <h2 id="editTitle">添加账号</h2>
-          <button id="closeEdit" class="close-btn">&times;</button>
+          <button id="closeEdit" class="close-btn" type="button" aria-label="关闭账号编辑">&times;</button>
         </div>
         <div class="modal-body">
           <input type="hidden" id="editId">
@@ -401,8 +437,8 @@
             <label for="editKey">API Key</label>
             <div class="input-row">
               <input type="password" id="editKey" placeholder="sk-...">
-              <button id="toggleEditKey" class="icon-btn-sm" title="显示/隐藏">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              <button id="toggleEditKey" class="icon-btn-sm" type="button" title="显示 API Key" aria-label="显示 API Key" aria-pressed="false">
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               </button>
             </div>
           </div>
@@ -458,25 +494,35 @@
       <div class="workspace">
         <!-- Input Area -->
         <div class="input-card">
+          <label class="sr-only" for="prompt">图片提示词</label>
           <textarea id="prompt" placeholder="描述你想生成的图片..." rows="3"></textarea>
           <div class="input-toolbar">
             <div class="toolbar-left">
               <div class="prompt-tools">
-                <label class="tool-btn" id="uploadLabel" title="上传参考图，最多 3 张">
-                  <input type="file" id="refImage" accept="image/*" multiple hidden>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-                </label>
+                <button class="tool-btn" id="uploadLabel" type="button" title="上传参考图，最多 3 张" aria-label="上传参考图，最多 3 张">
+                  <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+                </button>
+                <input type="file" id="refImage" accept="image/*" multiple hidden>
+                <button class="tool-btn" id="maskUploadLabel" type="button" title="上传局部编辑 mask，需搭配参考图" aria-label="上传局部编辑 mask，需搭配参考图">
+                  <span class="mask-icon">◐</span>
+                </button>
+                <input type="file" id="maskImage" accept="image/png,image/webp,image/jpeg" hidden>
                 <button id="enhancePromptBtn" class="tool-btn enhance-prompt-btn hidden" type="button" title="润色提示词" aria-label="润色提示词">
                   <svg class="enhance-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3l1.7 5.2L19 10l-5.3 1.8L12 17l-1.7-5.2L5 10l5.3-1.8L12 3z"/><path d="M5 16l.7 2.2L8 19l-2.3.8L5 22l-.7-2.2L2 19l2.3-.8L5 16z"/></svg>
                   <span class="enhance-label">润色</span>
                   <span class="enhance-loading hidden"><span class="spinner"></span></span>
                 </button>
               </div>
+              <div class="ref-edit-options">
+                <label><input type="checkbox" id="refAutoCompress" checked> 自动压缩参考图</label>
+                <label><input type="checkbox" id="refCenterCrop"> 居中裁剪到当前比例</label>
+              </div>
               <div id="refPreview" class="ref-preview-list hidden"></div>
+              <div id="maskPreview" class="mask-preview hidden"></div>
             </div>
             <div class="toolbar-right">
-              <span id="generationHint" class="hint" title="Ctrl+Enter 发送">Ctrl+Enter 发送</span>
-              <button id="generateBtn" class="btn btn-primary btn-send">
+              <span id="generationHint" class="hint" title="Ctrl+Enter 发送" role="status" aria-live="polite">Ctrl+Enter 发送</span>
+              <button id="generateBtn" class="btn btn-primary btn-send" aria-busy="false">
                 <span class="btn-text">生成</span>
                 <span class="btn-loading hidden"><span class="spinner"></span></span>
               </button>
@@ -489,59 +535,121 @@
             </div>
             <div class="active-job-actions">
               <button id="retryActiveJobBtn" class="btn btn-outline" type="button">立即重试</button>
+              <button id="cancelActiveJobBtn" class="btn btn-outline" type="button">取消任务</button>
               <button id="dismissActiveJobBtn" class="btn btn-ghost" type="button">放弃任务</button>
             </div>
           </div>
         </div>
 
+        <!-- Prompt Templates -->
+        <section id="promptTemplatePanel" class="prompt-template-panel" aria-label="Prompt 模板库">
+          <div class="prompt-template-header">
+            <div>
+              <h2>Prompt 模板库</h2>
+              <p>保存常用提示词，支持版本回退和安全导入导出</p>
+            </div>
+            <button id="savePromptTemplate" class="btn btn-outline" type="button">保存当前为模板</button>
+          </div>
+          <div class="prompt-template-grid">
+            <div class="template-field">
+              <label for="promptTemplateName">模板名</label>
+              <input id="promptTemplateName" type="text" placeholder="例如：产品海报风格">
+            </div>
+            <div class="template-field">
+              <label for="promptTemplateTags">标签</label>
+              <input id="promptTemplateTags" type="text" placeholder="逗号分隔，例如 海报,电商">
+            </div>
+            <div class="template-field wide">
+              <label for="promptTemplateSelect">已保存模板</label>
+              <select id="promptTemplateSelect"></select>
+            </div>
+          </div>
+          <div class="prompt-template-actions">
+            <button id="applyPromptTemplate" class="btn btn-ghost" type="button">覆盖当前提示词</button>
+            <button id="appendPromptTemplate" class="btn btn-ghost" type="button">追加到当前提示词</button>
+            <button id="updatePromptTemplate" class="btn btn-ghost" type="button">更新模板版本</button>
+            <button id="deletePromptTemplate" class="btn btn-ghost danger" type="button">删除模板</button>
+            <button id="exportPromptTemplates" class="btn btn-ghost" type="button">导出模板</button>
+            <button id="importPromptTemplates" class="btn btn-ghost" type="button">导入模板</button>
+            <input id="promptTemplateImportFile" type="file" accept="application/json" hidden>
+          </div>
+          <div class="prompt-history-row">
+            <label for="promptHistorySelect">最近提示词版本</label>
+            <select id="promptHistorySelect"></select>
+            <button id="restorePromptBefore" class="btn btn-ghost" type="button">恢复增强前</button>
+            <button id="restorePromptAfter" class="btn btn-ghost" type="button">恢复增强后</button>
+          </div>
+          <div id="promptTemplateStatus" class="prompt-template-status" aria-live="polite"></div>
+        </section>
+
         <!-- Options Bar -->
         <div class="options-bar">
           <div class="opt">
-            <label>质量</label>
-            <div class="seg" data-field="quality">
-              <button data-value="low">低</button>
-              <button data-value="medium" class="active">中</button>
-              <button data-value="high">高</button>
+            <label id="qualitySegLabel">质量</label>
+            <div class="seg" data-field="quality" role="group" aria-labelledby="qualitySegLabel">
+              <button type="button" data-value="low" aria-pressed="false">低</button>
+              <button type="button" data-value="medium" class="active" aria-pressed="true">中</button>
+              <button type="button" data-value="high" aria-pressed="false">高</button>
             </div>
           </div>
           <div class="opt">
             <label>尺寸</label>
             <div class="custom-select" id="sizeSelect" data-value="auto">
-              <button class="cs-trigger" type="button">自动</button>
-              <div class="cs-dropdown hidden">
-                <div class="cs-item" data-value="auto" data-label="自动">自动</div>
+              <button class="cs-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">自动</button>
+              <div class="cs-dropdown hidden" role="listbox" aria-label="选择图片尺寸">
+                <div class="cs-item active" data-value="auto" data-label="自动" role="option" tabindex="-1" aria-selected="true">自动</div>
                 <div class="cs-divider"></div>
-                <div class="cs-item" data-value="1024x1024" data-label="方形 1:1">方形 1:1</div>
-                <div class="cs-item" data-value="1056x1408" data-label="竖版 3:4">竖版 3:4</div>
-                <div class="cs-item" data-value="864x1536" data-label="故事 9:16">故事 9:16</div>
-                <div class="cs-item" data-value="1408x1056" data-label="横屏 4:3">横屏 4:3</div>
-                <div class="cs-item" data-value="1536x864" data-label="宽屏 16:9">宽屏 16:9</div>
+                <div class="cs-item" data-value="1024x1024" data-label="方形 1:1" role="option" tabindex="-1" aria-selected="false">方形 1:1</div>
+                <div class="cs-item" data-value="1056x1408" data-label="竖版 3:4" role="option" tabindex="-1" aria-selected="false">竖版 3:4</div>
+                <div class="cs-item" data-value="864x1536" data-label="故事 9:16" role="option" tabindex="-1" aria-selected="false">故事 9:16</div>
+                <div class="cs-item" data-value="1408x1056" data-label="横屏 4:3" role="option" tabindex="-1" aria-selected="false">横屏 4:3</div>
+                <div class="cs-item" data-value="1536x864" data-label="宽屏 16:9" role="option" tabindex="-1" aria-selected="false">宽屏 16:9</div>
               </div>
             </div>
           </div>
           <div class="opt">
-            <label>背景</label>
-            <div class="seg" data-field="background">
-              <button data-value="auto" class="active">自动</button>
-              <button data-value="opaque">不透明</button>
-              <button data-value="transparent">透明</button>
+            <label id="backgroundSegLabel">背景</label>
+            <div class="seg" data-field="background" role="group" aria-labelledby="backgroundSegLabel">
+              <button type="button" data-value="auto" class="active" aria-pressed="true">自动</button>
+              <button type="button" data-value="opaque" aria-pressed="false">不透明</button>
+              <button type="button" data-value="transparent" aria-pressed="false">透明</button>
             </div>
           </div>
           <div class="opt">
-            <label>格式</label>
+            <label for="formatSelect">格式</label>
             <select id="formatSelect">
               <option value="png" selected>PNG</option>
               <option value="webp">WebP</option>
               <option value="jpeg">JPEG</option>
             </select>
           </div>
+          <div class="opt">
+            <label for="countSelect">数量</label>
+            <select id="countSelect">
+              <option value="1" selected>1 张</option>
+              <option value="2">2 张</option>
+              <option value="3">3 张</option>
+              <option value="4">4 张</option>
+            </select>
+          </div>
         </div>
+        <!-- Compare Mode -->
+        <section id="comparePanel" class="compare-panel" aria-label="多账号多模型对比生成">
+          <div class="compare-panel-head">
+            <label class="compare-toggle">
+              <input type="checkbox" id="compareModeEnabled">
+              <span>对比模式</span>
+            </label>
+            <span id="compareStatus" class="compare-status" aria-live="polite">选择 2 个以上账号/模型组合后，可用同一提示词对比生成。</span>
+          </div>
+          <div id="compareTargetList" class="compare-target-list"></div>
+        </section>
         <!-- Advanced Options -->
         <details class="advanced-panel">
           <summary>高级选项</summary>
           <div class="advanced-grid">
             <div class="adv-group">
-              <label>风格</label>
+              <label for="styleSelect">风格</label>
               <select id="styleSelect">
                 <option value="">默认</option>
                 <option value="natural">自然</option>
@@ -555,7 +663,7 @@
               </select>
             </div>
             <div class="adv-group">
-              <label>类型</label>
+              <label for="typeSelect">类型</label>
               <select id="typeSelect">
                 <option value="">默认</option>
                 <option value="photo">照片</option>
@@ -572,10 +680,22 @@
       </div>
 
       <!-- Results -->
+      <div id="historyToolbar" class="history-toolbar" aria-label="历史记录工具栏">
+        <div class="history-search">
+          <label for="historySearch">历史搜索</label>
+          <input id="historySearch" type="search" placeholder="搜索提示词、模型、标签或批次">
+        </div>
+        <label class="history-favorite-filter">
+          <input type="checkbox" id="historyFavoriteOnly">
+          <span>只看收藏</span>
+        </label>
+        <button id="historyRefresh" class="btn btn-outline" type="button">刷新历史</button>
+        <span id="historyStatus" class="history-status" aria-live="polite"></span>
+      </div>
       <div id="results" class="gallery"></div>
 
       <!-- Error -->
-      <div id="errorMsg" class="error-bar hidden"></div>
+      <div id="errorMsg" class="error-bar hidden" role="alert" aria-live="assertive"></div>
     </main>
 
     <!-- Generation Error Dialog -->
@@ -608,9 +728,9 @@
     </div>
 
     <!-- Lightbox -->
-    <div id="lightbox" class="lightbox hidden">
+    <div id="lightbox" class="lightbox hidden" role="dialog" aria-modal="true" aria-label="图片预览">
       <img id="lightboxImg" alt="预览">
-      <button id="lightboxClose" class="lightbox-close">&times;</button>
+      <button id="lightboxClose" class="lightbox-close" type="button" aria-label="关闭图片预览">&times;</button>
     </div>
   </div>
 

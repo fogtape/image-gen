@@ -16,8 +16,16 @@ export class BaseHandler {
     };
   }
 
+  unwrapRuntimeConfig(runtime) {
+    if (!runtime || typeof runtime !== 'object') return {};
+    return runtime.config && typeof runtime.config === 'object' ? runtime.config : runtime;
+  }
+
   getRuntimeConfig() {
-    return this.runtimeResolver ? this.runtimeResolver() : this.configService?.getRuntimeConfig?.();
+    const runtime = this.runtimeResolver
+      ? this.runtimeResolver()
+      : (this.configService?.getResolvedConfig?.() || this.configService?.getRuntimeConfig?.());
+    return this.unwrapRuntimeConfig(runtime);
   }
 
   getDeployConfig() {

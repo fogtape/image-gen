@@ -3,11 +3,17 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
     "build": "node scripts/build-static.js",
-    "test": "node --test"
+    "test": "node --test test/*.js api/oauth/test.js",
+    "test:docker:packaging": "node --test test/docker-packaging.test.js",
+    "smoke:docker": "node scripts/docker-smoke-test.mjs",
+    "ci:release-gate": "npm test && npm run build && npm run smoke:docker"
   },
   "dependencies": {
     "sharp": "^0.33.5"

@@ -1,3 +1,6 @@
+import { getProxyAllowedHosts, isExplicitLocalDevProxyAllowed } from '../proxy-policy.js';
+import { prepareProxyRequest, runProxyUpstream } from '../proxy-executor.js';
+
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -7,39 +10,35 @@ export default async function handler(req, res) {
   }
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { url, method, headers, body } = req.body;
-  if (!url) return res.status(400).json({ error: 'Missing url' });
-
-  const fetchMethod = (method || 'POST').toUpperCase();
+  let prepared;
+  try {
+    prepared = prepareProxyRequest(req.body || {}, {
+      allowedHosts: getProxyAllowedHosts(),
+      allowLocalHttp: isExplicitLocalDevProxyAllowed(),
+      allowMultipart: false,
+    });
+  } catch (e) {
+    return res.status(e.status || 400).json({ error: e.message || 'Proxy request is invalid' });
+  }
 
   try {
-    const opts = { method: fetchMethod, headers: { ...headers } };
-    if (fetchMethod !== 'GET' && body != null) {
-      opts.headers['Content-Type'] = 'application/json';
-      opts.body = JSON.stringify(body);
-    }
-
-    const resp = await fetch(url, opts);
-    const contentType = resp.headers.get('content-type') || '';
-
-    if (contentType.includes('text/event-stream')) {
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(decoder.decode(value, { stream: true }));
-      }
+    const result = await runProxyUpstream(prepared, {
+      onStreamStart: ({ status, contentType }) => {
+        res.status(status);
+        res.setHeader('Content-Type', contentType || 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+      },
+      onStreamChunk: (chunk) => res.write(chunk),
+    });
+    if (result.stream) {
       res.end();
     } else {
-      const data = await resp.text();
-      res.setHeader('Content-Type', contentType || 'application/json');
-      res.status(resp.status).send(data);
+      res.setHeader('Content-Type', result.contentType || 'application/json');
+      res.status(result.status).send(result.body);
     }
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    if (res.headersSent) return res.end();
+    res.status(e.status || 502).json({ error: e.message || 'Proxy upstream request failed' });
   }
 }

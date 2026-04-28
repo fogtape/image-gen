@@ -9,6 +9,7 @@ import {
   buildOAuthResponsesImageBody,
   buildProcessUploadRequest,
   collectImagePointersFromText,
+  downloadBytes,
   filterUploadedReferencePointers,
   getImageQuotaMessage,
   normalizeBase64Image,
@@ -16,6 +17,8 @@ import {
   getUnsupportedChatRequirementChallenge,
   reportOAuthProgress,
 } from '../openai-oauth-image.js';
+
+const ONE_BY_ONE_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
 
 test('OAuth 最新链路构造 ChatGPT Codex Responses image_generation 请求，支持文生图和图生图', () => {
   const txt = buildOAuthResponsesImageBody({
@@ -159,6 +162,58 @@ test('能从 conversation/init 返回中识别图片额度耗尽', () => {
 test('normalizeBase64Image 支持 data URL 并补齐 padding', () => {
   const raw = Buffer.from('png-data').toString('base64').replace(/=+$/, '');
   assert.equal(normalizeBase64Image(`data:image/png;base64,${raw}`), Buffer.from('png-data').toString('base64'));
+});
+
+test('OAuth 图片下载逐跳校验重定向、协议、类型和大小', async () => {
+  const originalFetch = globalThis.fetch;
+  const headers = { 'User-Agent': 'test-agent', Authorization: 'Bearer test-token' };
+  const pngBuffer = Buffer.from(ONE_BY_ONE_PNG, 'base64');
+  try {
+    const requests = [];
+    globalThis.fetch = async (url, options = {}) => {
+      requests.push({ url: String(url), redirect: options.redirect, hasAuth: Boolean(options.headers?.Authorization) });
+      if (String(url) === 'https://chatgpt.com/cdn/start.png') {
+        return new Response('', { status: 302, headers: { Location: 'https://cdn.example/final.png' } });
+      }
+      return new Response(pngBuffer, {
+        status: 200,
+        headers: { 'Content-Type': 'image/png', 'Content-Length': String(pngBuffer.length) },
+      });
+    };
+    const ok = await downloadBytes(headers, 'https://chatgpt.com/cdn/start.png');
+    assert.equal(ok.equals(pngBuffer), true);
+    assert.deepEqual(requests.map((item) => item.url), [
+      'https://chatgpt.com/cdn/start.png',
+      'https://cdn.example/final.png',
+    ]);
+    assert.deepEqual(requests.map((item) => item.redirect), ['manual', 'manual']);
+    assert.deepEqual(requests.map((item) => item.hasAuth), [true, false]);
+
+    globalThis.fetch = async () => new Response('', { status: 302, headers: { Location: 'https://127.0.0.1/private.png' } });
+    await assert.rejects(
+      downloadBytes(headers, 'https://cdn.example/redirect-private.png'),
+      /host is not allowed/,
+    );
+
+    await assert.rejects(
+      downloadBytes(headers, 'http://cdn.example/insecure.png'),
+      /protocol is not allowed/,
+    );
+
+    globalThis.fetch = async () => new Response('<html></html>', { status: 200, headers: { 'Content-Type': 'text/html' } });
+    await assert.rejects(
+      downloadBytes(headers, 'https://cdn.example/not-image.png'),
+      /unsupported image download content type/,
+    );
+
+    globalThis.fetch = async () => new Response('x', { status: 200, headers: { 'Content-Type': 'image/png', 'Content-Length': String(21 << 20) } });
+    await assert.rejects(
+      downloadBytes(headers, 'https://cdn.example/large.png'),
+      /too large/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 

@@ -1,29 +1,37 @@
+import { getProxyAllowedHosts, isExplicitLocalDevProxyAllowed } from '../../proxy-policy.js';
+import { prepareProxyRequest, runProxyUpstream } from '../../proxy-executor.js';
+
 export async function handler(event) {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 200, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization' }, body: '' };
   }
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
 
-  const { url, method, headers, body } = JSON.parse(event.body);
-  if (!url) return { statusCode: 400, body: JSON.stringify({ error: 'Missing url' }) };
-
-  const fetchMethod = (method || 'POST').toUpperCase();
+  let parsed;
+  try {
+    parsed = JSON.parse(event.body || '{}');
+  } catch {
+    return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) };
+  }
+  let prepared;
+  try {
+    prepared = prepareProxyRequest(parsed, {
+      allowedHosts: getProxyAllowedHosts(),
+      allowLocalHttp: isExplicitLocalDevProxyAllowed(),
+      allowMultipart: false,
+    });
+  } catch (e) {
+    return { statusCode: e.status || 400, body: JSON.stringify({ error: e.message || 'Proxy request is invalid' }) };
+  }
 
   try {
-    const opts = { method: fetchMethod, headers: { ...headers } };
-    if (fetchMethod !== 'GET' && body != null) {
-      opts.headers['Content-Type'] = 'application/json';
-      opts.body = JSON.stringify(body);
-    }
-
-    const resp = await fetch(url, opts);
-    const data = await resp.text();
+    const result = await runProxyUpstream(prepared);
     return {
-      statusCode: resp.status,
-      headers: { 'Content-Type': resp.headers.get('content-type') || 'application/json' },
-      body: data,
+      statusCode: result.status,
+      headers: { 'Content-Type': result.contentType || 'application/json' },
+      body: result.body || '',
     };
   } catch (e) {
-    return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
+    return { statusCode: e.status || 502, body: JSON.stringify({ error: e.message || 'Proxy upstream request failed' }) };
   }
 }

@@ -22,11 +22,13 @@ Docker 镜像：`fogtape/image-gen:latest`
 ## 目录
 
 - [快速开始](#快速开始)
+- [自动化测试与手工连通性测试](#自动化测试)
 - [配置优先级与保存位置](#配置优先级与保存位置)
 - [前端可保存哪些配置](#前端可保存哪些配置)
 - [本地 Node 部署](#本地-node-部署)
 - [Docker 部署](#docker-部署)
 - [云平台部署总览](#云平台部署总览)
+- [平台能力矩阵](#平台能力矩阵)
 - [各云平台参数怎么填](#各云平台参数怎么填)
   - [Vercel](#vercel)
   - [Netlify](#netlify)
@@ -42,10 +44,15 @@ Docker 镜像：`fogtape/image-gen:latest`
 
 ### 本地运行
 
+要求 Node.js 22 或更高版本；仓库包含 `package-lock.json`，推荐使用 `npm ci` 复现依赖。
+
 ```bash
-npm install
+npm ci
+npm run build
 npm run dev
 ```
+
+Node 服务默认只从 `dist/` 提供前端静态文件；修改前端资源后需要重新执行 `npm run build`，或显式设置 `IMAGE_GEN_STATIC_DIR` 指向你要服务的静态目录。
 
 默认启动后访问：
 
@@ -61,6 +68,41 @@ npx serve dist -p 3000
 ```
 
 > 仅静态托管时，服务端配置中心、OAuth 后端、后台任务、云平台环境变量同步等功能不会生效。
+
+### 自动化测试
+
+```bash
+npm test
+```
+
+`npm test` 只运行正式自动化测试目录（`test/*.js` 与 `api/oauth/test.js`），不会执行需要临时凭据的手工连通性脚本。
+
+发布镜像前可运行完整门禁：
+
+```bash
+npm run ci:release-gate
+```
+
+它会依次执行单元测试、静态构建和 Docker smoke。普通本地环境没有 Docker 时，`npm run smoke:docker` 会跳过；CI 或设置 `REQUIRE_DOCKER_SMOKE=1` 时 Docker 不可用会失败。
+
+### 手工连通性测试
+
+手工脚本放在 `scripts/manual/`，用于你明确需要连真实兼容 API 地址排查时运行。它们依赖本地临时文件：
+
+```text
+.tmp_test_base_url
+.tmp_test_api_key
+```
+
+示例：
+
+```bash
+node scripts/manual/auth-check.mjs
+node scripts/manual/generate-image.mjs
+node scripts/manual/image-routes.mjs
+```
+
+不要提交这些 `.tmp_*` 临时文件，也不要把 API Key、token 或完整响应中的敏感内容粘贴到公开日志。
 
 ---
 
@@ -158,7 +200,7 @@ cp config/.env.example config/.env
 ### 2）启动
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
@@ -206,7 +248,15 @@ docker compose up -d
 - 配置支持热更新
 - 历史图片等数据会持久化到 `data/`
 
+存储清理 scope 的含义：
+
+- **清理页面对话**：只清浏览器里的当前提示词、结果区和活动任务记录；当前版本没有服务端 conversation 数据。
+- **清理服务端图片**：清理 `data/images/` 和图片索引。
+- **清理页面和图片**：清理页面本地状态，并清理服务端图片；不会删除账号配置、`config/.env`、OAuth 会话文件或项目外文件。
+
 ### 重要说明
+Docker 镜像构建时只复制 `config/.env.example`，不会把本地 `config/.env`、`data/`、`.oauth-sessions.json` 或 `.tmp_*` 临时文件打进镜像。容器首次启动时如果没有挂载自己的 `config/.env`，服务端会按模板生成默认配置。
+
 如果你**没有挂载 `config/`**，那会有两个问题：
 
 1. 容器重建后配置丢失
@@ -229,6 +279,7 @@ docker compose up -d
 - 通过平台 API 改环境变量
 - 前端保存后可再点“同步平台变量”
 - 如平台需要，再点“重新部署”
+- 这要求当前部署方式本身提供配置管理 API；纯静态 Pages 只能作为前端页面运行，不能在页面内完成平台 env 同步。
 
 ### 当前支持的平台字段要求
 
@@ -239,6 +290,32 @@ docker compose up -d
 | Netlify | `accountId`、`projectId`、`apiToken` |
 | Cloudflare | `accountId`、`projectId`、`apiToken` |
 | EdgeOne Pages | `projectId`、`apiToken` |
+
+---
+
+## 平台能力矩阵
+
+标记说明：
+
+- ✅：当前实现可用。
+- ⚠️：可用但有明显降级、前提或生命周期限制。
+- ❌：该部署形态下当前不可用。
+
+| 部署方式 | 静态页面 | 浏览器直连生图 | 服务端代理 `/api/proxy` | OAuth 后端 | 后台任务 | 图片持久化 | 服务端配置保存 | 平台同步/重部署 | 说明 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| Node / VPS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ 本地无需远程重部署 | 最完整形态；`config/.env` 和 `data/` 可长期保留。 |
+| Docker / Compose | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ 需挂载 `./data` | ✅ 需挂载 `./config` | ⚠️ 本地无需远程重部署 | 推荐使用 compose，避免容器重建后配置和历史丢失。 |
+| Vercel | ✅ | ✅ | ✅ | ✅ | ⚠️ serverless 中同步执行并直接返回结果 | ⚠️ serverless 本地文件不可当长期存储 | ⚠️ 当前实例运行态可保存，持久化需同步平台 env 后重部署 | ✅ | 当前最完整的云端 serverless 形态；后台任务不做跨实例长轮询。 |
+| Netlify | ✅ | ✅ | ✅ | ⚠️ 仅 `/api/oauth/images`，缺 `start/exchange/status/stream` | ❌ | ❌ | ❌ | ❌ | 当前只提供 `proxy` 和部分 OAuth 生图函数；配置中心和后台任务需 Node/Vercel 形态。 |
+| Cloudflare Pages | ✅ | ✅ 需要目标 API 支持 CORS | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 当前仓库提供纯静态 Pages 构建；Cloudflare handler 只是在 Node/Vercel 配置中心里管理外部 Worker/Script env。 |
+| EdgeOne Pages | ✅ | ✅ 需要目标 API 支持 CORS | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 当前仓库提供纯静态 Pages 构建；EdgeOne handler 只是在 Node/Vercel 配置中心里调用 Pages API。 |
+
+### 关键结论
+
+- 想要完整的配置中心、后台任务、OAuth 后端和图片历史：优先选 **Node / Docker**。
+- 想要云端免服务器且功能尽量完整：优先选 **Vercel**。
+- 只想快速上线前端页面：**Netlify / Cloudflare Pages / EdgeOne Pages** 可以零配置导入，但要接受后端能力降级。
+- 浏览器直连生图依赖目标 API 的 CORS；如果目标 API 不允许跨域，就需要 Node / Docker / Vercel / Netlify 的 `/api/proxy`。
 
 ---
 
@@ -514,6 +591,43 @@ Netlify 的 `projectId` 实际填的是站点 ID，不是仓库名。
 | `IMAGE_GEN_DEPLOY_AUTO_SYNC` | 保存后是否自动同步平台变量 |
 | `IMAGE_GEN_DEPLOY_AUTO_REDEPLOY` | 同步后是否自动触发重部署 |
 
+### 高级 / 安全环境变量
+
+这些变量通常不需要在前端设置页里频繁修改，适合自托管、Docker、Vercel 或安全加固场景直接通过环境变量配置。
+
+| 变量名 | 默认值 / 范围 | 说明 |
+|---|---|---|
+| `PORT` | `3000` | Node / Docker HTTP 监听端口。 |
+| `IMAGE_GEN_CONFIG_DIR` | `config/` | Node / Docker 配置目录；建议在 Docker 中挂载到宿主机。 |
+| `IMAGE_GEN_ENV_FILE` | `IMAGE_GEN_CONFIG_DIR/.env` | 本地配置文件路径。serverless 环境不会创建或依赖该文件。 |
+| `IMAGE_GEN_DATA_DIR` | `data/` | 图片历史和持久化文件目录；Docker 中建议挂载。 |
+| `IMAGE_GEN_STATIC_DIR` | `dist/` | Node 服务静态资源目录；修改前端后需重新 `npm run build`。 |
+| `IMAGE_GEN_ALLOWED_ORIGINS` | 空 | Node API CORS 额外允许来源，多个 origin 用逗号分隔；同源和本机开发来源会自动允许。 |
+| `IMAGE_GEN_ALLOW_INSECURE_LOCAL_ADMIN` | `false` | 仅本机开发调试用；未设置管理口令时是否允许本机管理请求。生产环境不要开启。 |
+| `IMAGE_GEN_PROXY_ALLOWED_HOSTS` | 自动包含默认 API host | 服务端代理允许访问的上游 host allowlist，逗号分隔。 |
+| `IMAGE_GEN_PROXY_ALLOW_LOCAL_HTTP` | `false` | 仅本地开发用；是否允许代理访问本机 HTTP。生产环境不要开启。 |
+| `IMAGE_GEN_PROXY_TIMEOUT_MS` | 约 60 秒 | `/api/proxy` 上游请求超时。 |
+| `IMAGE_GEN_PROXY_MAX_RESPONSE_BYTES` | 约 50MB | `/api/proxy` 最大响应字节数，覆盖 JSON / 普通流 / SSE。 |
+| `IMAGE_GEN_JSON_BODY_LIMIT_BYTES` | 约 2MB | JSON 请求体上限。 |
+| `IMAGE_GEN_IMAGE_JOB_BODY_LIMIT_BYTES` | 约 25MB | 生图任务 JSON 请求体上限。 |
+| `IMAGE_GEN_REF_IMAGE_MAX_BYTES` | 约 10MB | 单张参考图 / mask 最大字节数。 |
+| `IMAGE_GEN_REF_IMAGES_TOTAL_MAX_BYTES` | 约 25MB | 多参考图总大小上限。 |
+| `IMAGE_GEN_REMOTE_IMAGE_MAX_BYTES` | 约 20MB | 远程图片下载最大字节数。 |
+| `IMAGE_GEN_REMOTE_IMAGE_TIMEOUT_MS` | 约 15 秒 | 远程图片下载超时。 |
+| `IMAGE_GEN_REMOTE_IMAGE_MAX_REDIRECTS` | 3 | 远程图片下载最大重定向次数；每一跳都会重新校验协议和地址。 |
+| `IMAGE_GEN_OAUTH_SESSION_FILE` | `.oauth-sessions.json` | OAuth session 文件位置；仅保存非 token 状态，成功结果只保留在内存。 |
+| `IMAGE_GEN_OAUTH_SESSION_SECRET` | 自动/环境提供 | serverless stateless OAuth session 加密签名密钥；生产建议显式设置高强度随机值。 |
+| `IMAGE_GEN_PLATFORM_API_TIMEOUT_MS` | `15000`，限制 1000-120000 | Vercel / Netlify / Cloudflare / EdgeOne 平台 API 调用超时。 |
+| `IMAGE_GEN_DOCKER_SMOKE_TAG` | 自动生成 | Docker smoke 测试临时镜像 tag。 |
+| `REQUIRE_DOCKER_SMOKE` | `0` | 设为 `1` 时 Docker 不可用会让 `npm run smoke:docker` 失败；发布 CI 已强制开启。 |
+
+### Serverless 行为差异
+
+- **Node / Docker**：会读取并维护本地 `config/.env`，支持 watcher 热更新、后台任务轮询、图片持久化、完整 `/api/proxy` 和 OAuth 后端。
+- **Vercel**：初始化时只读取环境变量，不创建本地配置文件；后台任务在 serverless 中同步完成并直接返回结果，适合免服务器但仍需要后端 API 的场景。
+- **Netlify**：当前只提供 JSON proxy 和部分 OAuth 生图函数；没有完整配置中心、后台任务和图片持久化。
+- **Cloudflare Pages / EdgeOne Pages**：默认是静态站点导入；仓库内 handler 主要用于 Node/Vercel 配置中心里管理对应平台环境变量，不等于 Pages 静态站点天然具备完整后端。
+
 ---
 
 ## 前端保存 + 云端同步 + 重新部署的工作流
@@ -543,9 +657,9 @@ Netlify 的 `projectId` 实际填的是站点 ID，不是仓库名。
 - `IMAGE_GEN_DEPLOY_AUTO_SYNC=true`
 - `IMAGE_GEN_DEPLOY_AUTO_REDEPLOY=true`
 
-那么未来可以进一步扩展为保存后自动同步 / 自动触发部署。
+那么保存服务端配置时会自动执行平台变量同步和重新部署，并在接口响应的 `operations` 里返回每一步结果。
 
-> 当前主流程里，建议你仍然手动点一次，便于观察平台返回结果。
+如果你刚开始配置平台 token，建议先关闭自动模式，手动点击“平台校验 / 同步平台变量 / 重新部署”确认成功后再打开。
 
 ---
 
@@ -583,8 +697,22 @@ Netlify 的 `projectId` 实际填的是站点 ID，不是仓库名。
 
 如果 API 不支持 CORS（浏览器跨域），可在设置中开启“使用代理”。
 
-- **Node / Docker / Vercel / Netlify**：更适合使用服务端代理
+- **Node / Docker**：支持 JSON、SSE 和 multipart 图生图代理，功能最完整。
+- **Vercel**：支持 JSON 和 SSE 代理；不支持 multipart 图生图代理，开启“图生图兼容模式（旧版 multipart）”时请关闭代理或改用 Node / Docker。
+- **Netlify**：支持 JSON 代理；SSE 会退化为函数响应文本，multipart 图生图代理不支持。
 - **纯静态站点**：通常只能浏览器直连，要求目标 API 本身支持跨域
+
+---
+
+## 产品路线
+
+P0-P3 的稳定性、安全、可访问性和发布门禁修复记录见：
+
+- `docs/audit-p0-p3-tracking-2026-04-28.md`
+
+下一批产品增强 backlog 见：
+
+- `docs/p4-product-roadmap.md`
 
 ---
 
@@ -603,3 +731,5 @@ GitHub 仓库需配置 Secrets：
 DOCKERHUB_USERNAME
 DOCKERHUB_TOKEN
 ```
+
+发布 workflow 会先执行 `npm ci` 和 `npm run ci:release-gate`，通过单元测试、静态构建和 Docker smoke 后才登录 Docker Hub 并推送多架构镜像。CI 中已设置 `REQUIRE_DOCKER_SMOKE=1`，因此 Docker 构建或容器 HTTP 烟测失败时不会发布镜像。
