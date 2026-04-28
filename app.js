@@ -30,7 +30,6 @@ import {
 import {
   hideGenerationErrorDialog,
   showError,
-  showGenerationErrorDialog,
 } from './frontend/error-dialog.js';
 import { closeDialog, openDialog } from './frontend/dialog-a11y.js';
 import { confirmAction, createButton, createIconButton, notifyAction } from './frontend/ui-actions.js';
@@ -136,7 +135,7 @@ function recordPromptHistory({ source = '', final = '', style = '', type = '', m
 
 function saveCurrentPromptToHistory() {
   const prompt = sanitizeTemplateText($('#prompt')?.value || '', 4000);
-  if (!prompt) { showError('请输入提示词后再保存历史'); return; }
+  if (!prompt) { showError('请输入提示词后再保存历史', { context: 'prompt-history' }); return; }
   recordPromptHistory({
     source: prompt,
     final: prompt,
@@ -173,9 +172,9 @@ function applySelectedPromptHistory() {
 
 function restorePromptHistoryVersion(kind = 'final') {
   const item = getSelectedPromptHistory();
-  if (!item) { showError('请先选择历史提示词'); return; }
+  if (!item) { showError('请先选择历史提示词', { context: 'prompt-history' }); return; }
   const text = kind === 'source' ? item.source : item.final;
-  if (!text) { showError(kind === 'source' ? '这条记录没有原始提示词' : '这条记录没有最终提示词'); return; }
+  if (!text) { showError(kind === 'source' ? '这条记录没有原始提示词' : '这条记录没有最终提示词', { context: 'prompt-history' }); return; }
   $('#prompt').value = text;
   if (item.style) setSelectValue('styleSelect', item.style);
   if (item.type) setSelectValue('typeSelect', item.type);
@@ -1556,7 +1555,7 @@ function restoreGenerationSnapshot(meta = {}) {
 async function regenerateFromHistory(meta = {}) {
   const generation = restoreGenerationSnapshot(meta);
   if (!generation.prompt) {
-    showError('这条历史没有保存提示词，无法重新生成');
+    showError('这条历史没有保存提示词，无法重新生成', { context: 'history' });
     return;
   }
   setHistoryStatus('已恢复历史参数，正在重新生成...');
@@ -1565,11 +1564,11 @@ async function regenerateFromHistory(meta = {}) {
 
 async function addHistoryImageAsReference(meta = {}) {
   if (!meta.url) {
-    showError('这条历史没有可用图片 URL，无法作为参考图');
+    showError('这条历史没有可用图片 URL，无法作为参考图', { context: 'reference' });
     return;
   }
   if (state.refImagesBase64.length >= MAX_REF_IMAGES) {
-    showError(`最多只能使用 ${MAX_REF_IMAGES} 张参考图，请先移除一张`);
+    showError(`最多只能使用 ${MAX_REF_IMAGES} 张参考图，请先移除一张`, { context: 'reference' });
     return;
   }
   restoreGenerationSnapshot(meta);
@@ -1588,7 +1587,7 @@ async function addHistoryImageAsReference(meta = {}) {
 async function copyPromptFromHistory(meta = {}) {
   const prompt = getHistoryGenerationSnapshot(meta).prompt;
   if (!prompt) {
-    showError('这条历史没有保存提示词，无法复制');
+    showError('这条历史没有保存提示词，无法复制', { context: 'history' });
     return;
   }
   const ok = await copyTextToClipboard(prompt);
@@ -1648,7 +1647,7 @@ function appendHistoryActions(actions, meta = {}, card) {
       className: 'btn btn-ghost history-copy-btn',
       text: '复制词',
       onClick: async () => {
-        try { await copyPromptFromHistory(meta); } catch (e) { showError(e); }
+        try { await copyPromptFromHistory(meta); } catch (e) { showError(e, { context: 'history' }); }
       },
     });
     actions.appendChild(copy);
@@ -1657,7 +1656,7 @@ function appendHistoryActions(actions, meta = {}, card) {
       className: 'btn btn-ghost history-regenerate-btn',
       text: '重新生成',
       onClick: async () => {
-        try { await regenerateFromHistory(meta); } catch (e) { showError(e); }
+        try { await regenerateFromHistory(meta); } catch (e) { showError(e, { context: 'history' }); }
       },
     });
     actions.appendChild(regen);
@@ -1668,7 +1667,7 @@ function appendHistoryActions(actions, meta = {}, card) {
       className: 'btn btn-ghost history-reference-btn',
       text: '作参考',
       onClick: async () => {
-        try { await addHistoryImageAsReference(meta); } catch (e) { showError(e); }
+        try { await addHistoryImageAsReference(meta); } catch (e) { showError(e, { context: 'reference' }); }
       },
     });
     actions.appendChild(ref);
@@ -1684,7 +1683,7 @@ function appendHistoryActions(actions, meta = {}, card) {
       updateStoredImageCards(image);
       await loadStorageStats();
     } catch (e) {
-      showError(e);
+      showError(e, { context: 'history' });
     } finally {
       fav.disabled = false;
     }
@@ -1704,7 +1703,7 @@ function appendHistoryActions(actions, meta = {}, card) {
         await loadStorageStats();
         setHistoryStatus('已删除 1 张历史图片');
       } catch (e) {
-        showError(e);
+        showError(e, { context: 'history' });
       } finally {
         del.disabled = false;
       }
@@ -2540,9 +2539,9 @@ function setEnhancePromptLoading(on) {
 async function enhancePromptManually() {
   if (state.generating || state.enhancingPrompt) return;
   const prompt = $('#prompt').value.trim();
-  if (!prompt) { showError('请输入提示词'); return; }
+  if (!prompt) { showError('请输入提示词', { context: 'validation' }); return; }
   let cfg = getEffective();
-  if (!cfg.apiUrl || !cfg.apiKey) { showError('请先添加账号并配置 API 地址和 Key'); return; }
+  if (!cfg.apiUrl || !cfg.apiKey) { showError('请先添加账号并配置 API 地址和 Key', { context: 'account' }); return; }
   cfg = await ensureValidToken(cfg);
   const style = $('#styleSelect').value;
   const type = $('#typeSelect').value;
@@ -2557,7 +2556,7 @@ async function enhancePromptManually() {
     recordPromptHistory({ source: prompt, final: enhanced, style, type, mode: 'manual-enhance' });
     setGenerationStatus('提示词已生成，可继续修改');
   } catch (e) {
-    showError(e);
+    showError(e, { context: 'prompt-enhancement' });
     setGenerationStatus(IDLE_GENERATION_HINT);
   } finally {
     setEnhancePromptLoading(false);
@@ -2568,7 +2567,7 @@ async function generate() {
   if (state.generating) return;
 
   const prompt = $('#prompt').value.trim();
-  if (!prompt) { showError('请输入提示词'); return; }
+  if (!prompt) { showError('请输入提示词', { context: 'validation' }); return; }
 
   const quality = getActiveValue('quality');
   const background = getActiveValue('background');
@@ -2583,13 +2582,13 @@ async function generate() {
 
   let cfg = getEffective();
   if (compareEnabled) {
-    if (compareTargets.length < 2) { showError('对比模式至少需要选择 2 个账号/模型组合'); return; }
+    if (compareTargets.length < 2) { showError('对比模式至少需要选择 2 个账号/模型组合', { context: 'compare' }); return; }
     const invalidTarget = compareTargets.find((target) => !target.cfg.apiUrl || !target.cfg.apiKey);
-    if (invalidTarget) { showError(`对比组合「${invalidTarget.label}」缺少 API 地址或 Key`); return; }
+    if (invalidTarget) { showError(`对比组合「${invalidTarget.label}」缺少 API 地址或 Key`, { context: 'compare' }); return; }
     compareTargets[0].cfg = await ensureValidTokenForAccount(compareTargets[0].cfg, compareTargets[0].account);
     cfg = compareTargets[0].cfg;
   } else {
-    if (!cfg.apiUrl || !cfg.apiKey) { showError('请先添加账号并配置 API 地址和 Key'); return; }
+    if (!cfg.apiUrl || !cfg.apiKey) { showError('请先添加账号并配置 API 地址和 Key', { context: 'account' }); return; }
     cfg = await ensureValidToken(cfg);
   }
 
@@ -2623,7 +2622,7 @@ async function generate() {
     if (compareEnabled) await genCompareImages(compareTargets, finalPrompt, quality, background, size, format, hasRef, count);
     else await genBackgroundImages(cfg, finalPrompt, quality, background, size, format, hasRef, count);
   } catch (e) {
-    showError(e);
+    showError(e, { context: 'generation' });
   } finally {
     setLoading(false);
   }
@@ -2807,7 +2806,7 @@ async function cancelActiveJob() {
     } catch (e) {
       showActiveJobBanner('取消失败', '对比后台任务仍保留，网络恢复后可继续获取结果');
       setGenerationStatus('取消失败，对比后台任务仍在进行');
-      showError(e);
+      showError(e, { context: 'background' });
     } finally {
       if (button) {
         button.disabled = false;
@@ -2841,7 +2840,7 @@ async function cancelActiveJob() {
   } catch (e) {
     showActiveJobBanner('取消失败', '后台任务仍保留，网络恢复后可继续获取结果');
     setGenerationStatus('取消失败，后台任务仍在进行');
-    showError(e);
+    showError(e, { context: 'background' });
   } finally {
     if (button) {
       button.disabled = false;
@@ -3201,7 +3200,7 @@ async function resumeActiveJobIfAny() {
       setGenerationStatus('已保留后台任务，网络恢复后会自动继续获取结果');
       return;
     }
-    showError(e);
+    showError(e, { context: 'background' });
   } finally {
     setLoading(false);
   }
@@ -3503,13 +3502,13 @@ function validateRefImageFiles(files = []) {
   for (const file of files) {
     const size = Number(file?.size || 0);
     if (size > REF_IMAGE_MAX_BYTES) {
-      showError(`参考图「${file?.name || '未命名图片'}」超过 ${formatFileSize(REF_IMAGE_MAX_BYTES)}，请换用更小图片`);
+      showError(`参考图「${file?.name || '未命名图片'}」超过 ${formatFileSize(REF_IMAGE_MAX_BYTES)}，请换用更小图片`, { context: 'reference' });
       return false;
     }
     totalBytes += size;
   }
   if (totalBytes > REF_IMAGES_TOTAL_MAX_BYTES) {
-    showError(`参考图总大小超过 ${formatFileSize(REF_IMAGES_TOTAL_MAX_BYTES)}，请减少数量或换用更小图片`);
+    showError(`参考图总大小超过 ${formatFileSize(REF_IMAGES_TOTAL_MAX_BYTES)}，请减少数量或换用更小图片`, { context: 'reference' });
     return false;
   }
   return true;
@@ -3619,7 +3618,7 @@ async function handleReferenceImagesChange(e) {
   const selectedFiles = Array.from(e.target.files || []);
   const files = selectedFiles.slice(0, MAX_REF_IMAGES);
   if (!files.length) return;
-  if (selectedFiles.length > MAX_REF_IMAGES) showError('最多只能上传 3 张参考图，已保留前 3 张');
+  if (selectedFiles.length > MAX_REF_IMAGES) showError('最多只能上传 3 张参考图，已保留前 3 张', { context: 'reference' });
 
   if (!validateRefImageFiles(files)) {
     e.target.value = '';
@@ -3701,11 +3700,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   $('#promptEnhancementEnabled').onchange = () => syncPromptEnhancementUi('form');
   $('#promptEnhancementRunMode').onchange = () => syncPromptEnhancementUi('form');
-  $('#clearConversationData').onclick = async () => { try { await clearStorageData('conversations'); } catch (e) { showError(e); } };
-  $('#clearImageData').onclick = async () => { if (!confirmAction('确定清理已保存的图片？账号不会删除。')) return; try { await clearStorageData('images'); } catch (e) { showError(e); } };
-  $('#clearAllData').onclick = async () => { if (!confirmAction('确定清理对话和图片数据？账号不会删除。')) return; try { await clearStorageData('all'); clearActiveJob(); $('#prompt').value = ''; } catch (e) { showError(e); } };
-  $('#exportSafeBackup')?.addEventListener('click', () => { try { exportSafeBackup(); } catch (e) { setBackupPreview(normalizeGenerationError(e?.message || e), true); showError(e); } });
-  $('#exportEncryptedBackup')?.addEventListener('click', async () => { try { await exportEncryptedBackup(); } catch (e) { setBackupPreview(normalizeGenerationError(e?.message || e), true); showError(e); } });
+  $('#clearConversationData').onclick = async () => { try { await clearStorageData('conversations'); } catch (e) { showError(e, { context: 'storage' }); } };
+  $('#clearImageData').onclick = async () => { if (!confirmAction('确定清理已保存的图片？账号不会删除。')) return; try { await clearStorageData('images'); } catch (e) { showError(e, { context: 'storage' }); } };
+  $('#clearAllData').onclick = async () => { if (!confirmAction('确定清理对话和图片数据？账号不会删除。')) return; try { await clearStorageData('all'); clearActiveJob(); $('#prompt').value = ''; } catch (e) { showError(e, { context: 'storage' }); } };
+  $('#exportSafeBackup')?.addEventListener('click', () => { try { exportSafeBackup(); } catch (e) { setBackupPreview(normalizeGenerationError(e?.message || e), true); showError(e, { context: 'backup.export' }); } });
+  $('#exportEncryptedBackup')?.addEventListener('click', async () => { try { await exportEncryptedBackup(); } catch (e) { setBackupPreview(normalizeGenerationError(e?.message || e), true); showError(e, { context: 'backup.export' }); } });
   $('#importBackupPick')?.addEventListener('click', () => $('#importBackupFile')?.click());
   $('#importBackupFile')?.addEventListener('change', async (event) => {
     try { await previewBackupImportFromFile(event.target.files?.[0]); }
@@ -3714,23 +3713,23 @@ document.addEventListener('DOMContentLoaded', async () => {
       setBackupPreview(normalizeGenerationError(e?.message || e), true);
       const confirmBtn = $('#confirmImportBackup');
       if (confirmBtn) confirmBtn.disabled = true;
-      showError(e);
+      showError(e, { context: 'backup.import' });
     } finally {
       event.target.value = '';
     }
   });
-  $('#confirmImportBackup')?.addEventListener('click', () => { try { confirmImportBackup(); } catch (e) { setBackupPreview(normalizeGenerationError(e?.message || e), true); showError(e); } });
-  $('#savePromptHistory')?.addEventListener('click', () => { try { saveCurrentPromptToHistory(); } catch (e) { showError(e); } });
-  $('#clearPromptHistory')?.addEventListener('click', () => { try { clearPromptHistory(); } catch (e) { showError(e); } });
-  $('#promptHistorySelect')?.addEventListener('change', () => { try { applySelectedPromptHistory(); } catch (e) { showError(e); } });
-  $('#restorePromptBefore')?.addEventListener('click', () => { try { restorePromptHistoryVersion('source'); } catch (e) { showError(e); } });
-  $('#restorePromptAfter')?.addEventListener('click', () => { try { restorePromptHistoryVersion('final'); } catch (e) { showError(e); } });
-  $('#historyRefresh')?.addEventListener('click', async () => { try { await loadHistoryWithFilters(); } catch (e) { setHistoryStatus('历史读取失败', true); showError(e); } });
-  $('#historyFavoriteOnly')?.addEventListener('change', async () => { try { await loadHistoryWithFilters(); } catch (e) { setHistoryStatus('历史读取失败', true); showError(e); } });
+  $('#confirmImportBackup')?.addEventListener('click', () => { try { confirmImportBackup(); } catch (e) { setBackupPreview(normalizeGenerationError(e?.message || e), true); showError(e, { context: 'backup.import' }); } });
+  $('#savePromptHistory')?.addEventListener('click', () => { try { saveCurrentPromptToHistory(); } catch (e) { showError(e, { context: 'prompt-history' }); } });
+  $('#clearPromptHistory')?.addEventListener('click', () => { try { clearPromptHistory(); } catch (e) { showError(e, { context: 'prompt-history' }); } });
+  $('#promptHistorySelect')?.addEventListener('change', () => { try { applySelectedPromptHistory(); } catch (e) { showError(e, { context: 'prompt-history' }); } });
+  $('#restorePromptBefore')?.addEventListener('click', () => { try { restorePromptHistoryVersion('source'); } catch (e) { showError(e, { context: 'prompt-history' }); } });
+  $('#restorePromptAfter')?.addEventListener('click', () => { try { restorePromptHistoryVersion('final'); } catch (e) { showError(e, { context: 'prompt-history' }); } });
+  $('#historyRefresh')?.addEventListener('click', async () => { try { await loadHistoryWithFilters(); } catch (e) { setHistoryStatus('历史读取失败', true); showError(e, { context: 'history' }); } });
+  $('#historyFavoriteOnly')?.addEventListener('change', async () => { try { await loadHistoryWithFilters(); } catch (e) { setHistoryStatus('历史读取失败', true); showError(e, { context: 'history' }); } });
   $('#historySearch')?.addEventListener('input', () => {
     clearTimeout(historySearchTimer);
     historySearchTimer = setTimeout(async () => {
-      try { await loadHistoryWithFilters(); } catch (e) { setHistoryStatus('历史读取失败', true); showError(e); }
+      try { await loadHistoryWithFilters(); } catch (e) { setHistoryStatus('历史读取失败', true); showError(e, { context: 'history' }); }
     }, 250);
   });
   $('#retryActiveJobBtn')?.addEventListener('click', () => { void resumeActiveJobIfAny(); });
@@ -3772,7 +3771,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const result = await runPlatformAction('check', readServerConfigForm());
       notifyAction(result?.message || '平台校验成功');
     } catch (e) {
-      showError(e?.message || e);
+      showError(e?.message || e, { context: 'platform' });
     }
   });
   $('#configPlatformSync')?.addEventListener('click', async () => {
@@ -3780,7 +3779,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const result = await runPlatformAction('sync', readServerConfigForm());
       notifyAction(result?.message || '环境变量同步成功');
     } catch (e) {
-      showError(e?.message || e);
+      showError(e?.message || e, { context: 'platform' });
     }
   });
   $('#configPlatformDeploy')?.addEventListener('click', async () => {
@@ -3788,7 +3787,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const result = await runPlatformAction('deploy', readServerConfigForm());
       notifyAction(result?.message || '已触发重新部署');
     } catch (e) {
-      showError(e?.message || e);
+      showError(e?.message || e, { context: 'platform' });
     }
   });
   $('#testConnection').onclick = testConnection;

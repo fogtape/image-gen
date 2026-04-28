@@ -665,23 +665,23 @@
       <div id="errorMsg" class="error-bar hidden" role="alert" aria-live="assertive"></div>
     </main>
 
-    <!-- Generation Error Dialog -->
+    <!-- Error Dialog -->
     <div id="generationErrorOverlay" class="overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="generationErrorTitle" aria-describedby="generationErrorMessage">
       <div class="modal error-dialog">
         <div class="modal-header error-dialog-header">
           <div class="error-dialog-title-wrap">
             <span class="error-dialog-icon" aria-hidden="true">!</span>
-            <h2 id="generationErrorTitle">生成失败</h2>
+            <h2 id="generationErrorTitle">操作失败</h2>
           </div>
           <button id="generationErrorClose" class="close-btn" type="button" aria-label="关闭错误提示">&times;</button>
         </div>
         <div class="modal-body error-dialog-body">
-          <p class="error-dialog-summary">图片没有生成成功，请查看下面的错误信息。</p>
+          <p id="generationErrorSummary" class="error-dialog-summary">操作没有完成，请查看下面的错误信息。</p>
           <div class="error-dialog-kind-row">
-            <span id="generationErrorKind" class="error-dialog-kind" data-tone="danger">生成链路失败</span>
+            <span id="generationErrorKind" class="error-dialog-kind" data-tone="danger">操作错误</span>
             <span id="generationErrorMeta" class="error-dialog-meta hidden"></span>
           </div>
-          <div id="generationErrorSuggestion" class="error-dialog-suggestion">建议先查看错误类别，再决定是否切换链路或重试。</div>
+          <div id="generationErrorSuggestion" class="error-dialog-suggestion">请根据错误信息调整后重试。</div>
           <div id="generationErrorMessage" class="error-dialog-message"></div>
           <details id="generationErrorDebug" class="error-dialog-debug">
             <summary>调试详情</summary>
