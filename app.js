@@ -38,7 +38,6 @@ import { state, cloneDefaultSettings, mergeAppSettings } from './frontend/state.
 
 const ACCOUNTS_KEY = 'img-gen-accounts';
 const APP_SETTINGS_KEY = 'img-gen-app-settings';
-const PROMPT_TEMPLATES_KEY = 'img-gen-prompt-templates';
 const PROMPT_HISTORY_KEY = 'img-gen-prompt-history';
 const CONFIG_ADMIN_TOKEN_KEY = 'img-gen-config-admin-token';
 const OLD_KEY = 'img-gen-settings';
@@ -48,7 +47,6 @@ const MAX_REF_IMAGES = 3;
 const REF_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 const REF_IMAGES_TOTAL_MAX_BYTES = 24 * 1024 * 1024;
 let historySearchTimer = null;
-let promptTemplates = [];
 let promptHistory = [];
 let pendingBackupImport = null;
 // --- Data Layer ---
@@ -73,212 +71,107 @@ function sanitizeTemplateText(value = '', max = 2000) {
   return String(value || '').trim().slice(0, max);
 }
 
-function sanitizeTemplateTags(value) {
-  const raw = Array.isArray(value) ? value : String(value || '').split(',');
-  const seen = new Set();
-  const tags = [];
-  for (const item of raw) {
-    const tag = sanitizeTemplateText(item, 24);
-    if (!tag || seen.has(tag)) continue;
-    seen.add(tag);
-    tags.push(tag);
-    if (tags.length >= 12) break;
-  }
-  return tags;
-}
-
-function sanitizePromptTemplate(input = {}) {
-  const content = sanitizeTemplateText(input.content || input.prompt || '', 4000);
-  if (!content) return null;
-  const id = sanitizeTemplateText(input.id, 80) || genId();
+function sanitizePromptHistoryEntry(input = {}) {
+  const source = sanitizeTemplateText(input.source || input.prompt || input.content || '', 4000);
+  const final = sanitizeTemplateText(input.final || input.content || input.prompt || input.source || '', 4000);
+  if (!source && !final) return null;
   const now = Date.now();
-  const versions = Array.isArray(input.versions) ? input.versions.slice(0, 10).map((version) => ({
-    content: sanitizeTemplateText(version.content || '', 4000),
-    savedAt: Number(version.savedAt || now),
-  })).filter((version) => version.content) : [];
   return {
-    id,
-    name: sanitizeTemplateText(input.name, 80) || content.slice(0, 24) || '未命名模板',
-    content,
+    id: sanitizeTemplateText(input.id, 80) || genId(),
+    source,
+    final: final || source,
     style: sanitizeTemplateText(input.style, 40),
     type: sanitizeTemplateText(input.type, 40),
-    tags: sanitizeTemplateTags(input.tags),
-    versions,
-    createdAt: Number(input.createdAt || now),
-    updatedAt: Number(input.updatedAt || now),
+    mode: sanitizeTemplateText(input.mode, 40) || 'history',
+    createdAt: Number(input.createdAt || input.updatedAt || now),
   };
-}
-
-function loadPromptTemplates() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(PROMPT_TEMPLATES_KEY) || '[]');
-    promptTemplates = (Array.isArray(parsed) ? parsed : []).map(sanitizePromptTemplate).filter(Boolean).slice(0, 100);
-  } catch {
-    promptTemplates = [];
-  }
-}
-
-function savePromptTemplates() {
-  localStorage.setItem(PROMPT_TEMPLATES_KEY, JSON.stringify(promptTemplates.map(sanitizePromptTemplate).filter(Boolean)));
 }
 
 function loadPromptHistory() {
   try {
     const parsed = JSON.parse(localStorage.getItem(PROMPT_HISTORY_KEY) || '[]');
-    promptHistory = (Array.isArray(parsed) ? parsed : []).map((item) => ({
-      id: sanitizeTemplateText(item.id, 80) || genId(),
-      source: sanitizeTemplateText(item.source, 4000),
-      final: sanitizeTemplateText(item.final, 4000),
-      style: sanitizeTemplateText(item.style, 40),
-      type: sanitizeTemplateText(item.type, 40),
-      mode: sanitizeTemplateText(item.mode, 40),
-      createdAt: Number(item.createdAt || Date.now()),
-    })).filter((item) => item.source || item.final).slice(0, 30);
+    promptHistory = (Array.isArray(parsed) ? parsed : []).map(sanitizePromptHistoryEntry).filter(Boolean).slice(0, 30);
   } catch {
     promptHistory = [];
   }
 }
 
 function savePromptHistory() {
-  localStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(promptHistory.slice(0, 30)));
+  localStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(promptHistory.map(sanitizePromptHistoryEntry).filter(Boolean).slice(0, 30)));
 }
 
-function setPromptTemplateStatus(text = '', isError = false) {
-  const el = $('#promptTemplateStatus');
+function setPromptHistoryStatus(text = '', isError = false) {
+  const el = $('#promptHistoryStatus');
   if (!el) return;
   el.textContent = text;
   el.classList.toggle('error', !!isError);
-}
-
-function renderPromptTemplates() {
-  const select = $('#promptTemplateSelect');
-  if (!select) return;
-  const current = select.value;
-  select.innerHTML = '<option value="">选择模板...</option>';
-  for (const tpl of promptTemplates) {
-    const option = document.createElement('option');
-    option.value = tpl.id;
-    const tags = tpl.tags.length ? ` · ${tpl.tags.map((tag) => `#${tag}`).join(' ')}` : '';
-    option.textContent = `${tpl.name}${tags}`;
-    select.appendChild(option);
-  }
-  if (promptTemplates.some((tpl) => tpl.id === current)) select.value = current;
 }
 
 function renderPromptHistory() {
   const select = $('#promptHistorySelect');
   if (!select) return;
   const current = select.value;
-  select.innerHTML = '<option value="">选择最近版本...</option>';
+  select.innerHTML = '<option value="">选择历史提示词...</option>';
   for (const item of promptHistory) {
     const option = document.createElement('option');
     option.value = item.id;
     const label = new Date(item.createdAt).toLocaleString();
-    option.textContent = `${label} · ${(item.final || item.source).slice(0, 36)}`;
+    const text = (item.final || item.source || '').replace(/\s+/g, ' ').slice(0, 42);
+    option.textContent = `${label} · ${text}`;
     select.appendChild(option);
   }
   if (promptHistory.some((item) => item.id === current)) select.value = current;
 }
 
-function getSelectedPromptTemplate() {
-  const id = $('#promptTemplateSelect')?.value || '';
-  return promptTemplates.find((tpl) => tpl.id === id) || null;
+function recordPromptHistory({ source = '', final = '', style = '', type = '', mode = 'generate' } = {}) {
+  const entry = sanitizePromptHistoryEntry({ source, final: final || source, style, type, mode, createdAt: Date.now() });
+  if (!entry) return;
+  const sameIndex = promptHistory.findIndex((item) => (item.final || item.source) === (entry.final || entry.source));
+  if (sameIndex >= 0) promptHistory.splice(sameIndex, 1);
+  promptHistory.unshift(entry);
+  promptHistory = promptHistory.slice(0, 30);
+  savePromptHistory();
+  renderPromptHistory();
 }
 
-function fillPromptTemplateForm(tpl) {
-  if (!tpl) return;
-  setInputValue('promptTemplateName', tpl.name || '');
-  setInputValue('promptTemplateTags', (tpl.tags || []).join(', '));
-}
-
-function saveCurrentPromptAsTemplate() {
-  const content = sanitizeTemplateText($('#prompt')?.value || '', 4000);
-  if (!content) { showError('请输入提示词后再保存模板'); return; }
-  const tpl = sanitizePromptTemplate({
-    name: $('#promptTemplateName')?.value || content.slice(0, 24),
-    content,
+function saveCurrentPromptToHistory() {
+  const prompt = sanitizeTemplateText($('#prompt')?.value || '', 4000);
+  if (!prompt) { showError('请输入提示词后再保存历史'); return; }
+  recordPromptHistory({
+    source: prompt,
+    final: prompt,
     style: $('#styleSelect')?.value || '',
     type: $('#typeSelect')?.value || '',
-    tags: $('#promptTemplateTags')?.value || '',
-    versions: [{ content, savedAt: Date.now() }],
+    mode: 'manual-save',
   });
-  promptTemplates.unshift(tpl);
-  promptTemplates = promptTemplates.slice(0, 100);
-  savePromptTemplates();
-  renderPromptTemplates();
-  $('#promptTemplateSelect').value = tpl.id;
-  setPromptTemplateStatus('模板已保存');
+  const select = $('#promptHistorySelect');
+  if (select && promptHistory[0]) select.value = promptHistory[0].id;
+  setPromptHistoryStatus('已保存到提示词历史');
 }
 
-function updateSelectedPromptTemplate() {
-  const tpl = getSelectedPromptTemplate();
-  if (!tpl) { showError('请先选择要更新的模板'); return; }
-  const content = sanitizeTemplateText($('#prompt')?.value || '', 4000);
-  if (!content) { showError('请输入提示词后再更新模板'); return; }
-  if (tpl.content && tpl.content !== content) tpl.versions = [{ content: tpl.content, savedAt: tpl.updatedAt || Date.now() }, ...(tpl.versions || [])].slice(0, 10);
-  tpl.name = sanitizeTemplateText($('#promptTemplateName')?.value, 80) || tpl.name;
-  tpl.content = content;
-  tpl.style = $('#styleSelect')?.value || tpl.style || '';
-  tpl.type = $('#typeSelect')?.value || tpl.type || '';
-  tpl.tags = sanitizeTemplateTags($('#promptTemplateTags')?.value || tpl.tags);
-  tpl.updatedAt = Date.now();
-  savePromptTemplates();
-  renderPromptTemplates();
-  $('#promptTemplateSelect').value = tpl.id;
-  setPromptTemplateStatus(`模板已更新，保留 ${tpl.versions.length} 个旧版本`);
+function getSelectedPromptHistory() {
+  const id = $('#promptHistorySelect')?.value || '';
+  return promptHistory.find((entry) => entry.id === id) || null;
 }
 
-function applyPromptTemplate(mode = 'replace') {
-  const tpl = getSelectedPromptTemplate();
-  if (!tpl) { showError('请先选择模板'); return; }
-  const promptEl = $('#prompt');
-  if (mode === 'append' && promptEl.value.trim()) promptEl.value = `${promptEl.value.trim()}\n${tpl.content}`;
-  else promptEl.value = tpl.content;
-  if (tpl.style) setSelectValue('styleSelect', tpl.style);
-  if (tpl.type) setSelectValue('typeSelect', tpl.type);
-  fillPromptTemplateForm(tpl);
-  setPromptTemplateStatus(mode === 'append' ? '模板已追加到当前提示词' : '模板已应用到当前提示词');
+function restorePromptHistoryVersion(kind = 'final') {
+  const item = getSelectedPromptHistory();
+  if (!item) { showError('请先选择历史提示词'); return; }
+  const text = kind === 'source' ? item.source : item.final;
+  if (!text) { showError(kind === 'source' ? '这条记录没有原始提示词' : '这条记录没有最终提示词'); return; }
+  $('#prompt').value = text;
+  if (item.style) setSelectValue('styleSelect', item.style);
+  if (item.type) setSelectValue('typeSelect', item.type);
+  setPromptHistoryStatus(kind === 'source' ? '已恢复原始提示词' : '已恢复最终提示词');
 }
 
-function deleteSelectedPromptTemplate() {
-  const tpl = getSelectedPromptTemplate();
-  if (!tpl) { showError('请先选择模板'); return; }
-  if (!confirmAction(`确定删除模板「${tpl.name}」？`)) return;
-  promptTemplates = promptTemplates.filter((item) => item.id !== tpl.id);
-  savePromptTemplates();
-  renderPromptTemplates();
-  setPromptTemplateStatus('模板已删除');
-}
-
-function exportPromptTemplates() {
-  const payload = {
-    version: 1,
-    exportedAt: Date.now(),
-    templates: promptTemplates.map(sanitizePromptTemplate).filter(Boolean),
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `prompt-templates-${Date.now()}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-  setPromptTemplateStatus('模板已导出，不包含账号或密钥');
-}
-
-async function importPromptTemplatesFromFile(file) {
-  if (!file) return;
-  const text = await file.text();
-  const parsed = JSON.parse(text || '{}');
-  const incoming = Array.isArray(parsed) ? parsed : parsed.templates;
-  if (!Array.isArray(incoming)) throw new Error('模板文件格式不正确');
-  const sanitized = incoming.map(sanitizePromptTemplate).filter(Boolean);
-  const byId = new Map(promptTemplates.map((tpl) => [tpl.id, tpl]));
-  for (const tpl of sanitized) byId.set(tpl.id, tpl);
-  promptTemplates = Array.from(byId.values()).slice(0, 100);
-  savePromptTemplates();
-  renderPromptTemplates();
-  setPromptTemplateStatus(`已导入 ${sanitized.length} 个模板`);
+function clearPromptHistory() {
+  if (!promptHistory.length) { setPromptHistoryStatus('暂无提示词历史'); return; }
+  if (!confirmAction('确定清空提示词历史？')) return;
+  promptHistory = [];
+  savePromptHistory();
+  renderPromptHistory();
+  setPromptHistoryStatus('提示词历史已清空');
 }
 
 function toBase64Bytes(bytes) {
@@ -339,7 +232,7 @@ function buildBackupPayload({ includeSecrets = false } = {}) {
     containsSecrets: includeSecrets === true,
     accounts: (state.data.accounts || []).map((acc) => sanitizeAccountForExport(acc, includeSecrets)),
     settings: mergeAppSettings(state.appSettings),
-    promptTemplates: promptTemplates.map(sanitizePromptTemplate).filter(Boolean),
+    promptHistory: promptHistory.map(sanitizePromptHistoryEntry).filter(Boolean).slice(0, 30),
   };
 }
 
@@ -395,8 +288,15 @@ async function decryptBackupEnvelope(envelope, password) {
   return JSON.parse(new TextDecoder().decode(plaintext));
 }
 
+function promptHistoryFromBackupPayload(payload = {}) {
+  if (Array.isArray(payload.promptHistory)) {
+    return payload.promptHistory.map(sanitizePromptHistoryEntry).filter(Boolean).slice(0, 30);
+  }
+  return [];
+}
+
 function normalizeBackupPayload(payload = {}) {
-  if (payload.app !== 'image-gen' || !Array.isArray(payload.accounts) || !Array.isArray(payload.promptTemplates)) {
+  if (payload.app !== 'image-gen' || !Array.isArray(payload.accounts)) {
     throw new Error('备份文件格式不正确');
   }
   return {
@@ -406,7 +306,7 @@ function normalizeBackupPayload(payload = {}) {
     containsSecrets: payload.containsSecrets === true,
     accounts: payload.accounts.map(normalizeImportedAccount).slice(0, 50),
     settings: mergeAppSettings(payload.settings || {}),
-    promptTemplates: payload.promptTemplates.map(sanitizePromptTemplate).filter(Boolean).slice(0, 100),
+    promptHistory: promptHistoryFromBackupPayload(payload),
   };
 }
 
@@ -423,7 +323,7 @@ function summarizeBackupPayload(payload = {}) {
     `<strong>${payload.containsSecrets ? '完整备份' : '安全备份'}</strong>`,
     `账号：${payload.accounts?.length || 0} 个${secretless ? '（不含 key/token/session）' : '（含敏感字段，已通过密码解密）'}`,
     `设置：${payload.settings ? '1 组' : '0 组'}`,
-    `Prompt 模板：${payload.promptTemplates?.length || 0} 个`,
+    `提示词历史：${payload.promptHistory?.length || 0} 条`,
     `导出时间：${payload.exportedAt ? new Date(payload.exportedAt).toLocaleString() : '未知'}`,
   ].join('<br>');
 }
@@ -440,7 +340,7 @@ function readBackupImportScopes() {
   return {
     accounts: $('#importBackupAccounts')?.checked !== false,
     settings: $('#importBackupSettings')?.checked !== false,
-    templates: $('#importBackupTemplates')?.checked !== false,
+    promptHistory: $('#importBackupPromptHistory')?.checked !== false,
   };
 }
 
@@ -461,17 +361,22 @@ function applyImportedBackup(payload, scopes = readBackupImportScopes()) {
     applyGenerationDefaultsToControls();
     syncPromptEnhancementUi();
   }
-  if (scopes.templates) {
-    const byId = new Map(promptTemplates.map((tpl) => [tpl.id, tpl]));
-    for (const tpl of payload.promptTemplates || []) byId.set(tpl.id, sanitizePromptTemplate(tpl));
-    promptTemplates = Array.from(byId.values()).filter(Boolean).slice(0, 100);
-    savePromptTemplates();
-    renderPromptTemplates();
+  if (scopes.promptHistory) {
+    const byId = new Map(promptHistory.map((item) => [item.id, item]));
+    for (const item of payload.promptHistory || []) {
+      const sanitized = sanitizePromptHistoryEntry(item);
+      if (sanitized) byId.set(sanitized.id, sanitized);
+    }
+    promptHistory = Array.from(byId.values())
+      .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+      .slice(0, 30);
+    savePromptHistory();
+    renderPromptHistory();
   }
   return {
     accounts: scopes.accounts ? (payload.accounts?.length || 0) : 0,
     settings: scopes.settings ? 1 : 0,
-    templates: scopes.templates ? (payload.promptTemplates?.length || 0) : 0,
+    promptHistory: scopes.promptHistory ? (payload.promptHistory?.length || 0) : 0,
   };
 }
 
@@ -497,42 +402,11 @@ async function previewBackupImportFromFile(file) {
 
 function confirmImportBackup() {
   const result = applyImportedBackup(pendingBackupImport, readBackupImportScopes());
-  setBackupPreview(`导入完成：账号 ${result.accounts} 个，设置 ${result.settings} 组，模板 ${result.templates} 个。`);
+  setBackupPreview(`导入完成：账号 ${result.accounts} 个，设置 ${result.settings} 组，提示词历史 ${result.promptHistory} 条。`);
   const confirmBtn = $('#confirmImportBackup');
   if (confirmBtn) confirmBtn.disabled = true;
   pendingBackupImport = null;
 }
-
-function recordPromptHistory({ source = '', final = '', style = '', type = '', mode = 'generate' } = {}) {
-  const entry = {
-    id: genId(),
-    source: sanitizeTemplateText(source, 4000),
-    final: sanitizeTemplateText(final || source, 4000),
-    style: sanitizeTemplateText(style, 40),
-    type: sanitizeTemplateText(type, 40),
-    mode: sanitizeTemplateText(mode, 40),
-    createdAt: Date.now(),
-  };
-  if (!entry.source && !entry.final) return;
-  promptHistory.unshift(entry);
-  promptHistory = promptHistory.slice(0, 30);
-  savePromptHistory();
-  renderPromptHistory();
-}
-
-function restorePromptHistoryVersion(kind = 'final') {
-  const id = $('#promptHistorySelect')?.value || '';
-  const item = promptHistory.find((entry) => entry.id === id);
-  if (!item) { showError('请先选择最近提示词版本'); return; }
-  const text = kind === 'source' ? item.source : item.final;
-  if (!text) { showError(kind === 'source' ? '这条记录没有增强前版本' : '这条记录没有增强后版本'); return; }
-  $('#prompt').value = text;
-  if (item.style) setSelectValue('styleSelect', item.style);
-  if (item.type) setSelectValue('typeSelect', item.type);
-  setPromptTemplateStatus(kind === 'source' ? '已恢复增强前提示词' : '已恢复增强后提示词');
-}
-
-
 
 function loadConfigAdminToken() {
   return localStorage.getItem(CONFIG_ADMIN_TOKEN_KEY) || '';
@@ -1686,11 +1560,10 @@ async function addHistoryImageAsReference(meta = {}) {
   const resp = await fetch(meta.url);
   if (!resp.ok) throw new Error(`读取历史图片失败：HTTP ${resp.status}`);
   const blob = await resp.blob();
-  const [processedBlob] = await preprocessReferenceImageFiles([blob]);
-  if (!validateRefImageFiles([processedBlob])) return;
-  const base64 = await fileToBase64(processedBlob);
+  if (!validateRefImageFiles([blob])) return;
+  const base64 = await fileToBase64(blob);
   state.refImagesBase64.push(base64);
-  state.refImagePreviewUrls.push(URL.createObjectURL(processedBlob));
+  state.refImagePreviewUrls.push(URL.createObjectURL(blob));
   renderRefPreviews();
   setHistoryStatus('已加入参考图，可以继续图生图');
 }
@@ -2688,7 +2561,6 @@ async function generate() {
   const style = $('#styleSelect').value;
   const type = $('#typeSelect').value;
   const hasRef = state.refImagesBase64.length > 0;
-  const hasMask = !!state.maskImageBase64;
   const compareEnabled = isCompareModeEnabled();
   const compareTargets = compareEnabled ? readCompareTargets() : [];
 
@@ -2704,18 +2576,6 @@ async function generate() {
     cfg = await ensureValidToken(cfg);
   }
 
-  if (hasMask && !hasRef) {
-    showError('mask 需要搭配参考图使用，请先上传参考图');
-    return;
-  }
-  if (hasMask && compareEnabled && compareTargets.some((target) => target.cfg.isOAuth || target.cfg.streamMode)) {
-    showError('局部编辑 mask 目前仅支持普通 Images edits 链路；请取消包含 OAuth 或流式模式的对比组合后重试');
-    return;
-  }
-  if (hasMask && !compareEnabled && (cfg.isOAuth || cfg.streamMode)) {
-    showError('局部编辑 mask 目前仅支持普通 Images edits 链路；请关闭流式模式或换用普通 API 账号后重试');
-    return;
-  }
 
   const shouldAutoEnhance = isPromptEnhancementAutoMode();
   let finalPrompt = shouldAutoEnhance ? prompt : buildFinalPrompt(prompt, style, type);
@@ -2726,7 +2586,6 @@ async function generate() {
     isOAuth: !compareEnabled && !!cfg.isOAuth,
     streamMode: !compareEnabled && !!cfg.streamMode,
     hasRef,
-    hasMask,
     count,
   };
   setLoading(true);
@@ -3021,7 +2880,6 @@ async function genBackgroundImages(cfg, prompt, quality, background, size, forma
     watermarkSettings: getEffectiveWatermarkSettings(),
     storageSettings: { enabled: state.appSettings.storage.enabled !== false && canPersistImagesOnServer() },
     refImagesBase64: hasRef ? state.refImagesBase64 : undefined,
-    maskImageBase64: hasRef && state.maskImageBase64 ? state.maskImageBase64 : undefined,
   };
 
   setGenerationStatus('request:send');
@@ -3182,7 +3040,6 @@ async function runCompareTarget(target, common) {
     watermarkSettings: getEffectiveWatermarkSettings(),
     storageSettings: { enabled: state.appSettings.storage.enabled !== false && canPersistImagesOnServer() },
     refImagesBase64: hasRef ? state.refImagesBase64 : undefined,
-    maskImageBase64: hasRef && state.maskImageBase64 ? state.maskImageBase64 : undefined,
   };
 
   setGenerationStatus(`${compareStatusPrefix(resultMeta)}：提交后台任务`);
@@ -3453,18 +3310,16 @@ async function genImages(cfg, prompt, quality, background, size, format, resultM
 
 async function genEdits(cfg, prompt, quality, background, size, format, resultMeta = {}) {
   const compatMode = shouldUseCompatImageEdits(cfg);
-  const maskImageBase64 = state.maskImageBase64 || '';
   const body = compatMode ? null : {
     model: cfg.model, prompt, n: 1, response_format: 'b64_json',
     images: state.refImagesBase64.map((data) => ({ image_url: toImageDataUrl(data) })),
   };
-  if (body && maskImageBase64) body.mask = toImageDataUrl(maskImageBase64);
   if (body && quality) body.quality = quality;
   if (body && background && background !== 'auto') body.background = background;
   if (body && size && size !== 'auto') body.size = size;
   if (body && format !== 'png') body.output_format = format;
   const compatRequest = compatMode
-    ? buildCompatEditsRequest(state.refImagesBase64, { model: cfg.model, prompt, quality, background, size, format, maskImageBase64 })
+    ? buildCompatEditsRequest(state.refImagesBase64, { model: cfg.model, prompt, quality, background, size, format })
     : null;
 
   setGenerationStatus('request:send');
@@ -3620,84 +3475,6 @@ function fileToBase64(file) {
   });
 }
 
-function aspectFromSizeValue(size = '') {
-  const match = String(size || '').match(/^(\d+)x(\d+)$/);
-  if (!match) return null;
-  const width = Number(match[1]);
-  const height = Number(match[2]);
-  return width > 0 && height > 0 ? width / height : null;
-}
-
-function canvasToBlob(canvas, type = 'image/png', quality = 0.92) {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) resolve(blob);
-      else reject(new Error('参考图处理失败'));
-    }, type, quality);
-  });
-}
-
-async function imageBitmapFromFile(file) {
-  if (globalThis.createImageBitmap) return await createImageBitmap(file);
-  const url = URL.createObjectURL(file);
-  try {
-    const img = new Image();
-    await new Promise((resolve, reject) => {
-      img.onload = resolve;
-      img.onerror = reject;
-      img.src = url;
-    });
-    return img;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-async function preprocessReferenceImageFile(file) {
-  const autoCompress = $('#refAutoCompress')?.checked !== false;
-  const centerCrop = $('#refCenterCrop')?.checked === true;
-  if (!autoCompress && !centerCrop) return file;
-  if (!/^image\//.test(file?.type || '')) return file;
-  try {
-    const image = await imageBitmapFromFile(file);
-    const sourceWidth = image.width;
-    const sourceHeight = image.height;
-    const targetAspect = centerCrop ? aspectFromSizeValue($('#sizeSelect')?.dataset.value || '') : null;
-    let sx = 0;
-    let sy = 0;
-    let sw = sourceWidth;
-    let sh = sourceHeight;
-    if (targetAspect) {
-      const currentAspect = sourceWidth / sourceHeight;
-      if (currentAspect > targetAspect) {
-        sw = Math.round(sourceHeight * targetAspect);
-        sx = Math.round((sourceWidth - sw) / 2);
-      } else if (currentAspect < targetAspect) {
-        sh = Math.round(sourceWidth / targetAspect);
-        sy = Math.round((sourceHeight - sh) / 2);
-      }
-    }
-    const maxEdge = 2048;
-    const scale = autoCompress ? Math.min(1, maxEdge / Math.max(sw, sh)) : 1;
-    if (!centerCrop && scale >= 1 && file.size <= REF_IMAGE_MAX_BYTES) return file;
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(sw * scale));
-    canvas.height = Math.max(1, Math.round(sh * scale));
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-    const type = /image\/jpe?g|image\/webp|image\/png/.test(file.type) ? file.type : 'image/png';
-    const blob = await canvasToBlob(canvas, type, 0.92);
-    return new File([blob], file.name || 'reference.png', { type });
-  } catch (e) {
-    console.warn('Reference image preprocess failed:', e?.message || e);
-    return file;
-  }
-}
-
-async function preprocessReferenceImageFiles(files = []) {
-  return Promise.all(files.map(preprocessReferenceImageFile));
-}
-
 function formatFileSize(bytes = 0) {
   const mb = Number(bytes || 0) / (1024 * 1024);
   if (mb >= 1) return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
@@ -3709,27 +3486,13 @@ function validateRefImageFiles(files = []) {
   for (const file of files) {
     const size = Number(file?.size || 0);
     if (size > REF_IMAGE_MAX_BYTES) {
-      showError(`参考图「${file?.name || '未命名图片'}」超过 ${formatFileSize(REF_IMAGE_MAX_BYTES)}，请压缩后重试`);
+      showError(`参考图「${file?.name || '未命名图片'}」超过 ${formatFileSize(REF_IMAGE_MAX_BYTES)}，请换用更小图片`);
       return false;
     }
     totalBytes += size;
   }
   if (totalBytes > REF_IMAGES_TOTAL_MAX_BYTES) {
-    showError(`参考图总大小超过 ${formatFileSize(REF_IMAGES_TOTAL_MAX_BYTES)}，请减少数量或压缩后重试`);
-    return false;
-  }
-  return true;
-}
-
-function validateMaskImageFile(file) {
-  if (!file) return false;
-  if (file.type && !/^image\//.test(file.type)) {
-    showError('mask 必须是图片文件');
-    return false;
-  }
-  const size = Number(file.size || 0);
-  if (size > REF_IMAGE_MAX_BYTES) {
-    showError(`mask 图片超过 ${formatFileSize(REF_IMAGE_MAX_BYTES)}，请压缩后重试`);
+    showError(`参考图总大小超过 ${formatFileSize(REF_IMAGES_TOTAL_MAX_BYTES)}，请减少数量或换用更小图片`);
     return false;
   }
   return true;
@@ -3786,16 +3549,6 @@ function buildCompatEditsRequest(refImages, options = {}) {
       data: toImageDataUrl(data, parsed.mime),
     };
   });
-  if (options.maskImageBase64) {
-    const parsed = parseImageInputData(options.maskImageBase64);
-    const filename = `mask.${imageExtensionFromMime(parsed.mime)}`;
-    form.append('mask', new Blob([base64ToUint8Array(parsed.base64)], { type: parsed.mime }), filename);
-    images.push({
-      fieldName: 'mask',
-      filename,
-      data: toImageDataUrl(options.maskImageBase64, parsed.mime),
-    });
-  }
   return { body: form, multipartBody: { fields, images } };
 }
 
@@ -3836,10 +3589,7 @@ function renderRefPreviews() {
       const [url] = state.refImagePreviewUrls.splice(index, 1);
       if (url) URL.revokeObjectURL(url);
       renderRefPreviews();
-      if (!state.refImagesBase64.length) {
-        $('#refImage').value = '';
-        clearMaskImage();
-      }
+      if (!state.refImagesBase64.length) $('#refImage').value = '';
     };
     item.appendChild(img);
     item.appendChild(remove);
@@ -3848,77 +3598,21 @@ function renderRefPreviews() {
   preview.classList.toggle('hidden', state.refImagesBase64.length === 0);
 }
 
-function renderMaskPreview() {
-  const preview = $('#maskPreview');
-  if (!preview) return;
-  preview.innerHTML = '';
-  if (!state.maskImageBase64) {
-    preview.classList.add('hidden');
-    return;
-  }
-
-  const img = document.createElement('img');
-  img.alt = '局部编辑 mask';
-  img.src = state.maskImagePreviewUrl || toImageDataUrl(state.maskImageBase64);
-  const label = document.createElement('span');
-  label.textContent = '局部 mask';
-  const remove = document.createElement('button');
-  remove.type = 'button';
-  remove.textContent = '移除';
-  remove.onclick = (e) => {
-    e.preventDefault();
-    clearMaskImage();
-  };
-  preview.appendChild(img);
-  preview.appendChild(label);
-  preview.appendChild(remove);
-  preview.classList.remove('hidden');
-}
-
-function clearMaskImage() {
-  if (state.maskImagePreviewUrl) URL.revokeObjectURL(state.maskImagePreviewUrl);
-  state.maskImageBase64 = '';
-  state.maskImagePreviewUrl = '';
-  const input = $('#maskImage');
-  if (input) input.value = '';
-  renderMaskPreview();
-}
-
 async function handleReferenceImagesChange(e) {
   const selectedFiles = Array.from(e.target.files || []);
   const files = selectedFiles.slice(0, MAX_REF_IMAGES);
   if (!files.length) return;
   if (selectedFiles.length > MAX_REF_IMAGES) showError('最多只能上传 3 张参考图，已保留前 3 张');
 
-  const processedFiles = await preprocessReferenceImageFiles(files);
-  if (!validateRefImageFiles(processedFiles)) {
+  if (!validateRefImageFiles(files)) {
     e.target.value = '';
     return;
   }
 
   state.refImagePreviewUrls.forEach((url) => URL.revokeObjectURL(url));
-  clearMaskImage();
-  state.refImagesBase64 = await Promise.all(processedFiles.map(fileToBase64));
-  state.refImagePreviewUrls = processedFiles.map((file) => URL.createObjectURL(file));
+  state.refImagesBase64 = await Promise.all(files.map(fileToBase64));
+  state.refImagePreviewUrls = files.map((file) => URL.createObjectURL(file));
   renderRefPreviews();
-}
-
-async function handleMaskImageChange(e) {
-  const file = Array.from(e.target.files || [])[0];
-  if (!file) return;
-  if (!state.refImagesBase64.length) {
-    showError('mask 需要搭配参考图使用，请先上传参考图');
-    e.target.value = '';
-    return;
-  }
-  if (!validateMaskImageFile(file)) {
-    e.target.value = '';
-    return;
-  }
-  if (state.maskImagePreviewUrl) URL.revokeObjectURL(state.maskImagePreviewUrl);
-  state.maskImageBase64 = await fileToBase64(file);
-  state.maskImagePreviewUrl = URL.createObjectURL(file);
-  renderMaskPreview();
 }
 
 export {
@@ -3947,9 +3641,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.warn('Failed to load server runtime config:', e?.message || e);
   }
   loadAppSettings();
-  loadPromptTemplates();
   loadPromptHistory();
-  renderPromptTemplates();
   renderPromptHistory();
   renderSwitcher();
 
@@ -4011,19 +3703,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   $('#confirmImportBackup')?.addEventListener('click', () => { try { confirmImportBackup(); } catch (e) { setBackupPreview(normalizeGenerationError(e?.message || e), true); showError(e); } });
-  $('#savePromptTemplate')?.addEventListener('click', () => { try { saveCurrentPromptAsTemplate(); } catch (e) { showError(e); } });
-  $('#updatePromptTemplate')?.addEventListener('click', () => { try { updateSelectedPromptTemplate(); } catch (e) { showError(e); } });
-  $('#applyPromptTemplate')?.addEventListener('click', () => { try { applyPromptTemplate('replace'); } catch (e) { showError(e); } });
-  $('#appendPromptTemplate')?.addEventListener('click', () => { try { applyPromptTemplate('append'); } catch (e) { showError(e); } });
-  $('#deletePromptTemplate')?.addEventListener('click', () => { try { deleteSelectedPromptTemplate(); } catch (e) { showError(e); } });
-  $('#exportPromptTemplates')?.addEventListener('click', () => { try { exportPromptTemplates(); } catch (e) { showError(e); } });
-  $('#importPromptTemplates')?.addEventListener('click', () => $('#promptTemplateImportFile')?.click());
-  $('#promptTemplateImportFile')?.addEventListener('change', async (event) => {
-    try { await importPromptTemplatesFromFile(event.target.files?.[0]); }
-    catch (e) { showError(e); setPromptTemplateStatus('导入失败', true); }
-    finally { event.target.value = ''; }
-  });
-  $('#promptTemplateSelect')?.addEventListener('change', () => fillPromptTemplateForm(getSelectedPromptTemplate()));
+  $('#savePromptHistory')?.addEventListener('click', () => { try { saveCurrentPromptToHistory(); } catch (e) { showError(e); } });
+  $('#clearPromptHistory')?.addEventListener('click', () => { try { clearPromptHistory(); } catch (e) { showError(e); } });
   $('#restorePromptBefore')?.addEventListener('click', () => { try { restorePromptHistoryVersion('source'); } catch (e) { showError(e); } });
   $('#restorePromptAfter')?.addEventListener('click', () => { try { restorePromptHistoryVersion('final'); } catch (e) { showError(e); } });
   $('#historyRefresh')?.addEventListener('click', async () => { try { await loadHistoryWithFilters(); } catch (e) { setHistoryStatus('历史读取失败', true); showError(e); } });
@@ -4112,9 +3793,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Reference images
   $('#uploadLabel')?.addEventListener('click', () => $('#refImage')?.click());
-  $('#maskUploadLabel')?.addEventListener('click', () => $('#maskImage')?.click());
   $('#refImage').onchange = handleReferenceImagesChange;
-  $('#maskImage').onchange = handleMaskImageChange;
 
   // Lightbox
   $('#lightboxClose').onclick = () => closeDialog($('#lightbox'));

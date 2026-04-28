@@ -90,9 +90,9 @@ test('P2 开关、上传入口、分段控件、图标按钮和表单 label 可�
 
   assert.match(html, /<button class="tool-btn" id="uploadLabel" type="button"[^>]*aria-label="上传参考图，最多 3 张"/);
   assert.match(html, /<input type="file" id="refImage"[^>]*multiple hidden>/);
-  assert.match(html, /<button class="tool-btn" id="maskUploadLabel" type="button"[^>]*aria-label="上传局部编辑 mask，需搭配参考图"/);
+  assert.doesNotMatch(html, /id="maskUploadLabel"|id="maskImage"/);
   assert.match(app, /\$\('#uploadLabel'\)\?\.addEventListener\('click', \(\) => \$\('#refImage'\)\?\.click\(\)\)/);
-  assert.match(app, /\$\('#maskUploadLabel'\)\?\.addEventListener\('click', \(\) => \$\('#maskImage'\)\?\.click\(\)\)/);
+  assert.doesNotMatch(app, /maskUploadLabel|maskImage/);
 
   assert.match(html, /class="seg" data-field="quality" role="group" aria-labelledby="qualitySegLabel"/);
   assert.match(html, /data-value="medium" class="active" aria-pressed="true"/);

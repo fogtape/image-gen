@@ -51,7 +51,7 @@ export function imageDataByteLength(data, fallbackMime = 'image/png') {
 
 export function assertImageDataSize(data, {
   maxBytes = getReferenceImageLimits().maxImageBytes,
-  message = '参考图过大，请压缩后重试',
+  message = '参考图过大，请换用更小图片',
 } = {}) {
   const bytes = imageDataByteLength(data);
   if (bytes > maxBytes) throw payloadTooLargeError(message);
@@ -67,7 +67,7 @@ export function assertImageListWithinLimits(images = [], {
   for (const image of images) {
     totalBytes += assertImageDataSize(image, { maxBytes: maxImageBytes || limits.maxImageBytes });
     if (totalBytes > (maxTotalBytes || limits.maxTotalBytes)) {
-      throw payloadTooLargeError('参考图总大小过大，请减少数量或压缩后重试');
+      throw payloadTooLargeError('参考图总大小过大，请减少数量或换用更小图片');
     }
   }
 }
@@ -103,13 +103,7 @@ export function getMultipartImageSource(image) {
 
 export function assertMultipartImagesWithinLimits(multipartBody = {}, options = {}) {
   const images = Array.isArray(multipartBody.images) ? multipartBody.images : [];
-  const maskImages = [];
-  if (multipartBody.mask) maskImages.push(multipartBody.mask);
-  if (multipartBody.maskImageBase64) maskImages.push(multipartBody.maskImageBase64);
-  assertImageListWithinLimits([
-    ...images.map(getMultipartImageSource),
-    ...maskImages,
-  ], options);
+  assertImageListWithinLimits(images.map(getMultipartImageSource), options);
 }
 
 export function isPayloadTooLargeError(error) {

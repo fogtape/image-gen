@@ -764,7 +764,7 @@ async function readRequestText(req, res, { limitBytes = JSON_BODY_LIMIT_BYTES } 
   const declaredLength = Number(req.headers?.['content-length'] || 0);
   if (declaredLength > limitBytes) {
     res.writeHead(413, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: '请求体过大，请减少参考图数量或压缩图片后重试' }));
+    res.end(JSON.stringify({ error: '请求体过大，请减少参考图数量或换用更小图片' }));
     return null;
   }
 
@@ -774,7 +774,7 @@ async function readRequestText(req, res, { limitBytes = JSON_BODY_LIMIT_BYTES } 
     receivedBytes += Buffer.byteLength(chunk);
     if (receivedBytes > limitBytes) {
       res.writeHead(413, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: '请求体过大，请减少参考图数量或压缩图片后重试' }));
+      res.end(JSON.stringify({ error: '请求体过大，请减少参考图数量或换用更小图片' }));
       return null;
     }
     body += chunk;
@@ -812,7 +812,7 @@ function imageDataByteLength(data, fallbackMime = 'image/png') {
   return decodedBase64Bytes(parsed.base64);
 }
 
-function assertImageDataSize(data, { maxBytes = REF_IMAGE_MAX_BYTES, message = '参考图过大，请压缩后重试' } = {}) {
+function assertImageDataSize(data, { maxBytes = REF_IMAGE_MAX_BYTES, message = '参考图过大，请换用更小图片' } = {}) {
   const bytes = imageDataByteLength(data);
   if (bytes > maxBytes) throw payloadTooLargeError(message);
   return bytes;
@@ -822,29 +822,8 @@ function assertRefImagesWithinLimits(images = []) {
   let totalBytes = 0;
   for (const image of images) {
     totalBytes += assertImageDataSize(image);
-    if (totalBytes > REF_IMAGES_TOTAL_MAX_BYTES) throw payloadTooLargeError('参考图总大小过大，请减少数量或压缩后重试');
+    if (totalBytes > REF_IMAGES_TOTAL_MAX_BYTES) throw payloadTooLargeError('参考图总大小过大，请减少数量或换用更小图片');
   }
-}
-
-function normalizeMaskImage(payload = {}) {
-  const raw = payload.maskImageBase64 || payload.mask || payload.maskImage || '';
-  if (typeof raw !== 'string' || !raw.trim()) return '';
-  const mask = raw.trim();
-  assertImageDataSize(mask, { message: 'mask 图片过大，请压缩后重试' });
-  return mask;
-}
-
-function assertMaskUsageForMode(payload = {}, mode = payload.mode) {
-  const mask = normalizeMaskImage(payload);
-  if (!mask) return '';
-  const refImages = normalizeRefImages(payload);
-  if (!refImages.length) {
-    throw markError(new Error('mask 需要搭配参考图使用'), { status: 400, code: 'MASK_REQUIRES_REFERENCE' });
-  }
-  if (mode !== 'edits') {
-    throw markError(new Error('mask 目前仅支持 Images edits 链路'), { status: 400, code: 'MASK_UNSUPPORTED_MODE' });
-  }
-  return mask;
 }
 
 function collectDataImageStrings(value, out = [], depth = 0) {
@@ -1086,7 +1065,7 @@ function imageExtensionFromMime(mime = 'image/png') {
 
 function appendMultipartImage(form, image, index = 0, fieldName = 'image', options = {}) {
   const source = image?.data ?? image?.dataUrl ?? image;
-  assertImageDataSize(source, { message: options.message || '参考图过大，请压缩后重试' });
+  assertImageDataSize(source, { message: options.message || '参考图过大，请换用更小图片' });
   const parsed = parseImageInputData(source);
   const name = image?.fieldName || fieldName;
   const filename = image?.filename || `reference-${index + 1}.${imageExtensionFromMime(parsed.mime)}`;
@@ -1119,16 +1098,10 @@ export function buildImagesEditsMultipartFormData(payload = {}) {
     if (value != null && String(value) !== '') form.append(key, String(value));
   }
   const refImages = normalizeRefImages(payload);
-  const mask = normalizeMaskImage(payload);
-  if (mask && !refImages.length) throw new Error('mask 需要搭配参考图使用');
   refImages.forEach((data, index) => appendMultipartImage(form, data, index));
-  if (mask) appendMultipartImage(form, { data: mask, fieldName: 'mask', filename: 'mask.png' }, 0, 'mask', { message: 'mask 图片过大，请压缩后重试' });
   return form;
 }
 
-function isMultipartMaskImage(image = {}) {
-  return String(image?.fieldName || '').toLowerCase() === 'mask';
-}
 
 function buildProxyMultipartFormData(multipartBody = {}) {
   const form = new FormData();
@@ -1136,15 +1109,8 @@ function buildProxyMultipartFormData(multipartBody = {}) {
     if (value != null && String(value) !== '') form.append(key, String(value));
   }
   const images = Array.isArray(multipartBody.images) ? multipartBody.images : [];
-  const referenceImages = images.filter((image) => !isMultipartMaskImage(image));
-  const maskImages = images.filter(isMultipartMaskImage);
-  if (multipartBody.mask || multipartBody.maskImageBase64) {
-    maskImages.push({ fieldName: 'mask', filename: 'mask.png', data: multipartBody.mask || multipartBody.maskImageBase64 });
-  }
-  assertRefImagesWithinLimits(referenceImages.map(getMultipartImageSource));
-  maskImages.forEach((image) => assertImageDataSize(getMultipartImageSource(image), { message: 'mask 图片过大，请压缩后重试' }));
-  referenceImages.forEach((image, index) => appendMultipartImage(form, image, index));
-  maskImages.forEach((image, index) => appendMultipartImage(form, image, index, 'mask', { message: 'mask 图片过大，请压缩后重试' }));
+  assertRefImagesWithinLimits(images.map(getMultipartImageSource));
+  images.forEach((image, index) => appendMultipartImage(form, image, index));
   return form;
 }
 
@@ -1269,15 +1235,12 @@ export function buildImagesApiBody(payload = {}) {
   const mode = payload.mode;
   const refImages = normalizeRefImages(payload);
   if (mode === 'edits') {
-    const mask = normalizeMaskImage(payload);
-    if (mask && !refImages.length) throw new Error('mask 需要搭配参考图使用');
     return {
       model: cfg.model,
       prompt: payload.prompt,
       n: 1,
       response_format: 'b64_json',
       images: refImages.map((data) => ({ image_url: toImageDataUrl(data) })),
-      ...(mask ? { mask: toImageDataUrl(mask) } : {}),
       ...imageOptionsFromPayload(payload),
     };
   }
@@ -1473,7 +1436,6 @@ async function runSingleImageJob(payload, onProgress, signal = null) {
   const mode = payload.mode || 'responses';
   const refImages = normalizeRefImages(payload);
   assertRefImagesWithinLimits(refImages);
-  assertMaskUsageForMode(payload, mode);
   if (!String(payload.prompt || '').trim()) throw new Error('Missing prompt');
   const trace = createJobTrace(payload);
   const tracedProgress = (phase, message, extra = {}) => {
@@ -1618,7 +1580,6 @@ async function handleCreateImageJob(req, res) {
   try {
     const jobPayload = normalizeImageJobPayload(parsed);
     assertRefImagesWithinLimits(normalizeRefImages(jobPayload));
-    assertMaskUsageForMode(jobPayload, jobPayload.mode);
     if (isServerlessRuntime()) {
       const progress = [];
       const onProgress = (phase, message, extra = {}) => {

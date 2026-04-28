@@ -610,7 +610,7 @@ Netlify 的 `projectId` 实际填的是站点 ID，不是仓库名。
 | `IMAGE_GEN_PROXY_MAX_RESPONSE_BYTES` | 约 50MB | `/api/proxy` 最大响应字节数，覆盖 JSON / 普通流 / SSE。 |
 | `IMAGE_GEN_JSON_BODY_LIMIT_BYTES` | 约 2MB | JSON 请求体上限。 |
 | `IMAGE_GEN_IMAGE_JOB_BODY_LIMIT_BYTES` | 约 25MB | 生图任务 JSON 请求体上限。 |
-| `IMAGE_GEN_REF_IMAGE_MAX_BYTES` | 约 10MB | 单张参考图 / mask 最大字节数。 |
+| `IMAGE_GEN_REF_IMAGE_MAX_BYTES` | 约 10MB | 单张参考图最大字节数。 |
 | `IMAGE_GEN_REF_IMAGES_TOTAL_MAX_BYTES` | 约 25MB | 多参考图总大小上限。 |
 | `IMAGE_GEN_REMOTE_IMAGE_MAX_BYTES` | 约 20MB | 远程图片下载最大字节数。 |
 | `IMAGE_GEN_REMOTE_IMAGE_TIMEOUT_MS` | 约 15 秒 | 远程图片下载超时。 |

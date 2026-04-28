@@ -47,8 +47,6 @@ export const state = {
   appSettings: cloneDefaultSettings(),
   refImagesBase64: [],
   refImagePreviewUrls: [],
-  maskImageBase64: '',
-  maskImagePreviewUrl: '',
   generating: false,
   dropdownOpen: false,
   oauthPendingSessionId: null,

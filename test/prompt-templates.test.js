@@ -4,47 +4,40 @@ import test from 'node:test';
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('Prompt 模板库支持保存、应用、版本历史和安全导入导出', () => {
+test('Prompt 区域简化为提示词历史记录，并默认收进高级选项', () => {
   const html = read('index.html');
   const app = read('app.js');
   const css = read('style.css');
 
   for (const id of [
-    'promptTemplatePanel',
-    'promptTemplateName',
-    'promptTemplateTags',
-    'promptTemplateSelect',
-    'savePromptTemplate',
-    'applyPromptTemplate',
-    'appendPromptTemplate',
-    'updatePromptTemplate',
-    'deletePromptTemplate',
-    'exportPromptTemplates',
-    'importPromptTemplates',
+    'promptHistoryPanel',
     'promptHistorySelect',
+    'savePromptHistory',
     'restorePromptBefore',
     'restorePromptAfter',
+    'clearPromptHistory',
+    'promptHistoryStatus',
   ]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
 
-  assert.match(app, /const PROMPT_TEMPLATES_KEY = 'img-gen-prompt-templates'/);
+  const advancedBlock = html.match(/<details class="advanced-panel">[\s\S]*?<\/details>/)?.[0] || '';
+  assert.match(advancedBlock, /id="promptHistoryPanel"/);
+  assert.match(advancedBlock, /id="comparePanel"/);
+  assert.doesNotMatch(html, /promptTemplateName|promptTemplateTags|savePromptTemplate|exportPromptTemplates|importPromptTemplates/);
+  assert.doesNotMatch(html, /Prompt 模板库|保存当前为模板|更新模板版本/);
+
   assert.match(app, /const PROMPT_HISTORY_KEY = 'img-gen-prompt-history'/);
-  assert.match(app, /function sanitizePromptTemplate/);
-  assert.match(app, /function saveCurrentPromptAsTemplate/);
-  assert.match(app, /function updateSelectedPromptTemplate/);
-  assert.match(app, /function applyPromptTemplate/);
-  assert.match(app, /function exportPromptTemplates/);
-  assert.match(app, /async function importPromptTemplatesFromFile/);
+  assert.match(app, /function sanitizePromptHistoryEntry/);
+  assert.match(app, /function saveCurrentPromptToHistory/);
   assert.match(app, /function recordPromptHistory/);
   assert.match(app, /function restorePromptHistoryVersion/);
+  assert.match(app, /function clearPromptHistory/);
   assert.match(app, /recordPromptHistory\(\{ source: prompt, final: enhanced/);
   assert.match(app, /recordPromptHistory\(\{ source: prompt, final: finalPrompt/);
+  assert.doesNotMatch(app, /PROMPT_TEMPLATES_KEY|function sanitizePromptTemplate|saveCurrentPromptAsTemplate|exportPromptTemplates/);
 
-  const exportFn = app.match(/function exportPromptTemplates\(\) \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.doesNotMatch(exportFn, /ACCOUNTS_KEY|apiKey|accessToken|refreshToken|openaiSessionId|CONFIG_ADMIN_TOKEN_KEY/);
-
-  assert.match(css, /\.prompt-template-panel/);
-  assert.match(css, /\.prompt-template-actions/);
+  assert.match(css, /\.prompt-history-panel/);
   assert.match(css, /\.prompt-history-row/);
+  assert.doesNotMatch(css, /\.prompt-template-panel|\.prompt-template-actions/);
 });

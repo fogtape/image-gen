@@ -97,7 +97,7 @@ test('完整备份必须加密，解密后才能恢复敏感字段', async () =>
     app: 'image-gen',
     accounts: [{ id: 'acc-1', apiKey: 'dummy-api-key', refreshToken: 'dummy-refresh-token' }],
     settings: {},
-    promptTemplates: [],
+    promptHistory: [],
     containsSecrets: true,
   });
 
@@ -111,7 +111,7 @@ test('完整备份必须加密，解密后才能恢复敏感字段', async () =>
   await assert.rejects(() => app.decryptBackupEnvelope(envelope, 'wrong-password'));
 });
 
-test('导入支持只应用模板或只应用设置', async () => {
+test('导入支持只应用提示词历史或只应用设置', async () => {
   const { app, state } = await loadApp();
   state.appSettings.generation.size = '1024x1024';
 
@@ -119,14 +119,14 @@ test('导入支持只应用模板或只应用设置', async () => {
     app: 'image-gen',
     accounts: [{ id: 'imported-account', apiUrl: 'https://example.invalid' }],
     settings: { generation: { size: '1536x864' } },
-    promptTemplates: [{ id: 'tpl-1', name: '模板', content: 'prompt' }],
+    promptHistory: [{ id: 'hist-1', source: 'prompt', final: 'prompt', createdAt: 1 }],
   });
   const summary = app.summarizeBackupPayload(payload);
   assert.match(summary, /账号：1 个/);
-  assert.match(summary, /Prompt 模板：1 个/);
+  assert.match(summary, /提示词历史：1 条/);
 
-  const result = app.applyImportedBackup(payload, { accounts: false, settings: true, templates: false });
-  assert.deepEqual(result, { accounts: 0, settings: 1, templates: 0 });
+  const result = app.applyImportedBackup(payload, { accounts: false, settings: true, promptHistory: false });
+  assert.deepEqual(result, { accounts: 0, settings: 1, promptHistory: 0 });
   assert.equal(state.data.accounts.length, 0);
   assert.equal(state.appSettings.generation.size, '1536x864');
 });

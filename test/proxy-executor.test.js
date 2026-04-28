@@ -171,7 +171,7 @@ test('proxy executor normalizes JSON content-type and allowlist includes default
   assert.equal(prepared.opts.body, JSON.stringify({ input: 'hello' }));
 });
 
-test('proxy executor treats multipart bodies without fields as multipart and checks top-level mask size', () => {
+test('proxy executor treats multipart bodies without fields as multipart and checks reference image size', () => {
   const imageData = `data:image/png;base64,${Buffer.alloc(8, 1).toString('base64')}`;
   assert.throws(
     () => prepareProxyRequest({
@@ -185,7 +185,7 @@ test('proxy executor treats multipart bodies without fields as multipart and che
     assertProxyError(400, /multipart proxy is not supported/i),
   );
 
-  const largeMask = `data:image/png;base64,${Buffer.alloc(1500, 1).toString('base64')}`;
+  const largeImage = `data:image/png;base64,${Buffer.alloc(1500, 1).toString('base64')}`;
   const previousLimit = process.env.IMAGE_GEN_REF_IMAGE_MAX_BYTES;
   process.env.IMAGE_GEN_REF_IMAGE_MAX_BYTES = '1024';
   try {
@@ -195,8 +195,7 @@ test('proxy executor treats multipart bodies without fields as multipart and che
         method: 'POST',
         multipartBody: {
           fields: { model: 'gpt-image-2', prompt: '改成水彩风' },
-          images: [],
-          mask: largeMask,
+          images: [{ data: largeImage, filename: 'reference.png' }],
         },
       }, {
         allowedHosts: new Set(['api.openai.com']),

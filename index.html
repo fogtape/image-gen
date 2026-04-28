@@ -289,7 +289,7 @@
             <div class="settings-inline settings-inline-check-grid">
               <label><input type="checkbox" id="importBackupAccounts" checked> 导入账号</label>
               <label><input type="checkbox" id="importBackupSettings" checked> 导入设置</label>
-              <label><input type="checkbox" id="importBackupTemplates" checked> 导入模板</label>
+              <label><input type="checkbox" id="importBackupPromptHistory" checked> 导入提示词历史</label>
             </div>
             <div id="importBackupPreview" class="backup-preview hidden" aria-live="polite"></div>
             <div class="backup-actions">
@@ -503,22 +503,13 @@
                   <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
                 </button>
                 <input type="file" id="refImage" accept="image/*" multiple hidden>
-                <button class="tool-btn" id="maskUploadLabel" type="button" title="上传局部编辑 mask，需搭配参考图" aria-label="上传局部编辑 mask，需搭配参考图">
-                  <span class="mask-icon">◐</span>
-                </button>
-                <input type="file" id="maskImage" accept="image/png,image/webp,image/jpeg" hidden>
                 <button id="enhancePromptBtn" class="tool-btn enhance-prompt-btn hidden" type="button" title="润色提示词" aria-label="润色提示词">
                   <svg class="enhance-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3l1.7 5.2L19 10l-5.3 1.8L12 17l-1.7-5.2L5 10l5.3-1.8L12 3z"/><path d="M5 16l.7 2.2L8 19l-2.3.8L5 22l-.7-2.2L2 19l2.3-.8L5 16z"/></svg>
                   <span class="enhance-label">润色</span>
                   <span class="enhance-loading hidden"><span class="spinner"></span></span>
                 </button>
               </div>
-              <div class="ref-edit-options">
-                <label><input type="checkbox" id="refAutoCompress" checked> 自动压缩参考图</label>
-                <label><input type="checkbox" id="refCenterCrop"> 居中裁剪到当前比例</label>
-              </div>
               <div id="refPreview" class="ref-preview-list hidden"></div>
-              <div id="maskPreview" class="mask-preview hidden"></div>
             </div>
             <div class="toolbar-right">
               <span id="generationHint" class="hint" title="Ctrl+Enter 发送" role="status" aria-live="polite">Ctrl+Enter 发送</span>
@@ -540,47 +531,6 @@
             </div>
           </div>
         </div>
-
-        <!-- Prompt Templates -->
-        <section id="promptTemplatePanel" class="prompt-template-panel" aria-label="Prompt 模板库">
-          <div class="prompt-template-header">
-            <div>
-              <h2>Prompt 模板库</h2>
-              <p>保存常用提示词，支持版本回退和安全导入导出</p>
-            </div>
-            <button id="savePromptTemplate" class="btn btn-outline" type="button">保存当前为模板</button>
-          </div>
-          <div class="prompt-template-grid">
-            <div class="template-field">
-              <label for="promptTemplateName">模板名</label>
-              <input id="promptTemplateName" type="text" placeholder="例如：产品海报风格">
-            </div>
-            <div class="template-field">
-              <label for="promptTemplateTags">标签</label>
-              <input id="promptTemplateTags" type="text" placeholder="逗号分隔，例如 海报,电商">
-            </div>
-            <div class="template-field wide">
-              <label for="promptTemplateSelect">已保存模板</label>
-              <select id="promptTemplateSelect"></select>
-            </div>
-          </div>
-          <div class="prompt-template-actions">
-            <button id="applyPromptTemplate" class="btn btn-ghost" type="button">覆盖当前提示词</button>
-            <button id="appendPromptTemplate" class="btn btn-ghost" type="button">追加到当前提示词</button>
-            <button id="updatePromptTemplate" class="btn btn-ghost" type="button">更新模板版本</button>
-            <button id="deletePromptTemplate" class="btn btn-ghost danger" type="button">删除模板</button>
-            <button id="exportPromptTemplates" class="btn btn-ghost" type="button">导出模板</button>
-            <button id="importPromptTemplates" class="btn btn-ghost" type="button">导入模板</button>
-            <input id="promptTemplateImportFile" type="file" accept="application/json" hidden>
-          </div>
-          <div class="prompt-history-row">
-            <label for="promptHistorySelect">最近提示词版本</label>
-            <select id="promptHistorySelect"></select>
-            <button id="restorePromptBefore" class="btn btn-ghost" type="button">恢复增强前</button>
-            <button id="restorePromptAfter" class="btn btn-ghost" type="button">恢复增强后</button>
-          </div>
-          <div id="promptTemplateStatus" class="prompt-template-status" aria-live="polite"></div>
-        </section>
 
         <!-- Options Bar -->
         <div class="options-bar">
@@ -633,17 +583,6 @@
             </select>
           </div>
         </div>
-        <!-- Compare Mode -->
-        <section id="comparePanel" class="compare-panel" aria-label="多账号多模型对比生成">
-          <div class="compare-panel-head">
-            <label class="compare-toggle">
-              <input type="checkbox" id="compareModeEnabled">
-              <span>对比模式</span>
-            </label>
-            <span id="compareStatus" class="compare-status" aria-live="polite">选择 2 个以上账号/模型组合后，可用同一提示词对比生成。</span>
-          </div>
-          <div id="compareTargetList" class="compare-target-list"></div>
-        </section>
         <!-- Advanced Options -->
         <details class="advanced-panel">
           <summary>高级选项</summary>
@@ -676,6 +615,34 @@
               </select>
             </div>
           </div>
+          <section id="promptHistoryPanel" class="prompt-history-panel" aria-label="提示词历史记录">
+            <div class="prompt-history-header">
+              <div>
+                <h2>提示词历史</h2>
+                <p>自动记录最近生成和润色过的提示词，也可以手动保存当前提示词。</p>
+              </div>
+              <button id="savePromptHistory" class="btn btn-outline" type="button">保存当前提示词</button>
+            </div>
+            <div class="prompt-history-row">
+              <label for="promptHistorySelect">历史提示词</label>
+              <select id="promptHistorySelect"></select>
+              <button id="restorePromptBefore" class="btn btn-ghost" type="button">恢复原始</button>
+              <button id="restorePromptAfter" class="btn btn-ghost" type="button">恢复最终</button>
+              <button id="clearPromptHistory" class="btn btn-ghost danger" type="button">清空历史</button>
+            </div>
+            <div id="promptHistoryStatus" class="prompt-history-status" aria-live="polite"></div>
+          </section>
+
+          <section id="comparePanel" class="compare-panel" aria-label="多账号多模型对比生成">
+            <div class="compare-panel-head">
+              <label class="compare-toggle">
+                <input type="checkbox" id="compareModeEnabled">
+                <span>对比模式</span>
+              </label>
+              <span id="compareStatus" class="compare-status" aria-live="polite">选择 2 个以上账号/模型组合后，可用同一提示词对比生成。</span>
+            </div>
+            <div id="compareTargetList" class="compare-target-list"></div>
+          </section>
         </details>
       </div>
 

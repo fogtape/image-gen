@@ -134,11 +134,6 @@ export function buildOAuthResponsesImageBody(input = {}) {
   if (outputFormat) tool.output_format = outputFormat;
   if (input.output_compression != null) tool.output_compression = input.output_compression;
   if (input.partial_images != null) tool.partial_images = input.partial_images;
-  if (input.maskImageBase64 || input.mask?.image_url) {
-    tool.input_image_mask = {
-      image_url: input.mask?.image_url || toImageDataUrl(input.maskImageBase64),
-    };
-  }
   return {
     instructions: '',
     model: RESPONSES_MAIN_MODEL,

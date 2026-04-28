@@ -32,17 +32,6 @@ test('Netlify OAuth images rejects oversized body and reference images before ge
     });
     assert.equal(oversizedRef.statusCode, 413);
     assert.doesNotMatch(oversizedRef.body, new RegExp(largeImage.slice(40, 120)));
-
-    const oversizedMask = await handler({
-      httpMethod: 'POST',
-      body: JSON.stringify({
-        accessToken: 'test-access-token',
-        prompt: '画一只猫',
-        maskImageBase64: largeImage,
-      }),
-    });
-    assert.equal(oversizedMask.statusCode, 413);
-    assert.doesNotMatch(oversizedMask.body, new RegExp(largeImage.slice(40, 120)));
   } finally {
     if (originalBodyLimit === undefined) delete process.env.IMAGE_GEN_IMAGE_JOB_BODY_LIMIT_BYTES;
     else process.env.IMAGE_GEN_IMAGE_JOB_BODY_LIMIT_BYTES = originalBodyLimit;

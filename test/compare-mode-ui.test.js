@@ -6,8 +6,9 @@ const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const app = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 const css = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
 
-test('首页提供多账号多模型对比模式入口和目标列表', () => {
-  assert.match(html, /id="comparePanel"/);
+test('首页在高级选项里提供多账号多模型对比模式入口和目标列表', () => {
+  const advancedBlock = html.match(/<details class="advanced-panel">[\s\S]*?<\/details>/)?.[0] || '';
+  assert.match(advancedBlock, /id="comparePanel"/);
   assert.match(html, /id="compareModeEnabled"/);
   assert.match(html, /id="compareTargetList"/);
   assert.match(html, /id="compareStatus"/);
@@ -55,7 +56,6 @@ test('对比后台轮询具备有限重试，已创建任务不会因轮询波�
   assert.doesNotMatch(pollingBlock, /genDirectImagesAfterJobFallback/);
 });
 
-test('mask 在对比模式下会拦截 OAuth 或流式组合，避免静默忽略', () => {
-  assert.match(app, /compareTargets\.some\(\(target\) => target\.cfg\.isOAuth \|\| target\.cfg\.streamMode\)/);
-  assert.match(app, /请取消包含 OAuth 或流式模式的对比组合后重试/);
+test('对比模式不再包含 mask 特殊分支', () => {
+  assert.doesNotMatch(app, /maskImageBase64|局部编辑 mask|MASK_UNSUPPORTED_MODE/);
 });
