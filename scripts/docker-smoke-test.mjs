@@ -35,6 +35,21 @@ function runDocker(args, options = {}) {
   return result.stdout?.trim() || '';
 }
 
+function cleanupSmokeImage() {
+  const result = spawnSync('docker', ['image', 'rm', '-f', imageTag], {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  if (result.error?.code === 'ENOENT') {
+    log('WARN: docker command not found during image cleanup');
+    return;
+  }
+  if (result.status !== 0) {
+    log(`WARN: failed to remove smoke image ${imageTag}; continuing`);
+  }
+}
+
 function ensureDockerAvailable() {
   const result = spawnSync('docker', ['info'], { encoding: 'utf8', stdio: 'pipe' });
   if (result.error?.code === 'ENOENT') {
@@ -166,5 +181,5 @@ try {
   throw error;
 } finally {
   await stopContainer(container.child);
-  runDocker(['image', 'rm', imageTag], { stdio: 'ignore' });
+  cleanupSmokeImage();
 }

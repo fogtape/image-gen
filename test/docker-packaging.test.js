@@ -118,6 +118,9 @@ test('Docker 发布前有质量门禁和可跳过烟测入口', () => {
   assert.match(smokeScript, /docker command not found/);
   assert.match(smokeScript, /docker daemon is not available/);
   assert.match(smokeScript, /runDocker\(\['build'/);
+  assert.match(smokeScript, /function cleanupSmokeImage\(\)/);
+  assert.match(smokeScript, /'image', 'rm', '-f', imageTag/);
+  assert.match(smokeScript, /failed to remove smoke image/);
   assert.match(smokeScript, /127\.0\.0\.1:\$\{port\}:3000/);
   assert.match(smokeScript, /\/frontend\/state\.js/);
   assert.match(smokeScript, /\/api\/config\/runtime/);

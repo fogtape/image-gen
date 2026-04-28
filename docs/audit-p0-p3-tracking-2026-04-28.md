@@ -104,6 +104,34 @@ npm test
   结果：语法检查通过；专项 18 tests，18 pass，0 fail，0 cancelled；release gate 通过，`npm test` 为 202 tests，202 pass，0 fail，0 cancelled，`npm run build` 通过，Docker smoke 因本地无 docker 命令按脚本跳过。
 - **关联/后续**：提交并用四号账号推送后，观察远程 Docker Publish 工作流是否通过。
 
+### CI.2 修复 Docker smoke 清理镜像失败导致 release gate 失败
+
+- **状态**：✅ 已完成（本地降级验证通过，等待远程 Docker Publish 复验）
+- **开始时间**：2026-04-28 17:00 CST
+- **完成时间**：2026-04-28 17:01 CST
+- **目标**：修复远程 Docker Publish 中 smoke 已经 `PASS`，但 `docker image rm image-gen:smoke-*` 返回非 0 导致整个 release gate 失败的问题。
+- **根因判断**：smoke 测试的核心验收已经通过；最后镜像清理属于 best-effort 收尾动作，不应覆盖前面的构建、启动和 HTTP 验收结果。CI 上 Docker 可能因为容器引用/清理时序导致 image rm 失败。
+- **推荐实现**：
+  1. 把烟测镜像清理改成 `docker image rm -f`。
+  2. 清理失败只输出 WARN 并继续，不让收尾失败覆盖 smoke PASS。
+  3. 增加静态测试断言，防止后续又把清理动作改回阻塞 release gate。
+- **完成判断**：
+  - `scripts/docker-smoke-test.mjs` 有独立 `cleanupSmokeImage()`。
+  - 清理命令使用 `docker image rm -f`。
+  - 清理失败只输出 warning，不 throw。
+  - `node --check scripts/docker-smoke-test.mjs`、`node --test test/docker-packaging.test.js` 通过。
+- **变更证据**：
+  - `scripts/docker-smoke-test.mjs`：新增 `cleanupSmokeImage()`，清理镜像时使用 `-f`，失败降级为 WARN。
+  - `test/docker-packaging.test.js`：补充 smoke 清理策略断言。
+- **验证结果**：
+  ```bash
+  node --check scripts/docker-smoke-test.mjs && node --test test/docker-packaging.test.js
+  npm run smoke:docker
+  npm run ci:release-gate
+  ```
+  结果：Docker packaging 6 tests，6 pass，0 fail，0 cancelled；本地无 docker 时 smoke 按预期 SKIP 并退出 0；release gate 通过，`npm test` 为 202 tests，202 pass，0 fail，0 cancelled，`npm run build` 通过。
+- **关联/后续**：提交并用四号账号推送后，观察远程 Docker Publish 工作流是否通过。
+
 ---
 
 # P0：阻塞发布和安全封口
