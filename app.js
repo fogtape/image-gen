@@ -154,6 +154,23 @@ function getSelectedPromptHistory() {
   return promptHistory.find((entry) => entry.id === id) || null;
 }
 
+function applySelectedPromptHistory() {
+  const item = getSelectedPromptHistory();
+  if (!item) {
+    setPromptHistoryStatus('');
+    return;
+  }
+  const text = item.final || item.source;
+  if (!text) {
+    setPromptHistoryStatus('这条历史没有可恢复的提示词', true);
+    return;
+  }
+  $('#prompt').value = text;
+  if (item.style) setSelectValue('styleSelect', item.style);
+  if (item.type) setSelectValue('typeSelect', item.type);
+  setPromptHistoryStatus('已写入输入框');
+}
+
 function restorePromptHistoryVersion(kind = 'final') {
   const item = getSelectedPromptHistory();
   if (!item) { showError('请先选择历史提示词'); return; }
@@ -3705,6 +3722,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('#confirmImportBackup')?.addEventListener('click', () => { try { confirmImportBackup(); } catch (e) { setBackupPreview(normalizeGenerationError(e?.message || e), true); showError(e); } });
   $('#savePromptHistory')?.addEventListener('click', () => { try { saveCurrentPromptToHistory(); } catch (e) { showError(e); } });
   $('#clearPromptHistory')?.addEventListener('click', () => { try { clearPromptHistory(); } catch (e) { showError(e); } });
+  $('#promptHistorySelect')?.addEventListener('change', () => { try { applySelectedPromptHistory(); } catch (e) { showError(e); } });
   $('#restorePromptBefore')?.addEventListener('click', () => { try { restorePromptHistoryVersion('source'); } catch (e) { showError(e); } });
   $('#restorePromptAfter')?.addEventListener('click', () => { try { restorePromptHistoryVersion('final'); } catch (e) { showError(e); } });
   $('#historyRefresh')?.addEventListener('click', async () => { try { await loadHistoryWithFilters(); } catch (e) { setHistoryStatus('历史读取失败', true); showError(e); } });

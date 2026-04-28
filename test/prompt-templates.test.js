@@ -31,8 +31,10 @@ test('Prompt 区域简化为提示词历史记录，并默认收进高级选项'
   assert.match(app, /function sanitizePromptHistoryEntry/);
   assert.match(app, /function saveCurrentPromptToHistory/);
   assert.match(app, /function recordPromptHistory/);
+  assert.match(app, /function applySelectedPromptHistory/);
   assert.match(app, /function restorePromptHistoryVersion/);
   assert.match(app, /function clearPromptHistory/);
+  assert.match(app, /\$\('#promptHistorySelect'\)\?\.addEventListener\('change', \(\) => \{ try \{ applySelectedPromptHistory\(\);/);
   assert.match(app, /recordPromptHistory\(\{ source: prompt, final: enhanced/);
   assert.match(app, /recordPromptHistory\(\{ source: prompt, final: finalPrompt/);
   assert.doesNotMatch(app, /PROMPT_TEMPLATES_KEY|function sanitizePromptTemplate|saveCurrentPromptAsTemplate|exportPromptTemplates/);
