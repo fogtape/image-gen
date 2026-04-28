@@ -11,14 +11,14 @@ import fs from 'node:fs';
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('代理策略只允许白名单 host/path/protocol，并清理危险 header', () => {
+test('代理策略允许公网 HTTPS host，但限制 path/protocol/私网并清理危险 header', () => {
   const allowedHosts = new Set(['api.openai.com']);
   assert.equal(validateProxyTarget('https://api.openai.com/v1/models', { method: 'GET', allowedHosts }).target.hostname, 'api.openai.com');
+  assert.equal(validateProxyTarget('https://relay-any.example/v1/responses', { method: 'POST', allowedHosts }).target.hostname, 'relay-any.example');
 
   assert.throws(() => validateProxyTarget('file:///etc/passwd', { method: 'GET', allowedHosts }), /not allowed|invalid/);
   assert.throws(() => validateProxyTarget('http://127.0.0.1:3000/v1/models', { method: 'GET', allowedHosts: new Set(['127.0.0.1']) }), /not allowed/);
   assert.throws(() => validateProxyTarget('http://169.254.169.254/latest/meta-data', { method: 'GET', allowedHosts: new Set(['169.254.169.254']) }), /not allowed/);
-  assert.throws(() => validateProxyTarget('https://evil.example/v1/models', { method: 'GET', allowedHosts }), /allowlisted/);
   assert.throws(() => validateProxyTarget('https://api.openai.com/v1/files', { method: 'GET', allowedHosts }), /path/);
   assert.throws(() => validateProxyTarget('https://api.openai.com/v1/models', { method: 'DELETE', allowedHosts }), /method/);
 
@@ -42,17 +42,17 @@ test('代理策略只允许白名单 host/path/protocol，并清理危险 header
   assert.equal(defaultApiHosts.has('relay-default.example'), true);
 });
 
-test('服务端上游 API 地址复用 allowlist 并默认拒绝本机和私网', () => {
+test('服务端上游 API 地址允许公网 HTTPS 并默认拒绝本机和私网', () => {
   const allowedHosts = new Set(['api.openai.com', 'relay.example']);
   assert.equal(validateApiBaseUrl('https://api.openai.com/', { allowedHosts }).baseUrl, 'https://api.openai.com');
   assert.equal(validateApiBaseUrl('https://relay.example/openai/', { allowedHosts }).baseUrl, 'https://relay.example/openai');
+  assert.equal(validateApiBaseUrl('https://relay-any.example/openai/', { allowedHosts }).baseUrl, 'https://relay-any.example/openai');
 
   assert.throws(() => validateApiBaseUrl('http://api.openai.com', { allowedHosts }), /protocol/);
   assert.throws(() => validateApiBaseUrl('http://127.0.0.1:3000', { allowedHosts: new Set(['127.0.0.1']) }), /not allowed/);
   assert.throws(() => validateApiBaseUrl('https://169.254.169.254', { allowedHosts: new Set(['169.254.169.254']) }), /not allowed/);
-  assert.throws(() => validateApiBaseUrl('https://evil.example', { allowedHosts }), /allowlisted/);
-  assert.throws(() => validateApiBaseUrl('https://api.openai.com?token=x', { allowedHosts }), /query or hash/);
-  assert.throws(() => validateApiBaseUrl('https://user:pass@api.openai.com', { allowedHosts }), /credentials/);
+  assert.throws(() => validateApiBaseUrl('https://api.openai.com?sample=1', { allowedHosts }), /query or hash/);
+  assert.throws(() => validateApiBaseUrl('https://user:pass@example.com', { allowedHosts }), /credentials/);
 });
 
 test('Node /api/proxy 默认拒绝本机目标，显式本机开发开关下也会过滤危险 header', async () => {

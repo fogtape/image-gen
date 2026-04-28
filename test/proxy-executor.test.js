@@ -152,7 +152,7 @@ test('serverless proxy preparation rejects multipart bodies instead of silently 
   );
 });
 
-test('proxy executor normalizes JSON content-type and allowlist includes default API env host', () => {
+test('proxy executor normalizes JSON content-type for arbitrary public HTTPS API host', () => {
   const prepared = prepareProxyRequest({
     url: 'https://relay.example/v1/responses',
     method: 'POST',

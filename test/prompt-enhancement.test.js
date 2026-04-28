@@ -74,7 +74,7 @@ test('清理增强结果时去掉解释性前缀并拒绝空内容', () => {
   assert.throws(() => sanitizeEnhancedPrompt('   '), /未返回有效提示词/);
 });
 
-test('提示词增强拒绝未允许的本机 API 地址', () => {
+test('提示词增强拒绝本机 API 地址', () => {
   assert.throws(() => buildPromptEnhancementRequest({
     cfg: { apiUrl: 'http://127.0.0.1:3000', apiKey: 'sk-test', model: 'gpt-image-1' },
     prompt: '一只猫',

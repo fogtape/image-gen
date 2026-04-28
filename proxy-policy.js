@@ -1,3 +1,6 @@
+// Public HTTPS OpenAI-compatible API hosts are allowed by default.
+// This list is kept only for compatibility with existing configuration/UI;
+// request validation no longer requires the hostname to be pre-allowlisted.
 const DEFAULT_ALLOWED_HOSTS = ['api.openai.com'];
 const ALLOWED_PATHS = new Set([
   '/v1/images/generations',
@@ -134,7 +137,6 @@ export function validateProxyTarget(rawUrl, {
   const localDevTarget = allowLocalHttp && target.protocol === 'http:' && (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1');
   if (target.protocol !== 'https:' && !localDevTarget) throw new Error('Proxy protocol is not allowed');
   if (isLocalOrPrivateHost(hostname) && !localDevTarget) throw new Error('Proxy target host is not allowed');
-  if (!allowedHosts.has(hostname)) throw new Error('Proxy target host is not allowlisted');
   if (!ALLOWED_PATHS.has(target.pathname)) throw new Error('Proxy target path is not allowed');
 
   return { target, method: fetchMethod, hostname };
@@ -162,7 +164,6 @@ export function validateApiBaseUrl(rawUrl, {
   if (target.username || target.password) throw new Error('API address credentials are not allowed');
   if (target.protocol !== 'https:' && !localDevTarget) throw new Error('API address protocol is not allowed');
   if (isLocalOrPrivateHost(hostname) && !localDevTarget) throw new Error('API address host is not allowed');
-  if (!allowedHosts.has(hostname)) throw new Error('API address host is not allowlisted');
   if (target.search || target.hash) throw new Error('API address must not include query or hash');
 
   return {

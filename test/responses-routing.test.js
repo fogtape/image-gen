@@ -95,7 +95,7 @@ test('Responses image jobs with non-image models preserve upstream error instead
   }
 });
 
-test('后台图片任务拒绝未允许的本机 apiUrl 且不会触发上游 fetch', async () => {
+test('后台图片任务拒绝本机 apiUrl 且不会触发上游 fetch', async () => {
   const originalFetch = globalThis.fetch;
   let callCount = 0;
   globalThis.fetch = async () => {
@@ -115,7 +115,7 @@ test('后台图片任务拒绝未允许的本机 apiUrl 且不会触发上游 fe
     const job = await waitForJobDone(created.id);
     assert.equal(job.status, 'failed');
     assert.equal(callCount, 0);
-    assert.match(job.error, /API address protocol|API address host|allowlisted/i);
+    assert.match(job.error, /API address protocol|API address host/i);
   } finally {
     globalThis.fetch = originalFetch;
   }

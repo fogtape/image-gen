@@ -604,7 +604,7 @@ Netlify 的 `projectId` 实际填的是站点 ID，不是仓库名。
 | `IMAGE_GEN_STATIC_DIR` | `dist/` | Node 服务静态资源目录；修改前端后需重新 `npm run build`。 |
 | `IMAGE_GEN_ALLOWED_ORIGINS` | 空 | Node API CORS 额外允许来源，多个 origin 用逗号分隔；同源和本机开发来源会自动允许。 |
 | `IMAGE_GEN_ALLOW_INSECURE_LOCAL_ADMIN` | `false` | 仅本机开发调试用；未设置管理口令时是否允许本机管理请求。生产环境不要开启。 |
-| `IMAGE_GEN_PROXY_ALLOWED_HOSTS` | 自动包含默认 API host | 服务端代理允许访问的上游 host allowlist，逗号分隔。 |
+| `IMAGE_GEN_PROXY_ALLOWED_HOSTS` | 兼容旧配置 | 旧版代理 host 白名单变量；当前版本默认允许公网 HTTPS OpenAI 兼容 API host，但仍拒绝本机/私网地址。 |
 | `IMAGE_GEN_PROXY_ALLOW_LOCAL_HTTP` | `false` | 仅本地开发用；是否允许代理访问本机 HTTP。生产环境不要开启。 |
 | `IMAGE_GEN_PROXY_TIMEOUT_MS` | 约 60 秒 | `/api/proxy` 上游请求超时。 |
 | `IMAGE_GEN_PROXY_MAX_RESPONSE_BYTES` | 约 50MB | `/api/proxy` 最大响应字节数，覆盖 JSON / 普通流 / SSE。 |
