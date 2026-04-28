@@ -39,12 +39,13 @@ test('生成按钮加载态隐藏文字和加载图标时布局稳定', () => {
 });
 
 
-test('移动端隐藏快捷键提示，并让工具按钮和生成按钮保持同一行', () => {
+test('移动端保留实时状态提示，长文案省略且不挤压生成按钮', () => {
   assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.input-toolbar\s*\{[\s\S]*?align-items:\s*center[\s\S]*?flex-direction:\s*row/s);
   assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.toolbar-left\s*\{[\s\S]*?flex:\s*1 1 auto[\s\S]*?flex-wrap:\s*nowrap[\s\S]*?overflow-x:\s*auto/s);
   assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.prompt-tools\s*\{\s*flex-wrap:\s*nowrap\s*;\s*\}/s);
-  assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.toolbar-right\s*\{[\s\S]*?width:\s*auto[\s\S]*?flex:\s*0 0 auto[\s\S]*?justify-content:\s*flex-end/s);
-  assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.toolbar-right \.hint\s*\{\s*display:\s*none\s*;\s*\}/s);
+  assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.toolbar-right\s*\{[\s\S]*?width:\s*auto[\s\S]*?flex:\s*1 1 150px[\s\S]*?min-width:\s*0[\s\S]*?justify-content:\s*flex-end/s);
+  assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.toolbar-right \.hint\s*\{[\s\S]*?display:\s*inline-block[\s\S]*?max-width:\s*min\(42vw, 220px\)/s);
+  assert.match(css, /\.btn-send\s*\{[\s\S]*?flex-shrink:\s*0/s);
 });
 
 test('移动端顶部栏和后台任务 banner 在 320-360px 有溢出兜底', () => {

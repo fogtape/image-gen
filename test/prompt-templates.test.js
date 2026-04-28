@@ -23,7 +23,7 @@ test('Prompt 区域简化为提示词历史记录，并默认收进高级选项'
 
   const advancedBlock = html.match(/<details class="advanced-panel">[\s\S]*?<\/details>/)?.[0] || '';
   assert.match(advancedBlock, /id="promptHistoryPanel"/);
-  assert.match(advancedBlock, /id="comparePanel"/);
+  assert.doesNotMatch(advancedBlock, /id="comparePanel"|compareModeEnabled|compareTargetList/);
   assert.doesNotMatch(html, /promptTemplateName|promptTemplateTags|savePromptTemplate|exportPromptTemplates|importPromptTemplates/);
   assert.doesNotMatch(html, /Prompt 模板库|保存当前为模板|更新模板版本/);
 

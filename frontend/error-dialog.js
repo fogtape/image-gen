@@ -50,12 +50,6 @@ const CONTEXT_ERROR_DIALOGS = {
     kind: 'OAuth 错误',
     suggestion: '请重新发起登录，确认回调链接或授权码完整后再提交。',
   },
-  compare: {
-    title: '对比模式无法开始',
-    summary: '对比生成的账号或模型组合还没有准备好。',
-    kind: '对比配置错误',
-    suggestion: '请选择至少两个有效账号/模型组合，并确保每个组合都有 API 地址和 Key。',
-  },
   reference: {
     title: '参考图处理失败',
     summary: '参考图没有成功加入本次生成。',
@@ -136,7 +130,6 @@ function inferErrorContext(error = {}, message = '') {
   if (/参考图|上传.*图片|最多只能上传|图片.*超过|ref image|reference image/.test(text)) return 'reference';
   if (/提示词历史|历史提示词|原始提示词|最终提示词/.test(text)) return 'prompt-history';
   if (/历史记录|历史图片|收藏|删除这张|读取历史/.test(text)) return 'history';
-  if (/对比模式|对比组合|对比任务|compare/.test(text)) return 'compare';
   if (/提示词增强|提示词润色|润色|优化提示词|enhance/.test(text)) return 'prompt-enhancement';
   if (/oauth|授权|登录/.test(text)) return 'oauth';
   if (/api 地址|api key|账号|key/.test(text)) return 'account';

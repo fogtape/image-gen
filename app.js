@@ -1369,11 +1369,9 @@ function getCurrentGenerationMeta() {
 }
 
 function describeGenerationMode(meta = getCurrentGenerationMeta()) {
-  if (meta.compareMode) return '对比生成';
   if (meta.isOAuth) return 'OAuth';
   if (meta.streamMode) return meta.hasRef ? '流式图生图' : '流式文生图';
-  if (meta.hasRef) return '非流式图生图';
-  return '非流式文生图';
+  return meta.hasRef ? '图生图' : '文生图';
 }
 
 function getAccurateStatusText(phaseOrMessage, message, meta = getCurrentGenerationMeta()) {
@@ -1489,15 +1487,13 @@ function makePreviewImageAccessible(img, src, label = '打开图片预览') {
 
 function formatResultMeta(meta = {}) {
   const parts = [];
-  if (meta.compareCount && meta.compareCount > 1) parts.push(`对比 ${meta.compareIndex || '?'} / ${meta.compareCount}`);
-  if (meta.compareLabel) parts.push(meta.compareLabel);
   if (meta.batchCount && meta.batchCount > 1) parts.push(`第 ${meta.batchIndex || '?'} / ${meta.batchCount} 张`);
-  if (meta.accountName && !meta.compareLabel) parts.push(meta.accountName);
+  if (meta.accountName) parts.push(meta.accountName);
   if (meta.model) parts.push(meta.model);
   if (meta.trace?.protocol || meta.protocol) parts.push(meta.trace?.protocol || meta.protocol);
   if (meta.accountHost) parts.push(meta.accountHost);
   if (meta.createdAt) parts.push(new Date(meta.createdAt).toLocaleString());
-  return parts.join(' · ');
+  return parts.filter(Boolean).join(' · ');
 }
 
 function appendResultMeta(bar, meta = {}) {
@@ -1784,143 +1780,6 @@ function addFailedResultCard(item = {}) {
   $('#results').prepend(card);
 }
 
-function isCompareModeEnabled() {
-  return $('#compareModeEnabled')?.checked === true;
-}
-
-function setCompareStatus(text = '', isError = false) {
-  const el = $('#compareStatus');
-  if (!el) return;
-  el.textContent = text;
-  el.classList.toggle('error', !!isError);
-}
-
-function getDefaultCompareAccountIds() {
-  const accounts = state.data.accounts || [];
-  const ids = [];
-  const active = getActiveAccount();
-  if (active) ids.push(active.id);
-  for (const acc of accounts) {
-    if (ids.length >= 2) break;
-    if (!ids.includes(acc.id)) ids.push(acc.id);
-  }
-  return new Set(ids);
-}
-
-function readCompareFormState() {
-  const stateById = new Map();
-  document.querySelectorAll('.compare-target-check').forEach((check) => {
-    const id = check.dataset.accountId || '';
-    if (!id) return;
-    const model = document.querySelector(`.compare-target-model[data-account-id="${cssEscape(id)}"]`)?.value || '';
-    stateById.set(id, { checked: check.checked, disabled: check.disabled, model });
-  });
-  return stateById;
-}
-
-function compareTargetCheckedState(prev, enabled, isDefault, hadPreviousSelection) {
-  const shouldApplyDefaults = enabled && prev?.disabled && !hadPreviousSelection;
-  return prev && !shouldApplyDefaults ? prev.checked : (enabled && isDefault);
-}
-
-function renderCompareTargets() {
-  const list = $('#compareTargetList');
-  if (!list) return;
-  const enabled = isCompareModeEnabled();
-  const previous = readCompareFormState();
-  const defaultIds = getDefaultCompareAccountIds();
-  const hadPreviousSelection = Array.from(previous.values()).some((item) => item.checked);
-  list.innerHTML = '';
-
-  if (!state.data.accounts.length) {
-    const empty = document.createElement('div');
-    empty.className = 'compare-target-empty';
-    empty.textContent = '还没有可对比账号，请先添加至少 2 个账号。';
-    list.appendChild(empty);
-    setCompareStatus('添加至少 2 个账号后可启用对比模式', true);
-    return;
-  }
-
-  for (const acc of state.data.accounts) {
-    const prev = previous.get(acc.id);
-    const checked = compareTargetCheckedState(prev, enabled, defaultIds.has(acc.id), hadPreviousSelection);
-    const item = document.createElement('label');
-    item.className = 'compare-target' + (!enabled ? ' disabled' : '');
-
-    const check = document.createElement('input');
-    check.type = 'checkbox';
-    check.className = 'compare-target-check';
-    check.dataset.accountId = acc.id;
-    check.checked = checked;
-    check.disabled = !enabled;
-
-    const name = document.createElement('span');
-    name.className = 'compare-target-name';
-    name.textContent = accountHistoryName(acc);
-
-    const meta = document.createElement('span');
-    meta.className = 'compare-target-meta';
-    meta.textContent = `${acc.type === 'oauth' ? 'OAuth' : 'API Key'} · ${acc.apiUrl || '未配置 API 地址'}`;
-
-    const modelLabel = document.createElement('span');
-    modelLabel.className = 'compare-target-model-label';
-    modelLabel.textContent = '临时模型（留空使用账号默认）';
-
-    const model = document.createElement('input');
-    model.type = 'text';
-    model.className = 'compare-target-model';
-    model.dataset.accountId = acc.id;
-    model.placeholder = acc.model || DEFAULT_IMAGE_MODEL;
-    model.value = prev?.model || '';
-    model.disabled = !enabled || !checked;
-
-    check.onchange = () => {
-      model.disabled = !check.checked || !isCompareModeEnabled();
-      updateCompareSelectionStatus();
-    };
-    model.oninput = updateCompareSelectionStatus;
-
-    item.appendChild(check);
-    item.appendChild(name);
-    item.appendChild(meta);
-    item.appendChild(modelLabel);
-    item.appendChild(model);
-    list.appendChild(item);
-  }
-  updateCompareSelectionStatus();
-}
-
-function readCompareTargets() {
-  if (!isCompareModeEnabled()) return [];
-  return Array.from(document.querySelectorAll('.compare-target-check:checked')).map((check) => {
-    const accountId = check.dataset.accountId || '';
-    const acc = state.data.accounts.find((item) => item.id === accountId);
-    if (!acc) return null;
-    const modelOverride = document.querySelector(`.compare-target-model[data-account-id="${cssEscape(accountId)}"]`)?.value.trim() || '';
-    const cfg = getEffectiveForAccount(acc, { model: modelOverride });
-    return {
-      accountId,
-      account: acc,
-      cfg,
-      modelOverride,
-      label: `${accountHistoryName(acc)} · ${cfg.model || DEFAULT_IMAGE_MODEL}`,
-    };
-  }).filter(Boolean);
-}
-
-function updateCompareSelectionStatus() {
-  if (!isCompareModeEnabled()) {
-    setCompareStatus('选择 2 个以上账号/模型组合后，可用同一提示词对比生成。');
-    return;
-  }
-  const targets = readCompareTargets();
-  if (targets.length < 2) {
-    setCompareStatus(`已选择 ${targets.length} 个组合，至少需要 2 个`, true);
-    return;
-  }
-  setCompareStatus(`已选择 ${targets.length} 个组合，将用同一提示词分别生成。`);
-}
-
 // --- UI Rendering ---
 
 function syncAccountModeUi() {
@@ -1966,7 +1825,6 @@ function renderSwitcher() {
     dot.className = 'switcher-dot';
   }
   syncAccountModeUi();
-  renderCompareTargets();
 }
 
 function renderDropdown() {
@@ -2577,30 +2435,17 @@ async function generate() {
   const style = $('#styleSelect').value;
   const type = $('#typeSelect').value;
   const hasRef = state.refImagesBase64.length > 0;
-  const compareEnabled = isCompareModeEnabled();
-  const compareTargets = compareEnabled ? readCompareTargets() : [];
-
   let cfg = getEffective();
-  if (compareEnabled) {
-    if (compareTargets.length < 2) { showError('对比模式至少需要选择 2 个账号/模型组合', { context: 'compare' }); return; }
-    const invalidTarget = compareTargets.find((target) => !target.cfg.apiUrl || !target.cfg.apiKey);
-    if (invalidTarget) { showError(`对比组合「${invalidTarget.label}」缺少 API 地址或 Key`, { context: 'compare' }); return; }
-    compareTargets[0].cfg = await ensureValidTokenForAccount(compareTargets[0].cfg, compareTargets[0].account);
-    cfg = compareTargets[0].cfg;
-  } else {
-    if (!cfg.apiUrl || !cfg.apiKey) { showError('请先添加账号并配置 API 地址和 Key', { context: 'account' }); return; }
-    cfg = await ensureValidToken(cfg);
-  }
+  if (!cfg.apiUrl || !cfg.apiKey) { showError('请先添加账号并配置 API 地址和 Key', { context: 'account' }); return; }
+  cfg = await ensureValidToken(cfg);
 
 
   const shouldAutoEnhance = isPromptEnhancementAutoMode();
   let finalPrompt = shouldAutoEnhance ? prompt : buildFinalPrompt(prompt, style, type);
 
   state.currentGenerationMeta = {
-    compareMode: compareEnabled,
-    compareCount: compareTargets.length,
-    isOAuth: !compareEnabled && !!cfg.isOAuth,
-    streamMode: !compareEnabled && !!cfg.streamMode,
+    isOAuth: !!cfg.isOAuth,
+    streamMode: !!cfg.streamMode,
     hasRef,
     count,
   };
@@ -2619,8 +2464,7 @@ async function generate() {
       setGenerationStatus('prompt:enhance:done');
     }
     recordPromptHistory({ source: prompt, final: finalPrompt, style, type, mode: shouldAutoEnhance ? 'auto-enhance' : 'generate' });
-    if (compareEnabled) await genCompareImages(compareTargets, finalPrompt, quality, background, size, format, hasRef, count);
-    else await genBackgroundImages(cfg, finalPrompt, quality, background, size, format, hasRef, count);
+    await genBackgroundImages(cfg, finalPrompt, quality, background, size, format, hasRef, count);
   } catch (e) {
     showError(e, { context: 'generation' });
   } finally {
@@ -2782,39 +2626,6 @@ function isMissingBackgroundJobError(error) {
 
 async function cancelActiveJob() {
   const active = loadActiveJob();
-  const compareJobs = activeCompareJobs(active);
-  if (compareJobs.length) {
-    const button = $('#cancelActiveJobBtn');
-    const oldText = button?.textContent || '';
-    if (button) {
-      button.disabled = true;
-      button.textContent = '取消中…';
-    }
-    setGenerationStatus('正在取消对比后台任务');
-    showActiveJobBanner('正在取消对比后台任务', `正在通知后端停止 ${compareJobs.length} 个组合…`);
-    try {
-      const results = await Promise.allSettled(compareJobs.map((job) => cancelBackgroundJob(job.jobId)));
-      compareJobs.forEach((job) => stopPollingJob(state, job.jobId));
-      const failed = results.filter((item) => item.status === 'rejected').length;
-      if (failed) throw new Error(`${failed} 个对比任务取消失败`);
-      clearActiveJob();
-      stopWaitingStatusSequence();
-      setLoading(false);
-      setGenerationStatus('job:cancelled');
-      showActiveJobBanner('对比后台任务已取消', '已停止轮询，不会删除已保存的历史记录');
-      setTimeout(() => hideActiveJobBanner(), 5000);
-    } catch (e) {
-      showActiveJobBanner('取消失败', '对比后台任务仍保留，网络恢复后可继续获取结果');
-      setGenerationStatus('取消失败，对比后台任务仍在进行');
-      showError(e, { context: 'background' });
-    } finally {
-      if (button) {
-        button.disabled = false;
-        button.textContent = oldText || '取消任务';
-      }
-    }
-    return;
-  }
   if (!active?.jobId) {
     clearActiveJob();
     setGenerationStatus(IDLE_GENERATION_HINT);
@@ -2851,7 +2662,6 @@ async function cancelActiveJob() {
 
 function dismissActiveJob() {
   const active = loadActiveJob();
-  activeCompareJobs(active).forEach((job) => stopPollingJob(state, job.jobId));
   if (active?.jobId) stopPollingJob(state, active.jobId);
   clearActiveJob();
   stopWaitingStatusSequence();
@@ -2941,233 +2751,9 @@ async function genBackgroundImages(cfg, prompt, quality, background, size, forma
   }
 }
 
-function activeCompareJobs(active = loadActiveJob()) {
-  return active?.type === 'compare' && Array.isArray(active.jobs) ? active.jobs : [];
-}
-
-function clearFinishedCompareJob(jobId) {
-  const active = loadActiveJob();
-  const jobs = activeCompareJobs(active);
-  if (!jobs.length || !jobId) return;
-  const remaining = jobs.filter((item) => item.jobId !== jobId);
-  if (!remaining.length) {
-    clearActiveJob();
-    return;
-  }
-  saveActiveJob(state, { ...active, jobs: remaining, updatedAt: Date.now() });
-  showActiveJobBanner('对比后台任务仍在进行', `剩余 ${remaining.length}/${jobs.length} 个组合，网络恢复后可继续获取结果`);
-}
-
-function saveActiveCompareJob(common = {}, jobInfo = {}) {
-  const jobId = String(jobInfo.jobId || jobInfo.id || '');
-  if (!jobId) return;
-  const active = loadActiveJob();
-  const base = active?.type === 'compare' && active.compareId === common.compareId
-    ? active
-    : {
-      type: 'compare',
-      compareId: common.compareId,
-      compareCount: common.compareCount,
-      count: common.count,
-      format: common.format,
-      createdAt: Date.now(),
-      jobs: [],
-    };
-  const jobs = activeCompareJobs(base).filter((item) => item.jobId !== jobId);
-  jobs.push({
-    jobId,
-    format: jobInfo.format || common.format,
-    isOAuth: !!jobInfo.isOAuth,
-    resultMeta: jobInfo.resultMeta || {},
-    createdAt: Date.now(),
-  });
-  saveActiveJob(state, { ...base, jobs, updatedAt: Date.now() });
-  showActiveJobBanner('对比后台任务已提交', `已提交 ${jobs.length}/${common.compareCount || jobs.length} 个组合，可切到后台稍后恢复结果`);
-}
-
-function compareStatusPrefix(meta = {}) {
-  return meta.compareLabel ? `对比 ${meta.compareIndex}/${meta.compareCount} · ${meta.compareLabel}` : '对比生成';
-}
-
-async function waitCompareBackgroundJob(jobId, format, isOAuth, resultMeta = {}) {
-  let retryCount = 0;
-  while (true) {
-    try {
-      const job = await fetchBackgroundJob(jobId);
-      retryCount = 0;
-      const last = Array.isArray(job.progress) ? job.progress.at(-1) : null;
-      if (last?.message) setGenerationStatus(`${compareStatusPrefix(resultMeta)}：${last.message}`);
-      if (job.status === 'completed') {
-        setGenerationStatus(`${compareStatusPrefix(resultMeta)}：正在渲染结果`);
-        if (isOAuth) handleOAuthImageResult(job.result, format, resultMeta);
-        else handleImagesResult(job.result, format, resultMeta);
-        clearFinishedCompareJob(jobId);
-        return { ok: true };
-      }
-      if (job.status === 'failed') {
-        clearFinishedCompareJob(jobId);
-        const err = new Error(normalizeGenerationError(job.error || '后台生成失败'));
-        if (job.errorInfo) Object.assign(err, job.errorInfo, { errorInfo: job.errorInfo });
-        throw err;
-      }
-      if (job.status === 'cancelled') {
-        clearFinishedCompareJob(jobId);
-        throw new Error('后台任务已取消');
-      }
-      await sleep(BACKGROUND_JOB_POLL_INTERVAL_MS);
-    } catch (e) {
-      if (!isRetryableBackgroundJobError(e) || isMissingBackgroundJobError(e)) throw e;
-      retryCount += 1;
-      if (retryCount > BACKGROUND_JOB_POLL_RETRY_LIMIT) throw e;
-      const delay = backgroundJobBackoffMs(retryCount, BACKGROUND_JOB_POLL_RETRY_BASE_MS);
-      setGenerationStatus(`${compareStatusPrefix(resultMeta)}：后台任务连接波动，第 ${retryCount}/${BACKGROUND_JOB_POLL_RETRY_LIMIT} 次重试，${Math.ceil(delay / 1000)} 秒后自动重试`);
-      await sleep(delay);
-    }
-  }
-}
-
-async function runCompareTarget(target, common) {
-  const cfg = await ensureValidTokenForAccount(target.cfg, target.account);
-  const hasRef = common.hasRef;
-  const resultMeta = {
-    compareId: common.compareId,
-    compareIndex: target.compareIndex,
-    compareCount: common.compareCount,
-    compareLabel: target.label,
-    localAccountId: target.accountId,
-    accountName: cfg.accountName,
-    accountHost: cfg.accountHost,
-    model: cfg.model,
-    batchId: `${common.compareId}_${target.compareIndex}`,
-    batchCount: common.count,
-  };
-  if (!cfg.apiUrl || !cfg.apiKey) throw new Error(`${target.label} 缺少 API 地址或 Key`);
-
-  const payload = {
-    mode: backgroundModeFor(cfg, hasRef),
-    cfg: publicJobCfg(cfg),
-    prompt: common.prompt,
-    quality: common.quality,
-    background: common.background,
-    size: common.size,
-    format: common.format,
-    count: common.count,
-    batchId: resultMeta.batchId,
-    watermarkSettings: getEffectiveWatermarkSettings(),
-    storageSettings: { enabled: state.appSettings.storage.enabled !== false && canPersistImagesOnServer() },
-    refImagesBase64: hasRef ? state.refImagesBase64 : undefined,
-  };
-
-  setGenerationStatus(`${compareStatusPrefix(resultMeta)}：提交后台任务`);
-  let job;
-  try {
-    job = await createBackgroundJob(payload);
-  } catch (e) {
-    if (isBackgroundJobsUnavailableError(e)) {
-      await genDirectImagesAfterJobFallback(cfg, common.prompt, common.quality, common.background, common.size, common.format, hasRef, common.count, resultMeta);
-      return { ok: true, direct: true };
-    }
-    addFailedResultCard({ ...resultMeta, error: normalizeGenerationError(e?.message || e) });
-    return { ok: false, error: e };
-  }
-
-  try {
-    if (job.status === 'completed') {
-      if (cfg.isOAuth) handleOAuthImageResult(job.result, common.format, resultMeta);
-      else handleImagesResult(job.result, common.format, resultMeta);
-      return { ok: true };
-    }
-    const jobId = job.jobId || job.id;
-    if (!jobId) throw new Error('后台任务创建失败：缺少 jobId');
-    saveActiveCompareJob(common, { jobId, format: common.format, isOAuth: cfg.isOAuth, resultMeta });
-    return await waitCompareBackgroundJob(jobId, common.format, cfg.isOAuth, resultMeta);
-  } catch (e) {
-    if (isRetryableBackgroundJobError(e) && !isMissingBackgroundJobError(e)) {
-      showActiveJobBanner('对比后台任务仍在进行', '已保留未完成组合，网络恢复后会自动继续获取结果');
-      setGenerationStatus('已保留对比后台任务，网络恢复后会自动继续获取结果');
-      return { ok: false, pending: true, error: e };
-    }
-    if (isMissingBackgroundJobError(e)) clearFinishedCompareJob(job.jobId || job.id);
-    addFailedResultCard({ ...resultMeta, error: normalizeGenerationError(e?.message || e) });
-    return { ok: false, error: e };
-  }
-}
-
-async function genCompareImages(targets, prompt, quality, background, size, format, hasRef, count = 1) {
-  const compareId = `compare_${genId()}`;
-  const common = {
-    compareId,
-    compareCount: targets.length,
-    prompt,
-    quality,
-    background,
-    size,
-    format,
-    hasRef,
-    count: getGenerationCount(count),
-  };
-  setGenerationStatus(`对比生成已提交：${targets.length} 个组合`);
-  const results = await Promise.all(targets.map((target, index) => runCompareTarget({
-    ...target,
-    compareIndex: index + 1,
-  }, common)));
-  const successCount = results.filter((item) => item?.ok).length;
-  const pendingCount = results.filter((item) => item?.pending).length;
-  await loadStorageStats();
-  if (!successCount && !pendingCount) throw new Error('对比生成全部失败，请检查账号、模型或网络');
-  if (pendingCount) {
-    showActiveJobBanner('对比后台任务仍在进行', `已保留 ${pendingCount} 个未完成组合，网络恢复后会自动继续获取结果`);
-    setGenerationStatus(successCount
-      ? `对比生成部分完成：成功 ${successCount}/${targets.length} 个组合，${pendingCount} 个待恢复`
-      : `对比生成已提交：${pendingCount}/${targets.length} 个组合等待恢复`);
-    return;
-  }
-  setGenerationStatus(successCount === targets.length
-    ? `对比生成完成：${successCount}/${targets.length} 个组合成功`
-    : `对比生成部分完成：成功 ${successCount}/${targets.length} 个组合`);
-}
-
-async function resumeActiveCompareJobs(active) {
-  const jobs = activeCompareJobs(active);
-  if (!jobs.length) {
-    clearActiveJob();
-    setGenerationStatus(IDLE_GENERATION_HINT);
-    return;
-  }
-  const total = active.compareCount || jobs.length;
-  const createdAtText = active.createdAt ? `创建于 ${formatRelativeTime(active.createdAt)}` : '正在恢复任务';
-  showActiveJobBanner('正在恢复对比后台任务', `${createdAtText}，剩余 ${jobs.length}/${total} 个组合`);
-  setGenerationStatus('正在恢复对比后台任务');
-  const results = await Promise.all(jobs.map(async (job) => {
-    try {
-      await waitCompareBackgroundJob(job.jobId, job.format || active.format || 'png', !!job.isOAuth, job.resultMeta || {});
-      return { ok: true };
-    } catch (e) {
-      if (isRetryableBackgroundJobError(e) && !isMissingBackgroundJobError(e)) {
-        return { ok: false, pending: true, error: e };
-      }
-      if (isMissingBackgroundJobError(e)) clearFinishedCompareJob(job.jobId);
-      addFailedResultCard({ ...(job.resultMeta || {}), error: normalizeGenerationError(e?.message || e) });
-      return { ok: false, error: e };
-    }
-  }));
-  const successCount = results.filter((item) => item.ok).length;
-  const pendingCount = results.filter((item) => item.pending).length;
-  if (successCount) await loadStorageStats();
-  if (pendingCount) {
-    showActiveJobBanner('对比后台任务仍在进行', `已保留 ${pendingCount} 个未完成组合，网络恢复后会自动继续获取结果`);
-    setGenerationStatus('已保留对比后台任务，网络恢复后会自动继续获取结果');
-    return;
-  }
-  if (!activeCompareJobs().length) clearActiveJob();
-  setGenerationStatus(successCount
-    ? `对比后台任务恢复完成：成功 ${successCount}/${total} 个组合`
-    : '对比后台任务已结束，没有可渲染结果');
-}
-
 async function resumeActiveJobIfAny() {
   const active = loadActiveJob();
-  if ((!active?.jobId && !activeCompareJobs(active).length) || state.generating) return;
+  if (!active?.jobId || state.generating) return;
   if (active.createdAt && Date.now() - Number(active.createdAt) > ACTIVE_JOB_STALE_MS) {
     clearActiveJob();
     setGenerationStatus(IDLE_GENERATION_HINT);
@@ -3179,10 +2765,6 @@ async function resumeActiveJobIfAny() {
   showActiveJobBanner('正在恢复后台生成任务', createdAtText);
   setGenerationStatus('正在恢复后台生成任务');
   try {
-    if (activeCompareJobs(active).length) {
-      await resumeActiveCompareJobs(active);
-      return;
-    }
     await pollBackgroundJob(active.jobId, active.format || 'png', !!active.isOAuth, active.resultMeta || {});
   } catch (e) {
     if (isMissingBackgroundJobError(e)) {
@@ -3632,19 +3214,14 @@ async function handleReferenceImagesChange(e) {
 }
 
 export {
-  activeCompareJobs,
   applyImportedBackup,
   buildBackupPayload,
-  clearFinishedCompareJob,
-  compareTargetCheckedState,
   decryptBackupEnvelope,
   encryptBackupPayload,
   getOAuthResultAccount,
   normalizeBackupPayload,
   sanitizeAccountForExport,
   summarizeBackupPayload,
-  resumeActiveCompareJobs,
-  saveActiveCompareJob,
 };
 
 // --- Init ---
@@ -3795,7 +3372,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Generate
   $('#generateBtn').onclick = generate;
   $('#enhancePromptBtn').onclick = enhancePromptManually;
-  $('#compareModeEnabled')?.addEventListener('change', renderCompareTargets);
   $('#generationErrorClose')?.addEventListener('click', hideGenerationErrorDialog);
   $('#generationErrorConfirm')?.addEventListener('click', hideGenerationErrorDialog);
   $('#generationErrorOverlay')?.addEventListener('click', (e) => { if (e.target === $('#generationErrorOverlay')) hideGenerationErrorDialog(); });

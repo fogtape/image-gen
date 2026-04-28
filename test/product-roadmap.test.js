@@ -11,16 +11,15 @@ test('P4 产品增强路线有目标用户、优先级和验收标准', () => {
     'P4.2 上传增强',
     'P4.3 队列面板',
     'P4.4 历史增强',
-    'P4.5 对比报告导出',
-    'P4.6 诊断与可观测性增强',
-    'P4.7 统计面板',
+    'P4.5 诊断与可观测性增强',
+    'P4.6 统计面板',
   ]) {
     assert.match(roadmap, new RegExp(`## ${section}`));
   }
   assert.match(roadmap, /目标用户/);
   assert.match(roadmap, /建议优先级/);
   assert.match(roadmap, /验收标准/);
-  assert.match(roadmap, /不包含 API Key、OAuth token 或管理口令/);
+  assert.match(roadmap, /不包含 API Key、OAuth token、管理口令/);
 });
 
 test('README 链接 P0-P3 追踪和 P4 产品路线', () => {

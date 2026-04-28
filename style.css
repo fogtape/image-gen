@@ -680,100 +680,6 @@ textarea { resize: vertical; }
 
 .seg button:not(.active):hover { color: var(--text); }
 
-/* Compare Panel */
-.compare-panel {
-  margin: 0 16px 14px;
-  padding: 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-}
-
-.compare-panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.compare-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 700;
-  color: var(--text);
-}
-
-.compare-toggle input,
-.compare-target input[type="checkbox"] {
-  accent-color: var(--primary);
-}
-
-.compare-status {
-  flex: 1 1 260px;
-  color: var(--text-3);
-  font-size: 0.78rem;
-}
-
-.compare-status.error { color: var(--danger); }
-
-.compare-target-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.compare-target-empty {
-  grid-column: 1 / -1;
-  color: var(--text-3);
-  font-size: 0.8rem;
-  padding: 8px 0;
-}
-
-.compare-target {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 7px 8px;
-  align-items: center;
-  padding: 9px 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg);
-}
-
-.compare-target.disabled {
-  opacity: 0.6;
-}
-
-.compare-target-name {
-  min-width: 0;
-  color: var(--text);
-  font-size: 0.84rem;
-  font-weight: 600;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.compare-target-meta,
-.compare-target-model-label {
-  grid-column: 2;
-  color: var(--text-3);
-  font-size: 0.72rem;
-}
-
-.compare-target-model {
-  grid-column: 2;
-  width: 100%;
-  padding: 6px 8px;
-  font-size: 0.78rem;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-}
-
 /* Advanced Panel */
 .advanced-panel {
   background: var(--surface);
@@ -1863,12 +1769,14 @@ input[type="color"] {
   .ref-preview-list { flex-shrink: 0; }
   .toolbar-right {
     width: auto;
-    flex: 0 0 auto;
+    flex: 1 1 150px;
+    min-width: 0;
     justify-content: flex-end;
-    gap: 0;
+    gap: 8px;
   }
   .toolbar-right .hint {
-    display: none;
+    display: inline-block;
+    max-width: min(42vw, 220px);
   }
   .active-job-banner {
     flex-direction: column;
