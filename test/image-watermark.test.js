@@ -8,7 +8,7 @@ import {
   renderWatermarkLines,
 } from '../image-watermark.js';
 
-const fixedNow = new Date('2026-04-25T11:32:45+08:00');
+const fixedNow = '2026-04-25T11:32:45+08:00';
 
 test('normalizeWatermarkSettings 提供安全默认值并限制异常输入', () => {
   const settings = normalizeWatermarkSettings({
@@ -60,4 +60,17 @@ test('buildWatermarkSvg 根据图片尺寸、位置和样式生成可叠加 SVG'
   assert.match(svg, /fill="#fff7cc"/);
   assert.match(svg, /opacity="0.66"/);
   assert.match(svg, /text-anchor="start"/);
+});
+
+test('水印时间尊重输入字符串时区，避免 CI 与本地时区不同导致漂移', () => {
+  assert.equal(renderWatermarkLines({
+    enabled: true,
+    mode: 'time',
+    timeFormat: 'dash',
+  }, '2026-04-25T11:32:45+08:00')[0], '2026-04-25 11:32');
+  assert.equal(renderWatermarkLines({
+    enabled: true,
+    mode: 'time',
+    timeFormat: 'dash',
+  }, '2026-04-25T11:32:45-07:00')[0], '2026-04-25 11:32');
 });

@@ -51,6 +51,30 @@ function pad2(n) {
   return String(n).padStart(2, '0');
 }
 
+function watermarkDateParts(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date);
+  const parsedOffset = String(date || '').match(/([+-])(\d{2}):?(\d{2})\s*$/);
+  if (parsedOffset && Number.isFinite(d.getTime())) {
+    const sign = parsedOffset[1] === '-' ? -1 : 1;
+    const offsetMinutes = sign * (Number(parsedOffset[2]) * 60 + Number(parsedOffset[3]));
+    const shifted = new Date(d.getTime() + offsetMinutes * 60 * 1000);
+    return {
+      yyyy: shifted.getUTCFullYear(),
+      mm: shifted.getUTCMonth() + 1,
+      dd: shifted.getUTCDate(),
+      hh: shifted.getUTCHours(),
+      mi: shifted.getUTCMinutes(),
+    };
+  }
+  return {
+    yyyy: d.getFullYear(),
+    mm: d.getMonth() + 1,
+    dd: d.getDate(),
+    hh: d.getHours(),
+    mi: d.getMinutes(),
+  };
+}
+
 export function normalizeWatermarkSettings(input = {}) {
   const mode = MODES.has(input.mode) ? input.mode : DEFAULTS.mode;
   const position = POSITIONS.has(input.position) ? input.position : DEFAULTS.position;
@@ -71,12 +95,12 @@ export function normalizeWatermarkSettings(input = {}) {
 }
 
 export function formatWatermarkTime(date = new Date(), format = CAMERA_TIME_FORMAT) {
-  const d = date instanceof Date ? date : new Date(date);
-  const yyyy = d.getFullYear();
-  const mm = pad2(d.getMonth() + 1);
-  const dd = pad2(d.getDate());
-  const hh = pad2(d.getHours());
-  const mi = pad2(d.getMinutes());
+  const parts = watermarkDateParts(date);
+  const yyyy = parts.yyyy;
+  const mm = pad2(parts.mm);
+  const dd = pad2(parts.dd);
+  const hh = pad2(parts.hh);
+  const mi = pad2(parts.mi);
   if (format === 'slash') return `${yyyy}/${mm}/${dd} ${hh}:${mi}`;
   if (format === 'dash') return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
   if (format === 'iso') return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
