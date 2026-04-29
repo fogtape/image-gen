@@ -2671,10 +2671,10 @@ async function cancelActiveJob() {
   const oldText = button?.textContent || '';
   if (button) {
     button.disabled = true;
-    button.textContent = '取消中…';
+    button.textContent = '停止中…';
   }
-  setGenerationStatus('正在取消后台任务');
-  showActiveJobBanner('正在取消后台任务', '正在通知后端停止任务…');
+  setGenerationStatus('正在停止后台任务');
+  showActiveJobBanner('正在停止后台任务', '正在通知后端停止任务…');
   try {
     const job = await cancelBackgroundJob(active.jobId);
     stopPollingJob(state, active.jobId);
@@ -2691,7 +2691,7 @@ async function cancelActiveJob() {
   } finally {
     if (button) {
       button.disabled = false;
-      button.textContent = oldText || '取消任务';
+      button.textContent = oldText || '停止';
     }
   }
 }
@@ -3367,7 +3367,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   $('#retryActiveJobBtn')?.addEventListener('click', () => { void resumeActiveJobIfAny(); });
   $('#cancelActiveJobBtn')?.addEventListener('click', () => { void cancelActiveJob(); });
-  $('#dismissActiveJobBtn')?.addEventListener('click', dismissActiveJob);
 
   // Add manual account
   $('#addManualBtn').onclick = () => openEditModal(null);

@@ -13,11 +13,11 @@ test('状态提示超长时使用省略号且不挤压发送区布局', () => {
   assert.match(css, /\.btn-send\s*\{[\s\S]*flex-shrink\s*:\s*0\s*;[\s\S]*\}/s);
 });
 
-test('前端新增后台任务恢复条与显式重试\/放弃按钮', () => {
-  assert.match(html, /id="activeJobBanner"/);
-  assert.match(html, /id="retryActiveJobBtn"/);
-  assert.match(html, /id="cancelActiveJobBtn"/);
-  assert.match(html, /id="dismissActiveJobBtn"/);
+test('前端后台任务恢复条改为查看\/停止浮动胶囊', () => {
+  assert.match(html, /id="activeJobBanner"[\s\S]*role="status"/);
+  assert.match(html, /id="retryActiveJobBtn"[\s\S]*>查看<\/button>/);
+  assert.match(html, /id="cancelActiveJobBtn"[\s\S]*>停止<\/button>/);
+  assert.doesNotMatch(html, /id="dismissActiveJobBtn"|放弃任务/);
   assert.match(backgroundJobs, /function showActiveJobBanner/);
 });
 

@@ -48,7 +48,7 @@ test('移动端保留实时状态提示，长文案省略且不挤压生成按�
   assert.match(css, /\.btn-send\s*\{[\s\S]*?flex-shrink:\s*0/s);
 });
 
-test('移动端顶部栏和后台任务 banner 在 320-360px 有溢出兜底', () => {
+test('移动端顶部栏和后台任务浮动胶囊在 320-360px 有溢出兜底', () => {
   const topbarLeft = ruleBody('.topbar-left,\n.topbar-right');
   assert.match(topbarLeft, /min-width\s*:\s*0\s*;/);
 
@@ -65,10 +65,10 @@ test('移动端顶部栏和后台任务 banner 在 320-360px 有溢出兜底', (
   const switcherName = ruleBody('.switcher-name');
   assert.match(switcherName, /min-width\s*:\s*0\s*;/);
 
-  assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.active-job-banner\s*\{[\s\S]*?flex-direction:\s*column/);
-  assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.active-job-actions\s*\{[\s\S]*?flex-wrap:\s*wrap/);
-  assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.active-job-actions \.btn\s*\{[\s\S]*?min-height:\s*40px/);
+  assert.match(css, /\.active-job-banner\s*\{[\s\S]*?position:\s*fixed/);
+  assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.active-job-banner\s*\{[\s\S]*?width:\s*calc\(100vw - 20px\)/);
+  assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.active-job-title\s*\{[\s\S]*?max-width:\s*42vw/);
   assert.match(css, /@media \(max-width: 360px\)[\s\S]*?\.logo span\s*\{[\s\S]*?display:\s*none/);
-  assert.match(css, /@media \(max-width: 360px\)[\s\S]*?\.active-job-actions\s*\{[\s\S]*?flex-direction:\s*column/);
-  assert.match(css, /@media \(max-width: 360px\)[\s\S]*?\.active-job-actions \.btn\s*\{[\s\S]*?width:\s*100%/);
+  assert.doesNotMatch(css, /@media \(max-width: 360px\)[\s\S]*?\.active-job-actions\s*\{[\s\S]*?flex-direction:\s*column/);
+  assert.doesNotMatch(css, /@media \(max-width: 360px\)[\s\S]*?\.active-job-actions \.btn\s*\{[\s\S]*?width:\s*100%/);
 });

@@ -542,15 +542,15 @@
               </button>
             </div>
           </div>
-          <div id="activeJobBanner" class="active-job-banner hidden">
+          <div id="activeJobBanner" class="active-job-banner active-job-pill hidden" role="status" aria-live="polite" aria-atomic="true">
+            <span class="active-job-dot" aria-hidden="true"></span>
             <div class="active-job-main">
               <div id="activeJobBannerTitle" class="active-job-title">后台任务恢复中</div>
               <div id="activeJobBannerMeta" class="active-job-meta">正在同步任务状态…</div>
             </div>
             <div class="active-job-actions">
-              <button id="retryActiveJobBtn" class="btn btn-outline" type="button">立即重试</button>
-              <button id="cancelActiveJobBtn" class="btn btn-outline" type="button">取消任务</button>
-              <button id="dismissActiveJobBtn" class="btn btn-ghost" type="button">放弃任务</button>
+              <button id="retryActiveJobBtn" class="btn btn-ghost active-job-view" type="button" aria-label="查看后台任务结果">查看</button>
+              <button id="cancelActiveJobBtn" class="btn btn-outline active-job-stop" type="button" aria-label="停止后台任务">停止</button>
             </div>
           </div>
         </div>
