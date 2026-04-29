@@ -20,7 +20,7 @@ test('Vercel 使用静态构建产物部署，避免把浏览器 app.js 当服�
   assert.doesNotMatch(adapter, /app\.js/);
 });
 
-test('Vercel 为 OAuth 登录相关路径提供显式 API 入口，避免返回 The page could not be found 文本', () => {
+test('Vercel 为嵌套 API 路径提供显式入口，避免返回 The page could not be found 文本', () => {
   for (const routeFile of [
     'api/oauth/start.js',
     'api/oauth/exchange.js',
@@ -28,6 +28,19 @@ test('Vercel 为 OAuth 登录相关路径提供显式 API 入口，避免返回 
     'api/oauth/test.js',
     'api/oauth/status/[state].js',
     'api/oauth/images/stream.js',
+    'api/admin/session.js',
+    'api/admin/security.js',
+    'api/config/runtime.js',
+    'api/config/editable.js',
+    'api/config/schema.js',
+    'api/config/save.js',
+    'api/config/platform/check.js',
+    'api/config/platform/sync.js',
+    'api/config/platform/deploy.js',
+    'api/accounts/capabilities.js',
+    'api/accounts/import-local.js',
+    'api/accounts/store/test.js',
+    'api/storage/history.js',
   ]) {
     assert.ok(exists(routeFile), `${routeFile} should exist for Vercel nested API routing`);
     const source = read(routeFile);
