@@ -1,4 +1,4 @@
-import { server } from '../server.js';
+import { server } from './server.js';
 
 export function dispatchToNodeServer(req, res, forcedPath = '') {
   if (req.body !== undefined) {

@@ -28,25 +28,34 @@ test('Vercel 为嵌套 API 路径提供显式入口，避免返回 The page coul
     'api/oauth/test.js',
     'api/oauth/status/[state].js',
     'api/oauth/images/stream.js',
-    'api/admin/session.js',
-    'api/admin/security.js',
-    'api/config/runtime.js',
-    'api/config/editable.js',
-    'api/config/schema.js',
-    'api/config/save.js',
-    'api/config/platform/check.js',
-    'api/config/platform/sync.js',
-    'api/config/platform/deploy.js',
-    'api/accounts/capabilities.js',
-    'api/accounts/import-local.js',
-    'api/accounts/store/test.js',
-    'api/storage/history.js',
+    'api/admin/[...path].js',
+    'api/config/[...path].js',
+    'api/accounts/[...path].js',
   ]) {
     assert.ok(exists(routeFile), `${routeFile} should exist for Vercel nested API routing`);
     const source = read(routeFile);
     assert.match(source, /dispatchToNodeServer/);
     assert.doesNotMatch(source, /The page could not be found|app\.js/);
   }
+});
+
+test('Vercel Serverless Functions 数量不超过 Hobby 计划 12 个限制', () => {
+  const functionFiles = [
+    'api/[...path].js',
+    'api/accounts/[...path].js',
+    'api/admin/[...path].js',
+    'api/config/[...path].js',
+    'api/oauth/exchange.js',
+    'api/oauth/images.js',
+    'api/oauth/images/stream.js',
+    'api/oauth/refresh.js',
+    'api/oauth/start.js',
+    'api/oauth/status/[state].js',
+    'api/oauth/test.js',
+    'api/proxy.js',
+  ];
+  for (const routeFile of functionFiles) assert.ok(exists(routeFile), `${routeFile} should exist`);
+  assert.equal(functionFiles.length, 12);
 });
 
 test('OAuth start 在 Vercel serverless 环境不启动本地 loopback 监听', () => {

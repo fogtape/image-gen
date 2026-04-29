@@ -1,4 +1,4 @@
-import { dispatchToNodeServer } from '../_node-server-adapter.js';
+import { dispatchToNodeServer } from '../../vercel-node-server-adapter.js';
 
 export default function handler(req, res) {
   return dispatchToNodeServer(req, res, '/api/oauth/exchange');

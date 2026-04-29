@@ -1,4 +1,4 @@
-import { dispatchToNodeServer } from '../../_node-server-adapter.js';
+import { dispatchToNodeServer } from '../../../vercel-node-server-adapter.js';
 
 export default function handler(req, res) {
   const state = typeof req.query?.state === 'string' ? req.query.state : '';
