@@ -45,6 +45,7 @@ const DEFAULT_RESPONSES_MODEL = 'gpt-5.4';
 const MAX_REF_IMAGES = 3;
 const REF_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 const REF_IMAGES_TOTAL_MAX_BYTES = 24 * 1024 * 1024;
+const ALLOWED_REF_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 let historySearchTimer = null;
 let promptHistory = [];
 let pendingBackupImport = null;
@@ -3117,6 +3118,11 @@ function formatFileSize(bytes = 0) {
 function validateRefImageFiles(files = []) {
   let totalBytes = 0;
   for (const file of files) {
+    const mime = inferRefImageMime(file);
+    if (!ALLOWED_REF_IMAGE_MIME_TYPES.has(mime)) {
+      showError(`参考图格式不支持：${file?.name || '未命名文件'}，请上传 PNG、JPEG 或 WebP 图片`, { context: 'reference' });
+      return false;
+    }
     const size = Number(file?.size || 0);
     if (size > REF_IMAGE_MAX_BYTES) {
       showError(`参考图「${file?.name || '未命名图片'}」超过 ${formatFileSize(REF_IMAGE_MAX_BYTES)}，请换用更小图片`, { context: 'reference' });
@@ -3129,6 +3135,17 @@ function validateRefImageFiles(files = []) {
     return false;
   }
   return true;
+}
+
+function inferRefImageMime(file) {
+  const mime = String(file?.type || '').trim().toLowerCase();
+  if (mime === 'image/jpg') return 'image/jpeg';
+  if (mime) return mime;
+  const name = String(file?.name || '').toLowerCase();
+  if (/\.(jpe?g)$/.test(name)) return 'image/jpeg';
+  if (/\.png$/.test(name)) return 'image/png';
+  if (/\.webp$/.test(name)) return 'image/webp';
+  return '';
 }
 
 function toImageDataUrl(data, mime = 'image/png') {

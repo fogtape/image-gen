@@ -16,6 +16,8 @@ import {
   isChatChallengeRequired,
   getUnsupportedChatRequirementChallenge,
   reportOAuthProgress,
+  generateOAuthImage,
+  testOAuthAccessToken,
 } from '../openai-oauth-image.js';
 
 const ONE_BY_ONE_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
@@ -116,9 +118,35 @@ test('旧版 OAuth 图片会话请求走 ChatGPT picture_v2，而不是 /v1/imag
 
   assert.equal(req.action, 'next');
   assert.equal(req.model, 'auto');
+  assert.equal(req.client_prepare_state, 'success');
   assert.deepEqual(req.system_hints, ['picture_v2']);
   assert.deepEqual(req.messages[0].content.parts, ['画一只猫']);
   assert.deepEqual(req.messages[0].metadata.system_hints, ['picture_v2']);
+
+  const editReq = buildConversationRequest({
+    prompt: '改成海报',
+    parentMessageId: 'parent-2',
+    messageId: 'message-2',
+    refImages: [{
+      id: 'file_ref',
+      pointer: 'sediment://file_ref',
+      mimeType: 'image/jpeg',
+      sizeBytes: 123,
+      width: 400,
+      height: 800,
+    }],
+  });
+  assert.equal(editReq.messages[0].content.content_type, 'multimodal_text');
+  assert.deepEqual(editReq.messages[0].metadata.attachments[0], {
+    name: 'file_ref',
+    id: 'file_ref',
+    size: 123,
+    mime_type: 'image/jpeg',
+    width: 400,
+    height: 800,
+    source: 'local',
+    is_big_paste: false,
+  });
 });
 
 test('能从 ChatGPT SSE/JSON 文本中提取图片指针和内联 base64 图片', () => {
@@ -145,6 +173,25 @@ test('图生图不会把用户上传的参考图误当成生成结果', () => {
   ];
   const filtered = filterUploadedReferencePointers(pointers, [{ id: 'file_ref', pointer: 'sediment://file_ref' }]);
   assert.deepEqual(filtered, [{ pointer: 'file-service://file_out' }]);
+});
+
+
+test('明确的 download_url 字段支持无扩展名 HTTPS 签名图片地址', () => {
+  const text = 'data: {"download_url":"https://chatgpt.com/backend-api/estuary/content?id=file_generated&ts=1"}';
+  const result = collectImagePointersFromText(text);
+  assert.ok(result.pointers.some((p) => p.downloadURL === 'https://chatgpt.com/backend-api/estuary/content?id=file_generated&ts=1'));
+});
+
+test('ChatGPT conversation SSE parser 支持 event/data 块和多行 data JSON', () => {
+  const text = [
+    'event: delta',
+    'data: {"v":{"conversation_id":"conv_multiline",',
+    'data: "message":{"content":{"parts":[{"content_type":"image_asset_pointer","asset_pointer":"sediment://file_generated"}]}}}}',
+    '',
+  ].join('\n');
+  const result = collectImagePointersFromText(text);
+  assert.equal(result.conversationId, 'conv_multiline');
+  assert.ok(result.pointers.some((p) => p.pointer === 'sediment://file_generated'));
 });
 
 test('能从 conversation/init 返回中识别图片额度耗尽', () => {
@@ -217,6 +264,162 @@ test('OAuth 图片下载逐跳校验重定向、协议、类型和大小', async
 });
 
 
+
+test('OAuth 图生图轮询会跳过上传参考图并使用官方 files/download 路径下载生成图', async () => {
+  const originalFetch = globalThis.fetch;
+  const pngBuffer = Buffer.from(ONE_BY_ONE_PNG, 'base64');
+  const requests = [];
+  let pollCount = 0;
+  try {
+    globalThis.fetch = async (url, options = {}) => {
+      const target = String(url);
+      requests.push({ url: target, method: options.method || 'GET' });
+
+      if (target === 'https://chatgpt.com/') return new Response('', { status: 200 });
+      if (target === 'https://chatgpt.com/backend-api/conversation/init') {
+        return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (target === 'https://chatgpt.com/backend-api/files' && options.method === 'POST') {
+        return new Response(JSON.stringify({ status: 'success', file_id: 'file_ref', upload_url: 'https://upload.example/ref' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (target === 'https://upload.example/ref') return new Response('', { status: 201 });
+      if (target === 'https://chatgpt.com/backend-api/files/process_upload_stream') {
+        return new Response([
+          'data: {"event":"file.processing.started"}',
+          'data: {"event":"file.processing.file_ready"}',
+          'data: {"event":"file.processing.completed"}',
+          '',
+        ].join('\n'), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }
+      if (target === 'https://chatgpt.com/backend-api/files/download/file_ref') {
+        return new Response(JSON.stringify({ status: 'success', download_url: 'https://chatgpt.com/backend-api/estuary/content?id=file_ref' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (target === 'https://chatgpt.com/backend-api/sentinel/chat-requirements') {
+        return new Response(JSON.stringify({ token: 'chat-token', proofofwork: { required: false } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (target === 'https://chatgpt.com/backend-api/f/conversation/prepare') {
+        return new Response(JSON.stringify({ status: 'ok', conduit_token: 'conduit-token' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (target === 'https://chatgpt.com/backend-api/f/conversation') {
+        return new Response([
+          'data: {"type":"resume_conversation_token","conversation_id":"conv_1"}',
+          'data: {"v":{"conversation_id":"conv_1","message":{"content":{"parts":[{"content_type":"image_asset_pointer","asset_pointer":"sediment://file_ref"}]}}}}',
+          '',
+        ].join('\n'), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }
+      if (target === 'https://chatgpt.com/backend-api/conversation/conv_1') {
+        pollCount += 1;
+        const pointer = pollCount === 1 ? 'sediment://file_ref' : 'sediment://file_generated';
+        return new Response(JSON.stringify({
+          conversation_id: 'conv_1',
+          message: {
+            content: { parts: [{ content_type: 'image_asset_pointer', asset_pointer: pointer }] },
+            metadata: { image_gen_title: '生成图' },
+          },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (target === 'https://chatgpt.com/backend-api/files/download/file_generated?conversation_id=conv_1&inline=false') {
+        return new Response(JSON.stringify({ status: 'success', download_url: 'https://chatgpt.com/backend-api/estuary/content?id=file_generated' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (target === 'https://chatgpt.com/backend-api/estuary/content?id=file_generated') {
+        return new Response(pngBuffer, {
+          status: 200,
+          headers: { 'Content-Type': 'image/png', 'Content-Length': String(pngBuffer.length) },
+        });
+      }
+      return new Response(`unexpected ${options.method || 'GET'} ${target}`, { status: 500 });
+    };
+
+    const result = await generateOAuthImage({
+      accessToken: 'access-token-for-test',
+      prompt: '参考图改成海报',
+      refImagesBase64: [ONE_BY_ONE_PNG],
+    });
+
+    assert.equal(result.data[0].b64_json, pngBuffer.toString('base64'));
+    assert.equal(pollCount, 2);
+    assert.ok(requests.some((item) => item.url === 'https://chatgpt.com/backend-api/files/download/file_generated?conversation_id=conv_1&inline=false'));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OAuth 探活优先使用官方 chat-requirements prepare/finalize 并提交 PoW', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  try {
+    globalThis.fetch = async (url, options = {}) => {
+      const target = String(url);
+      requests.push({ url: target, method: options.method || 'GET', body: options.body ? String(options.body) : '' });
+      if (target === 'https://chatgpt.com/') return new Response('', { status: 200 });
+      if (target === 'https://chatgpt.com/backend-api/sentinel/chat-requirements/prepare') {
+        return new Response(JSON.stringify({
+          prepare_token: 'prepare-token',
+          proofofwork: { required: true, seed: 'seed-for-test', difficulty: 'fffff' },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (target === 'https://chatgpt.com/backend-api/sentinel/chat-requirements/finalize') {
+        const body = JSON.parse(String(options.body || '{}'));
+        assert.equal(body.prepare_token, 'prepare-token');
+        assert.match(body.proofofwork, /^gAAAAAB/);
+        return new Response(JSON.stringify({ token: 'final-chat-token', expire_after: 540 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(`unexpected ${target}`, { status: 500 });
+    };
+
+    const result = await testOAuthAccessToken({ accessToken: 'access-token-for-test' });
+    assert.equal(result.ok, true);
+    assert.equal(result.service, 'chatgpt-backend');
+    assert.ok(requests.some((item) => item.url.endsWith('/chat-requirements/prepare')));
+    assert.ok(requests.some((item) => item.url.endsWith('/chat-requirements/finalize')));
+    assert.equal(requests.some((item) => item.url === 'https://chatgpt.com/backend-api/sentinel/chat-requirements'), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OAuth chat-requirements 对无法自动完成的 challenge 返回稳定错误分类', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => {
+      const target = String(url);
+      if (target === 'https://chatgpt.com/') return new Response('', { status: 200 });
+      if (target === 'https://chatgpt.com/backend-api/sentinel/chat-requirements/prepare') {
+        return new Response(JSON.stringify({
+          prepare_token: 'prepare-token',
+          turnstile: { required: true },
+          so: { required: true },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(`unexpected ${target}`, { status: 500 });
+    };
+    await assert.rejects(
+      testOAuthAccessToken({ accessToken: 'access-token-for-test' }),
+      (err) => err.status === 403 && /turnstile/.test(err.message) && /官方 ChatGPT 网页端/.test(err.message),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('ChatGPT challenge required parser does not treat string false as required', () => {
   assert.equal(isChatChallengeRequired({ required: false }), false);
   assert.equal(isChatChallengeRequired({ required: 'false' }), false);
@@ -227,10 +430,11 @@ test('ChatGPT challenge required parser does not treat string false as required'
   assert.equal(isChatChallengeRequired({ required: 'required' }), true);
 });
 
-test('ChatGPT 图片代理只阻断 sub2api 同样不支持的 arkose，不把 turnstile 字段直接当失败', () => {
+test('ChatGPT 图片代理会识别无法自动完成的 arkose、turnstile 和 so challenge', () => {
   assert.equal(getUnsupportedChatRequirementChallenge({ arkose: { required: true } }), 'arkose');
-  assert.equal(getUnsupportedChatRequirementChallenge({ turnstile: { required: true } }), '');
-  assert.equal(getUnsupportedChatRequirementChallenge({ turnstile: { required: 'required' }, proofofwork: { required: true } }), '');
+  assert.equal(getUnsupportedChatRequirementChallenge({ turnstile: { required: true } }), 'turnstile');
+  assert.equal(getUnsupportedChatRequirementChallenge({ so: { required: 'required' }, proofofwork: { required: true } }), 'so');
+  assert.equal(getUnsupportedChatRequirementChallenge({ token: 'ready', turnstile: { required: true } }, { allowSatisfiedToken: true }), '');
 });
 
 test('reportOAuthProgress emits structured progress events and ignores missing callbacks', () => {

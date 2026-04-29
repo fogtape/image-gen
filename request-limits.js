@@ -15,6 +15,24 @@ export function getImageJobBodyLimitBytes(env = process.env) {
   return boundedEnvBytes('IMAGE_GEN_IMAGE_JOB_BODY_LIMIT_BYTES', 30 * 1024 * 1024, 1024 * 1024, 80 * 1024 * 1024, env);
 }
 
+export const ALLOWED_REF_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+export function normalizeImageMime(mime = 'image/png') {
+  const value = String(mime || 'image/png').trim().toLowerCase();
+  if (value === 'image/jpg') return 'image/jpeg';
+  return value;
+}
+
+export function assertImageMimeAllowed(mime = 'image/png') {
+  const normalized = normalizeImageMime(mime);
+  if (!ALLOWED_REF_IMAGE_MIME_TYPES.has(normalized)) {
+    const error = new Error('参考图格式不支持，请上传 PNG、JPEG 或 WebP 图片');
+    error.status = 400;
+    throw error;
+  }
+  return normalized;
+}
+
 export function payloadTooLargeError(message = '请求体过大') {
   const error = new Error(message);
   error.status = 413;
@@ -40,8 +58,8 @@ export function decodedBase64Bytes(base64 = '') {
 export function parseImageInputData(data, fallbackMime = 'image/png') {
   const value = String(data || '').trim();
   const match = value.match(/^data:(image\/[^;]+);base64,(.*)$/is);
-  if (match) return { mime: match[1].toLowerCase(), base64: match[2] };
-  return { mime: fallbackMime, base64: value };
+  if (match) return { mime: normalizeImageMime(match[1]), base64: match[2] };
+  return { mime: normalizeImageMime(fallbackMime), base64: value };
 }
 
 export function imageDataByteLength(data, fallbackMime = 'image/png') {
@@ -53,7 +71,9 @@ export function assertImageDataSize(data, {
   maxBytes = getReferenceImageLimits().maxImageBytes,
   message = '参考图过大，请换用更小图片',
 } = {}) {
-  const bytes = imageDataByteLength(data);
+  const parsed = parseImageInputData(data);
+  assertImageMimeAllowed(parsed.mime);
+  const bytes = decodedBase64Bytes(parsed.base64);
   if (bytes > maxBytes) throw payloadTooLargeError(message);
   return bytes;
 }

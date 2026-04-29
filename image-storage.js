@@ -88,16 +88,26 @@ function sanitizeTrace(trace = {}) {
       return '';
     }
   })();
+  const cleanTraceText = (value, max = 80) => String(value || '').trim().replace(/[^a-zA-Z0-9._:/-]/g, '').slice(0, max);
+  const cleanPhases = [];
+  for (const phase of Array.isArray(trace.phases) ? trace.phases : []) {
+    const clean = cleanTraceText(phase, 80);
+    if (clean && !cleanPhases.includes(clean)) cleanPhases.push(clean);
+    if (cleanPhases.length >= 20) break;
+  }
   const normalized = {
     mode: trace.mode ? String(trace.mode) : '',
     protocol: trace.protocol ? String(trace.protocol) : '',
+    flow: cleanTraceText(trace.flow),
+    phase: cleanTraceText(trace.phase),
+    phases: cleanPhases,
     endpoint: trace.endpoint ? String(trace.endpoint) : '',
     compatMode: trace.compatMode === true,
     fallbackAttempted: trace.fallbackAttempted === true,
     hasRef: trace.hasRef === true,
     apiHost,
   };
-  if (!Object.values(normalized).some((value) => value)) return null;
+  if (!Object.values(normalized).some((value) => Array.isArray(value) ? value.length : value)) return null;
   return normalized;
 }
 

@@ -13,10 +13,13 @@ test('参考图上传入口允许多选但限制最多三张', () => {
   assert.match(app, /const MAX_REF_IMAGES = 3;/);
   assert.match(app, /const REF_IMAGE_MAX_BYTES = 8 \* 1024 \* 1024;/);
   assert.match(app, /const REF_IMAGES_TOTAL_MAX_BYTES = 24 \* 1024 \* 1024;/);
+  assert.match(app, new RegExp("const ALLOWED_REF_IMAGE_MIME_TYPES = new Set\\(\\['image/png', 'image/jpeg', 'image/webp'\\]\\);"));
   assert.match(app, /const selectedFiles = Array\.from\(e\.target\.files \|\| \[\]\)/);
   assert.match(app, /const files = selectedFiles\.slice\(0, MAX_REF_IMAGES\)/);
   assert.match(app, /最多只能上传 3 张参考图/);
   assert.match(app, /validateRefImageFiles\(files\)/);
+  assert.match(app, /ALLOWED_REF_IMAGE_MIME_TYPES\.has\(mime\)/);
+  assert.match(app, /参考图格式不支持/);
   assert.match(app, /超过 \$\{formatFileSize\(REF_IMAGE_MAX_BYTES\)\}/);
 });
 
@@ -41,6 +44,8 @@ test('前端已移除 mask、自动压缩和居中裁剪参考图入口', () => 
 
 test('后端图片任务支持最多三张参考图，并让 Images edits 走官方风格 JSON images[].image_url', () => {
   assert.match(server, /const MAX_REF_IMAGES = 3;/);
+  assert.match(server, new RegExp("const ALLOWED_REF_IMAGE_MIME_TYPES = new Set\\(\\['image/png', 'image/jpeg', 'image/webp'\\]\\);"));
+  assert.match(server, /assertImageMimeAllowed\(parsed\.mime\)/);
   assert.match(server, /normalizeRefImages\(payload\)/);
   assert.match(server, /images:\s*refImages\.map\(\(data\) => \(\{ image_url: toImageDataUrl\(data\) \}\)\)/);
   assert.match(server, /refImages\.map\(\(data\) => \(\{ type: 'input_image'/);

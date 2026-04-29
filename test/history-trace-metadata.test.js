@@ -33,6 +33,9 @@ test('历史记录保留最近成功链路 trace 与 batch 元数据且 API 地�
     trace: {
       mode: 'edits',
       protocol: 'images-multipart',
+      flow: 'chatgpt-web',
+      phase: 'oauth:download',
+      phases: ['oauth:bootstrap', 'oauth:download', 'oauth:download'],
       endpoint: '/v1/images/edits',
       compatMode: true,
       fallbackAttempted: true,
@@ -63,10 +66,20 @@ test('历史记录保留最近成功链路 trace 与 batch 元数据且 API 地�
   assert.deepEqual(stats.history[0].trace, {
     mode: 'edits',
     protocol: 'images-multipart',
+    flow: 'chatgpt-web',
+    phase: 'oauth:download',
+    phases: ['oauth:bootstrap', 'oauth:download'],
     endpoint: '/v1/images/edits',
     compatMode: true,
     fallbackAttempted: true,
     hasRef: true,
     apiHost: 'demo.example.com',
   });
+});
+
+test('服务端 OAuth 图生图 trace 会记录 ChatGPT Web flow 和阶段', () => {
+  const server = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(server, /trace\.flow = 'chatgpt-web'/);
+  assert.match(server, /trace\.phase = phase/);
+  assert.match(server, /trace\.phases\.push\(phase\)/);
 });

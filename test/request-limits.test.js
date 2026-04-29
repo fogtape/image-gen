@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
 
+import { assertImageListWithinLimits } from '../request-limits.js';
+
 process.env.VERCEL = '1';
 process.env.IMAGE_GEN_ADMIN_TOKEN = 'test-admin-token-request-limits';
 process.env.IMAGE_GEN_JSON_BODY_LIMIT_BYTES = '1024';
@@ -16,6 +18,16 @@ const { server } = await import('../server.js');
 function makeImageDataUrl(sizeBytes) {
   return `data:image/png;base64,${Buffer.alloc(sizeBytes, 1).toString('base64')}`;
 }
+
+test('参考图 MIME 只允许 PNG、JPEG 和 WebP', () => {
+  assert.doesNotThrow(() => assertImageListWithinLimits([`data:image/png;base64,${Buffer.from('ok').toString('base64')}`]));
+  assert.doesNotThrow(() => assertImageListWithinLimits([`data:image/jpeg;base64,${Buffer.from('ok').toString('base64')}`]));
+  assert.doesNotThrow(() => assertImageListWithinLimits([`data:image/webp;base64,${Buffer.from('ok').toString('base64')}`]));
+  assert.throws(
+    () => assertImageListWithinLimits([`data:image/gif;base64,${Buffer.from('gif').toString('base64')}`]),
+    /参考图格式不支持/,
+  );
+});
 
 async function postJson(baseUrl, path, body) {
   const resp = await fetch(`${baseUrl}${path}`, {

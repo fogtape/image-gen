@@ -52,6 +52,7 @@ const JSON_BODY_LIMIT_BYTES = Math.min(50 * 1024 * 1024, Math.max(1024, Number(p
 const IMAGE_JOB_BODY_LIMIT_BYTES = Math.min(80 * 1024 * 1024, Math.max(1024 * 1024, Number(process.env.IMAGE_GEN_IMAGE_JOB_BODY_LIMIT_BYTES || 30 * 1024 * 1024)));
 const REF_IMAGE_MAX_BYTES = Math.min(30 * 1024 * 1024, Math.max(1024, Number(process.env.IMAGE_GEN_REF_IMAGE_MAX_BYTES || 8 * 1024 * 1024)));
 const REF_IMAGES_TOTAL_MAX_BYTES = Math.min(80 * 1024 * 1024, Math.max(1024, Number(process.env.IMAGE_GEN_REF_IMAGES_TOTAL_MAX_BYTES || 24 * 1024 * 1024)));
+const ALLOWED_REF_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const imageStore = createImageStore({ dataDir: DATA_DIR });
 const OAUTH_LOOPBACK_PORT = 1455;
 const OAUTH_SESSION_FILE = process.env.IMAGE_GEN_OAUTH_SESSION_FILE || path.join(__dirname, '.oauth-sessions.json');
@@ -812,8 +813,26 @@ function imageDataByteLength(data, fallbackMime = 'image/png') {
   return decodedBase64Bytes(parsed.base64);
 }
 
+function normalizeImageMime(mime = 'image/png') {
+  const value = String(mime || 'image/png').trim().toLowerCase();
+  if (value === 'image/jpg') return 'image/jpeg';
+  return value;
+}
+
+function assertImageMimeAllowed(mime = 'image/png') {
+  const normalized = normalizeImageMime(mime);
+  if (!ALLOWED_REF_IMAGE_MIME_TYPES.has(normalized)) {
+    const err = new Error('参考图格式不支持，请上传 PNG、JPEG 或 WebP 图片');
+    err.status = 400;
+    throw err;
+  }
+  return normalized;
+}
+
 function assertImageDataSize(data, { maxBytes = REF_IMAGE_MAX_BYTES, message = '参考图过大，请换用更小图片' } = {}) {
-  const bytes = imageDataByteLength(data);
+  const parsed = parseImageInputData(data);
+  assertImageMimeAllowed(parsed.mime);
+  const bytes = decodedBase64Bytes(parsed.base64);
   if (bytes > maxBytes) throw payloadTooLargeError(message);
   return bytes;
 }
@@ -1053,8 +1072,8 @@ export function toImageDataUrl(data, mime = 'image/png') {
 function parseImageInputData(data, fallbackMime = 'image/png') {
   const value = String(data || '').trim();
   const match = value.match(/^data:(image\/[^;]+);base64,(.*)$/is);
-  if (match) return { mime: match[1].toLowerCase(), base64: match[2] };
-  return { mime: fallbackMime, base64: value };
+  if (match) return { mime: normalizeImageMime(match[1]), base64: match[2] };
+  return { mime: normalizeImageMime(fallbackMime), base64: value };
 }
 
 function imageExtensionFromMime(mime = 'image/png') {
@@ -1349,6 +1368,9 @@ function createJobTrace(payload = {}) {
   return {
     mode: payload.mode || 'responses',
     protocol: '',
+    flow: '',
+    phase: '',
+    phases: [],
     endpoint: '',
     compatMode: false,
     fallbackAttempted: false,
@@ -1439,6 +1461,12 @@ async function runSingleImageJob(payload, onProgress, signal = null) {
   if (!String(payload.prompt || '').trim()) throw new Error('Missing prompt');
   const trace = createJobTrace(payload);
   const tracedProgress = (phase, message, extra = {}) => {
+    if (String(phase || '').startsWith('oauth:')) {
+      trace.flow = 'chatgpt-web';
+      trace.phase = phase;
+      if (!trace.phases.includes(phase)) trace.phases.push(phase);
+      if (trace.phases.length > 20) trace.phases.splice(0, trace.phases.length - 20);
+    }
     if (phase === 'route:selected') {
       trace.protocol = extra.protocol || trace.protocol;
       trace.endpoint = extra.endpoint || trace.endpoint;
@@ -1457,6 +1485,7 @@ async function runSingleImageJob(payload, onProgress, signal = null) {
     const cfg = payload.cfg || {};
     trace.mode = 'oauth';
     trace.protocol = 'oauth-stream';
+    trace.flow = 'chatgpt-web';
     trace.endpoint = '/api/oauth/images/stream';
     result = await handleOAuthImageRequestBody({
       accessToken: cfg.apiKey,

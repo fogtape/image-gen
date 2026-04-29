@@ -11,6 +11,8 @@ const CHATGPT_CONVERSATION_INIT_URL = `${CHATGPT_BASE}/backend-api/conversation/
 const CHATGPT_CONVERSATION_URL = `${CHATGPT_BASE}/backend-api/f/conversation`;
 const CHATGPT_CONVERSATION_PREPARE_URL = `${CHATGPT_BASE}/backend-api/f/conversation/prepare`;
 const CHATGPT_CHAT_REQUIREMENTS_URL = `${CHATGPT_BASE}/backend-api/sentinel/chat-requirements`;
+const CHATGPT_CHAT_REQUIREMENTS_PREPARE_URL = `${CHATGPT_CHAT_REQUIREMENTS_URL}/prepare`;
+const CHATGPT_CHAT_REQUIREMENTS_FINALIZE_URL = `${CHATGPT_CHAT_REQUIREMENTS_URL}/finalize`;
 const IMAGE_BACKEND_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const CODEX_USER_AGENT = 'codex_cli_rs/0.125.0';
 const CODEX_VERSION = '0.125.0';
@@ -68,8 +70,11 @@ export function isChatChallengeRequired(challenge) {
   return false;
 }
 
-export function getUnsupportedChatRequirementChallenge(chatReqs = {}) {
+export function getUnsupportedChatRequirementChallenge(chatReqs = {}, options = {}) {
+  if (options.allowSatisfiedToken && String(chatReqs?.token || '').trim()) return '';
   if (isChatChallengeRequired(chatReqs?.arkose)) return 'arkose';
+  if (isChatChallengeRequired(chatReqs?.turnstile)) return 'turnstile';
+  if (isChatChallengeRequired(chatReqs?.so)) return 'so';
   return '';
 }
 
@@ -185,7 +190,7 @@ export function buildConversationRequest({ prompt, parentMessageId, messageId, r
     : [text];
   return {
     action: 'next',
-    client_prepare_state: 'sent',
+    client_prepare_state: 'success',
     attachment_mime_types: hasImages ? refImages.map((img) => img.mimeType || 'image/png') : undefined,
     parent_message_id: parentMessageId || randomUUID(),
     model: 'auto',
@@ -228,6 +233,10 @@ export function buildConversationRequest({ prompt, parentMessageId, messageId, r
             id: img.id || String(img.pointer || '').replace(/^sediment:\/\//, ''),
             size: img.sizeBytes || 0,
             mime_type: img.mimeType || 'image/png',
+            width: img.width || 0,
+            height: img.height || 0,
+            source: 'local',
+            is_big_paste: false,
           })),
         } : {}),
         system_hints: ['picture_v2'],
@@ -466,6 +475,50 @@ function collectPointerMatches(text, prompt = '') {
   return out;
 }
 
+function parseConversationSsePayloads(rawText) {
+  const raw = String(rawText || '');
+  const payloads = [];
+  let event = '';
+  let dataLines = [];
+  const parsesAsJSON = (value) => {
+    try {
+      JSON.parse(value);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const flush = () => {
+    if (!dataLines.length) {
+      event = '';
+      return;
+    }
+    payloads.push({ event: event || 'message', data: dataLines.join('\n') });
+    event = '';
+    dataLines = [];
+  };
+
+  for (const line of raw.replace(/\r\n/g, '\n').split('\n')) {
+    if (line === '') {
+      flush();
+      continue;
+    }
+    if (line.startsWith(':')) continue;
+    if (line.startsWith('event:')) {
+      event = line.slice(6).trim();
+      continue;
+    }
+    if (line.startsWith('data:')) {
+      const value = line.slice(5);
+      const data = value.startsWith(' ') ? value.slice(1) : value;
+      if (dataLines.length && /^[\[{"]/.test(data.trim()) && parsesAsJSON(dataLines.join('\n'))) flush();
+      dataLines.push(data);
+    }
+  }
+  flush();
+  return payloads;
+}
+
 function extractImagesFromResponsesText(rawText) {
   const found = [];
   const addResult = (item = {}) => {
@@ -509,6 +562,12 @@ function isLikelyImageDownloadURL(raw) {
   return lower.includes('/download') || /\.(png|jpe?g|webp)(\?|$)/.test(lower);
 }
 
+function isExplicitDownloadURL(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return false;
+  return text.toLowerCase().startsWith('data:image/') || /^https:\/\//i.test(text);
+}
+
 function walkInlineAssets(node, prompt = '', out = []) {
   if (!node || typeof node !== 'object') return out;
   if (Array.isArray(node)) {
@@ -524,9 +583,11 @@ function walkInlineAssets(node, prompt = '', out = []) {
     }
   }
 
+  const explicitDownloadURL = firstString(node.download_url, node.downloadUrl);
+  const genericImageURL = firstString(node.url, node.image_url);
   const item = {
     pointer: firstString(node.asset_pointer, node.image_asset_pointer, node.pointer),
-    downloadURL: firstString(node.download_url, node.url, node.image_url),
+    downloadURL: firstString(explicitDownloadURL, genericImageURL),
     b64JSON: normalizeBase64Image(firstString(node.b64_json, node.base64, node.image_base64)),
     mimeType: firstString(node.mime_type, node.mimeType, node.content_type),
     prompt: localPrompt,
@@ -534,7 +595,8 @@ function walkInlineAssets(node, prompt = '', out = []) {
   if (
     item.pointer.startsWith('file-service://') ||
     item.pointer.startsWith('sediment://') ||
-    isLikelyImageDownloadURL(item.downloadURL) ||
+    isExplicitDownloadURL(explicitDownloadURL) ||
+    isLikelyImageDownloadURL(genericImageURL) ||
     item.b64JSON
   ) {
     out.push(item);
@@ -553,9 +615,20 @@ export function collectImagePointersFromText(text) {
     try { return JSON.parse(s); } catch { return null; }
   };
 
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    const payload = trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed;
+  const ssePayloads = parseConversationSsePayloads(raw);
+  const payloads = ssePayloads.length
+    ? [
+        ...ssePayloads.map((item) => item.data.trim()),
+        ...raw.split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line && !line.startsWith('data:') && !line.startsWith('event:') && !line.startsWith(':')),
+      ]
+    : raw.split('\n').map((line) => {
+        const trimmed = line.trim();
+        return trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed;
+      });
+
+  for (const payload of payloads) {
     if (!payload || payload === '[DONE]') continue;
     const obj = parseJSON(payload);
     if (!obj) continue;
@@ -694,7 +767,15 @@ async function bootstrap(headers) {
   await readResponseText(resp);
 }
 
-async function fetchChatRequirements(headers) {
+function chatRequirementChallengeError(challenge) {
+  const err = new Error(`ChatGPT 要求人机验证（${challenge}），当前 OAuth 生图代理无法自动完成。请先在官方 ChatGPT 网页端使用同一账号完成一次消息/图片请求后再重试，或更换网络/账号。`);
+  err.status = 403;
+  err.code = `CHAT_REQUIREMENTS_${String(challenge || 'challenge').toUpperCase()}`;
+  err.challenge = challenge;
+  return err;
+}
+
+async function fetchChatRequirementsLegacy(headers) {
   let lastErr = null;
   const payloads = [{ p: null }, { p: generateRequirementsToken(headers['User-Agent']) }];
   for (const payload of payloads) {
@@ -713,6 +794,73 @@ async function fetchChatRequirements(headers) {
     }
   }
   throw lastErr || new Error('chat-requirements failed');
+}
+
+async function fetchChatRequirementsViaPrepareFinalize(headers) {
+  let lastErr = null;
+  const payloads = [{ p: generateRequirementsToken(headers['User-Agent']) }, { p: null }];
+  for (const payload of payloads) {
+    const prepareResp = await fetchWithTimeout(CHATGPT_CHAT_REQUIREMENTS_PREPARE_URL, {
+      method: 'POST',
+      headers: mergeHeaders(headers, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+      timeoutMs: 60_000,
+    });
+    if (!prepareResp.ok) {
+      lastErr = await statusError(prepareResp, 'chat-requirements prepare failed');
+      if (![404, 405].includes(prepareResp.status)) throw lastErr;
+      continue;
+    }
+
+    const prepared = await prepareResp.json().catch(() => ({}));
+    if (prepared.token) return prepared;
+
+    const unsupportedChallenge = getUnsupportedChatRequirementChallenge(prepared);
+    if (unsupportedChallenge) throw chatRequirementChallengeError(unsupportedChallenge);
+
+    const prepareToken = String(prepared.prepare_token || '').trim();
+    if (!prepareToken) {
+      lastErr = new Error('chat-requirements prepare did not return prepare_token');
+      continue;
+    }
+
+    const finalizeBody = { prepare_token: prepareToken };
+    if (isChatChallengeRequired(prepared?.proofofwork)) {
+      const proof = generateProofToken({
+        required: true,
+        seed: prepared.proofofwork.seed,
+        difficulty: prepared.proofofwork.difficulty,
+        userAgent: headers['User-Agent'],
+      });
+      if (!proof) throw chatRequirementChallengeError('proofofwork');
+      finalizeBody.proofofwork = proof;
+    }
+
+    const finalizeResp = await fetchWithTimeout(CHATGPT_CHAT_REQUIREMENTS_FINALIZE_URL, {
+      method: 'POST',
+      headers: mergeHeaders(headers, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify(finalizeBody),
+      timeoutMs: 60_000,
+    });
+    if (finalizeResp.ok) {
+      const finalized = await finalizeResp.json().catch(() => ({}));
+      if (finalized.token) return { ...prepared, ...finalized, prepare: prepared };
+      lastErr = new Error('chat-requirements finalize did not return token');
+      continue;
+    }
+    lastErr = await statusError(finalizeResp, 'chat-requirements finalize failed');
+    throw lastErr;
+  }
+  throw lastErr || new Error('chat-requirements prepare failed');
+}
+
+async function fetchChatRequirements(headers) {
+  try {
+    return await fetchChatRequirementsViaPrepareFinalize(headers);
+  } catch (err) {
+    if (err?.code && String(err.code).startsWith('CHAT_REQUIREMENTS_')) throw err;
+  }
+  return fetchChatRequirementsLegacy(headers);
 }
 
 function isUploadedFileReadyPayload(data = {}) {
@@ -906,7 +1054,7 @@ async function prepareConversation({ headers, prompt, parentMessageId, chatToken
   return String(data.conduit_token || '').trim();
 }
 
-async function pollConversation(headers, conversationId) {
+async function pollConversation(headers, conversationId, refImages = []) {
   if (!conversationId) return [];
   const deadline = Date.now() + 90_000;
   let lastErr = null;
@@ -919,7 +1067,8 @@ async function pollConversation(headers, conversationId) {
     if (resp.ok) {
       const text = await resp.text();
       const result = collectImagePointersFromText(text);
-      if (hasFileServicePointer(result.pointers) || result.pointers.length) return preferFileServicePointers(result.pointers);
+      const downloadable = preferFileServicePointers(filterUploadedReferencePointers(result.pointers, refImages));
+      if (downloadable.length) return downloadable;
     } else {
       lastErr = await statusError(resp, 'conversation poll failed');
       if (resp.status !== 404) throw lastErr;
@@ -930,26 +1079,67 @@ async function pollConversation(headers, conversationId) {
   return [];
 }
 
-async function fetchDownloadURL(headers, conversationId, pointer) {
-  let url = '';
-  if (pointer.startsWith('file-service://')) {
-    url = `${CHATGPT_FILES_URL}/${pointer.slice('file-service://'.length)}/download`;
-  } else if (pointer.startsWith('sediment://')) {
-    url = `${CHATGPT_BASE}/backend-api/conversation/${conversationId}/attachment/${pointer.slice('sediment://'.length)}/download`;
+function buildPointerDownloadURLs(conversationId, pointer) {
+  const rawPointer = String(pointer || '').trim();
+  const urls = [];
+  let id = '';
+  if (rawPointer.startsWith('file-service://')) {
+    id = rawPointer.slice('file-service://'.length);
+  } else if (rawPointer.startsWith('sediment://')) {
+    id = rawPointer.slice('sediment://'.length);
   } else {
     throw new Error(`Unsupported image pointer: ${pointer}`);
   }
+
+  const encodedId = encodeURIComponent(id);
+  if (conversationId) {
+    urls.push(`${CHATGPT_FILES_URL}/download/${encodedId}?conversation_id=${encodeURIComponent(conversationId)}&inline=false`);
+  }
+  urls.push(`${CHATGPT_FILES_URL}/download/${encodedId}`);
+
+  if (rawPointer.startsWith('file-service://')) {
+    urls.push(`${CHATGPT_FILES_URL}/${encodedId}/download`);
+  } else if (conversationId) {
+    urls.push(`${CHATGPT_BASE}/backend-api/conversation/${encodeURIComponent(conversationId)}/attachment/${encodedId}/download`);
+  }
+
+  return [...new Set(urls)];
+}
+
+async function fetchDownloadURLFromEndpoint(headers, url) {
   for (let attempt = 0; attempt < 8; attempt++) {
-    const resp = await fetchWithTimeout(url, { method: 'GET', headers, timeoutMs: 60_000 });
+    const resp = await fetchWithTimeout(url, { method: 'GET', headers, timeoutMs: 60_000, redirect: 'manual' });
+    if (IMAGE_DOWNLOAD_REDIRECT_STATUSES.has(resp.status)) {
+      const location = resp.headers.get('location');
+      if (location) return new URL(location, url).href;
+      throw new Error('fetch image download url failed: redirect location is missing');
+    }
     if (resp.ok) {
+      const mime = (resp.headers.get('content-type') || '').split(';')[0].toLowerCase();
+      if (ALLOWED_IMAGE_DOWNLOAD_MIME.has(mime)) return url;
       const data = await resp.json().catch(() => ({}));
-      if (String(data.download_url || '').trim()) return String(data.download_url).trim();
+      const downloadURL = firstString(data.download_url, data.downloadUrl, data.url, data.image_url);
+      if (downloadURL) return downloadURL;
       throw new Error('fetch image download url failed: empty download_url');
     }
     if (attempt === 7 || resp.status !== 404) throw await statusError(resp, 'fetch image download url failed');
     await sleep(750);
   }
   throw new Error('fetch image download url failed');
+}
+
+async function fetchDownloadURL(headers, conversationId, pointer) {
+  const urls = buildPointerDownloadURLs(conversationId, pointer);
+  let lastErr = null;
+  for (const url of urls) {
+    try {
+      return await fetchDownloadURLFromEndpoint(headers, url);
+    } catch (err) {
+      lastErr = err;
+      if (err?.status && err.status !== 404) throw err;
+    }
+  }
+  throw lastErr || new Error('fetch image download url failed');
 }
 
 function validateImageDownloadUrl(rawUrl) {
@@ -1099,10 +1289,10 @@ async function generateOneImage({ headers, prompt, chatReqs, onProgress, refImag
   let pointers = streamResult.pointers;
   if (streamResult.conversationId && !hasFileServicePointer(pointers)) {
     reportOAuthProgress(onProgress, 'oauth:poll', '正在轮询图片结果');
-    const polled = await pollConversation(headers, streamResult.conversationId);
+    const polled = await pollConversation(headers, streamResult.conversationId, refImages);
     pointers = mergePointers(pointers, polled);
   }
-  pointers = filterUploadedReferencePointers(preferFileServicePointers(pointers), refImages);
+  pointers = preferFileServicePointers(filterUploadedReferencePointers(pointers, refImages));
   if (!pointers.length) {
     if (isPolicyViolationText(rawText)) throw new Error(normalizeGenerationError(rawText));
     throw new Error('ChatGPT image conversation returned no downloadable images');
@@ -1220,9 +1410,9 @@ export async function generateOAuthImage(input = {}) {
   }
   reportOAuthProgress(onProgress, 'oauth:requirements', '正在获取 ChatGPT 账号状态');
   const chatReqs = await fetchChatRequirements(headers);
-  const unsupportedChallenge = getUnsupportedChatRequirementChallenge(chatReqs);
+  const unsupportedChallenge = getUnsupportedChatRequirementChallenge(chatReqs, { allowSatisfiedToken: true });
   if (unsupportedChallenge) {
-    throw new Error(`ChatGPT 要求人机验证（${unsupportedChallenge}），当前 OAuth 生图代理无法自动完成。请先在官方 ChatGPT 网页端使用同一账号完成一次消息/图片请求后再重试，或更换网络/账号。`);
+    throw chatRequirementChallengeError(unsupportedChallenge);
   }
 
   const count = Math.max(1, Math.min(4, Number.parseInt(input.n || 1, 10) || 1));
@@ -1260,11 +1450,9 @@ export async function testOAuthAccessToken(input = {}) {
   });
   await bootstrap(headers).catch(() => {});
   const chatReqs = await fetchChatRequirements(headers);
-  const unsupportedChallenge = getUnsupportedChatRequirementChallenge(chatReqs);
+  const unsupportedChallenge = getUnsupportedChatRequirementChallenge(chatReqs, { allowSatisfiedToken: true });
   if (unsupportedChallenge) {
-    const err = new Error(`ChatGPT 要求人机验证（${unsupportedChallenge}），当前 OAuth 代理无法自动完成。`);
-    err.status = 403;
-    throw err;
+    throw chatRequirementChallengeError(unsupportedChallenge);
   }
   return {
     ok: true,
