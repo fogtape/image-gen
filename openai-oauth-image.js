@@ -19,6 +19,7 @@ const CODEX_USER_AGENT = 'codex_cli_rs/0.125.0';
 const CODEX_VERSION = '0.125.0';
 const RESPONSES_MAIN_MODEL = 'gpt-5.4-mini';
 const REQUIREMENTS_DIFF = '0fffff';
+const POW_DPL = 'dpl=openai-images';
 const MAX_DOWNLOAD_BYTES = 20 << 20;
 const IMAGE_DOWNLOAD_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_IMAGE_DOWNLOAD_REDIRECTS = 5;
@@ -95,6 +96,10 @@ export function buildChatGPTBackendHeaders({ accessToken, accountId, deviceId, s
     'Sec-Fetch-Mode': 'cors',
     'Sec-Fetch-Site': 'same-origin',
     'User-Agent': coalesce(userAgent, IMAGE_BACKEND_USER_AGENT),
+    'sec-ch-ua': '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'Priority': 'u=1,i',
   };
   if (String(accountId || '').trim()) headers['chatgpt-account-id'] = String(accountId).trim();
   if (String(deviceId || '').trim()) {
@@ -193,7 +198,7 @@ export function buildConversationRequest({ prompt, parentMessageId, messageId, r
     action: 'next',
     client_prepare_state: 'success',
     attachment_mime_types: hasImages ? refImages.map((img) => img.mimeType || 'image/png') : undefined,
-    parent_message_id: parentMessageId || randomUUID(),
+    parent_message_id: parentMessageId || 'client-created-root',
     model: 'auto',
     timezone_offset_min: timezoneOffsetMinutes(),
     timezone: timezoneName(),
@@ -512,11 +517,26 @@ function parseConversationSsePayloads(rawText) {
     if (line.startsWith('data:')) {
       const value = line.slice(5);
       const data = value.startsWith(' ') ? value.slice(1) : value;
-      if (dataLines.length && /^[\[{"]/.test(data.trim()) && parsesAsJSON(dataLines.join('\n'))) flush();
+      if (dataLines.length && /^[[{"]/.test(data.trim()) && parsesAsJSON(dataLines.join('\n'))) flush();
       dataLines.push(data);
     }
   }
   flush();
+
+  // Fallback: if no SSE payloads found, try raw consecutive JSON lines
+  if (!payloads.length) {
+    for (const line of raw.replace(/\r\n/g, '\n').split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed === '[DONE]') continue;
+      if (trimmed.startsWith('data:')) {
+        const data = trimmed.slice(5).trim();
+        if (data && data !== '[DONE]') payloads.push({ event: 'message', data });
+      } else if (/^[{[]/.test(trimmed)) {
+        payloads.push({ event: 'message', data: trimmed });
+      }
+    }
+  }
+
   return payloads;
 }
 
@@ -746,11 +766,19 @@ export async function generateProofToken({ required, seed, difficulty, userAgent
     difficulty,
     userAgent: coalesce(userAgent, IMAGE_BACKEND_USER_AGENT),
     chatgptBase: CHATGPT_BASE,
+    dpl: POW_DPL,
   });
 }
 
 async function bootstrap(headers) {
-  const resp = await fetchWithTimeout(CHATGPT_START_URL, { method: 'GET', headers, timeoutMs: 30_000 });
+  const reqHeaders = {
+    'User-Agent': headers['User-Agent'] || IMAGE_BACKEND_USER_AGENT,
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+  };
+  if (headers.Cookie) reqHeaders.Cookie = headers.Cookie;
+  if (headers['oai-device-id']) reqHeaders['oai-device-id'] = headers['oai-device-id'];
+  const resp = await fetchWithTimeout(CHATGPT_START_URL, { method: 'GET', headers: reqHeaders, timeoutMs: 30_000 });
   await readResponseText(resp);
 }
 
@@ -834,6 +862,9 @@ async function fetchChatRequirementsViaPrepareFinalize(headers) {
     if (finalizeResp.ok) {
       const finalized = await finalizeResp.json().catch(() => ({}));
       if (finalized.token) return { ...prepared, ...finalized, prepare: prepared };
+      if (isChatChallengeRequired(finalized?.turnstile)) {
+        throw chatRequirementChallengeError('turnstile');
+      }
       lastErr = new Error('chat-requirements finalize did not return token');
       continue;
     }
@@ -931,7 +962,7 @@ async function uploadReferenceImage(headers, image, index = 0) {
 
   const form = new FormData();
   form.append('file', file, filename);
-  form.append('purpose', 'vision');
+  form.append('purpose', 'multimodal');
   attempts.push({ body: form, contentType: undefined });
 
   let lastErr = null;
@@ -1096,6 +1127,8 @@ function buildPointerDownloadURLs(conversationId, pointer) {
 }
 
 async function fetchDownloadURLFromEndpoint(headers, url) {
+  const deadline = Date.now() + 60_000;
+  let delayMs = 500;
   for (let attempt = 0; attempt < 8; attempt++) {
     const resp = await fetchWithTimeout(url, { method: 'GET', headers, timeoutMs: 60_000, redirect: 'manual' });
     if (IMAGE_DOWNLOAD_REDIRECT_STATUSES.has(resp.status)) {
@@ -1105,14 +1138,16 @@ async function fetchDownloadURLFromEndpoint(headers, url) {
     }
     if (resp.ok) {
       const mime = (resp.headers.get('content-type') || '').split(';')[0].toLowerCase();
-      if (ALLOWED_IMAGE_DOWNLOAD_MIME.has(mime)) return url;
+      if (ALLOWED_IMAGE_DOWNLOAD_MIME.has(mime) || mime === 'application/octet-stream') return url;
       const data = await resp.json().catch(() => ({}));
       const downloadURL = firstString(data.download_url, data.downloadUrl, data.url, data.image_url);
       if (downloadURL) return downloadURL;
       throw new Error('fetch image download url failed: empty download_url');
     }
     if (attempt === 7 || resp.status !== 404) throw await statusError(resp, 'fetch image download url failed');
-    await sleep(750);
+    if (Date.now() >= deadline) throw await statusError(resp, 'fetch image download url failed');
+    await sleep(delayMs);
+    delayMs = Math.min(delayMs * 2, 10_000);
   }
   throw new Error('fetch image download url failed');
 }
@@ -1205,10 +1240,16 @@ export async function downloadBytes(headers, url) {
   }
   if (!resp.ok) throw await statusError(resp, 'download image bytes failed');
   const mime = (resp.headers.get('content-type') || '').split(';')[0].toLowerCase();
-  if (!ALLOWED_IMAGE_DOWNLOAD_MIME.has(mime)) throw new Error('unsupported image download content type');
+  const isAllowedMime = ALLOWED_IMAGE_DOWNLOAD_MIME.has(mime);
+  const isSniffable = mime === 'application/octet-stream';
+  if (!isAllowedMime && !isSniffable) throw new Error('unsupported image download content type');
   const len = Number(resp.headers.get('content-length') || 0);
   if (len > MAX_DOWNLOAD_BYTES) throw new Error('download image is too large');
-  return readImageResponseBodyWithLimit(resp, MAX_DOWNLOAD_BYTES);
+  const bytes = await readImageResponseBodyWithLimit(resp, MAX_DOWNLOAD_BYTES);
+  if (isSniffable && !ALLOWED_IMAGE_DOWNLOAD_MIME.has(inferImageMimeType(bytes))) {
+    throw new Error('unsupported image download content type');
+  }
+  return bytes;
 }
 
 async function resolvePointerBytes(headers, conversationId, pointer) {
@@ -1224,7 +1265,7 @@ async function resolvePointerBytes(headers, conversationId, pointer) {
 }
 
 async function generateOneImage({ headers, prompt, chatReqs, onProgress, refImages = [] }) {
-  const parentMessageId = randomUUID();
+  const parentMessageId = 'client-created-root';
   const proofToken = await generateProofToken({
     required: !!chatReqs?.proofofwork?.required,
     seed: chatReqs?.proofofwork?.seed,

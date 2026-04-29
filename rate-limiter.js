@@ -6,13 +6,19 @@
  * @param {number} options.maxRequests - Max requests per window per key (default: 60)
  * @param {function} options.keyFn - Function to extract key from req (default: IP-based)
  * @param {string} options.message - Error message on limit exceeded
+ * @param {boolean} options.trustProxy - When true, read X-Forwarded-For for client IP;
+ *                                       when false (default), use socket remoteAddress only.
  */
 export function createRateLimiter({
   windowMs = 60_000,
   maxRequests = 60,
-  keyFn = defaultKeyFn,
+  keyFn,
   message = '请求过于频繁，请稍后再试',
+  trustProxy = false,
 } = {}) {
+  // Resolve key function: explicit keyFn takes priority, otherwise use trustProxy setting
+  const resolveKey = keyFn || (trustProxy ? proxyAwareKeyFn : directSocketKeyFn);
+
   // Map<key, number[]> of request timestamps
   const hits = new Map();
 
@@ -28,7 +34,7 @@ export function createRateLimiter({
   cleanupInterval.unref();
 
   return function rateLimit(req, res) {
-    const key = keyFn(req);
+    const key = resolveKey(req);
     const now = Date.now();
     const cutoff = now - windowMs;
 
@@ -51,8 +57,17 @@ export function createRateLimiter({
   };
 }
 
-function defaultKeyFn(req) {
-  // Prefer X-Forwarded-For for reverse proxy setups, fall back to socket remoteAddress
+/**
+ * Key function that trusts X-Forwarded-For (for reverse proxy setups).
+ */
+function proxyAwareKeyFn(req) {
   const forwarded = String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
   return forwarded || req.socket?.remoteAddress || 'unknown';
+}
+
+/**
+ * Key function that uses only the real socket remoteAddress (no proxy trust).
+ */
+function directSocketKeyFn(req) {
+  return req.socket?.remoteAddress || 'unknown';
 }

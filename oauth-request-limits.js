@@ -1,0 +1,79 @@
+/**
+ * Shared OAuth image request limits used by both Node server and Vercel/Netlify
+ * serverless handlers to enforce consistent body size and input constraints.
+ */
+
+function boundedEnvBytes(name, fallback, min, max, env = process.env) {
+  const raw = Number(env?.[name] || fallback);
+  const value = Number.isFinite(raw) ? raw : fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * Maximum allowed JSON request body bytes for OAuth image generation.
+ */
+export function getOAuthMaxBodyBytes(env = process.env) {
+  return boundedEnvBytes('IMAGE_GEN_IMAGE_JOB_BODY_LIMIT_BYTES', 30 * 1024 * 1024, 1024 * 1024, 80 * 1024 * 1024, env);
+}
+
+/**
+ * Maximum number of reference images per request.
+ */
+export const MAX_REF_IMAGES = 3;
+
+/**
+ * Allowed MIME types for reference images.
+ */
+export const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+/**
+ * Maximum bytes for a single reference image.
+ */
+export function getOAuthMaxRefImageBytes(env = process.env) {
+  return boundedEnvBytes('IMAGE_GEN_REF_IMAGE_MAX_BYTES', 8 * 1024 * 1024, 1024, 30 * 1024 * 1024, env);
+}
+
+/**
+ * Maximum total bytes for all reference images combined.
+ */
+export function getOAuthMaxRefImagesTotalBytes(env = process.env) {
+  return boundedEnvBytes('IMAGE_GEN_REF_IMAGES_TOTAL_MAX_BYTES', 24 * 1024 * 1024, 1024, 80 * 1024 * 1024, env);
+}
+
+/**
+ * Validate an OAuth image request body.
+ * Throws 413/400 errors for limit violations.
+ *
+ * @param {object} parsed - Parsed JSON body
+ * @param {object} [options]
+ * @param {number} [options.maxBodyBytes] - Override max body bytes
+ */
+export function validateOAuthImageRequest(parsed, { maxBodyBytes } = {}) {
+  // Validate reference images count
+  const refImages = Array.isArray(parsed?.refImagesBase64)
+    ? parsed.refImagesBase64
+    : (parsed?.refImageBase64 ? [parsed.refImageBase64] : []);
+
+  if (refImages.length > MAX_REF_IMAGES) {
+    const err = new Error('最多只能上传 3 张参考图');
+    err.status = 400;
+    throw err;
+  }
+}
+
+/**
+ * Check if the raw request body text exceeds the size limit.
+ * Throws 413 if too large.
+ *
+ * @param {string} bodyText - Raw body text
+ * @param {object} [options]
+ * @param {number} [options.maxBytes] - Override max bytes
+ */
+export function assertOAuthBodySize(bodyText, { maxBytes } = {}) {
+  const limit = maxBytes || getOAuthMaxBodyBytes();
+  if (Buffer.byteLength(String(bodyText || ''), 'utf8') > limit) {
+    const err = new Error('请求体过大');
+    err.status = 413;
+    throw err;
+  }
+}

@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { createRateLimiter } from './rate-limiter.js';
 import { handleOAuthImageRequestBody, testOAuthAccessToken } from './openai-oauth-image.js';
+import { getOAuthMaxBodyBytes } from './oauth-request-limits.js';
 import { createJobStore } from './background-jobs.js';
 import { createImageStore } from './image-storage.js';
 import {
@@ -52,7 +53,7 @@ const IMAGE_JOB_PENDING_TIMEOUT_MS = boundedIntEnv('IMAGE_JOB_PENDING_TIMEOUT_MS
 const IMAGE_JOB_RUNNING_TIMEOUT_MS = boundedIntEnv('IMAGE_JOB_RUNNING_TIMEOUT_MS', 15 * 60 * 1000, 10_000, 60 * 60 * 1000);
 const IMAGE_JOB_MAX_COUNT = 4;
 const JSON_BODY_LIMIT_BYTES = Math.min(50 * 1024 * 1024, Math.max(1024, Number(process.env.IMAGE_GEN_JSON_BODY_LIMIT_BYTES || 10 * 1024 * 1024)));
-const IMAGE_JOB_BODY_LIMIT_BYTES = Math.min(80 * 1024 * 1024, Math.max(1024 * 1024, Number(process.env.IMAGE_GEN_IMAGE_JOB_BODY_LIMIT_BYTES || 30 * 1024 * 1024)));
+const IMAGE_JOB_BODY_LIMIT_BYTES = getOAuthMaxBodyBytes();
 const REF_IMAGE_MAX_BYTES = Math.min(30 * 1024 * 1024, Math.max(1024, Number(process.env.IMAGE_GEN_REF_IMAGE_MAX_BYTES || 8 * 1024 * 1024)));
 const REF_IMAGES_TOTAL_MAX_BYTES = Math.min(80 * 1024 * 1024, Math.max(1024, Number(process.env.IMAGE_GEN_REF_IMAGES_TOTAL_MAX_BYTES || 24 * 1024 * 1024)));
 const ALLOWED_REF_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -177,16 +178,41 @@ export function newOAuthSessionId() {
   return crypto.randomBytes(16).toString('hex');
 }
 
-function oauthSessionSigningSecret() {
-  return String(
-    process.env.IMAGE_GEN_OAUTH_SESSION_SECRET
-    || process.env.IMAGE_GEN_ADMIN_TOKEN
-    || `image-gen-oauth-session:${OAUTH_CLIENT_ID}`
-  );
+function oauthSessionEncryptionKey() {
+  const secret = String(process.env.IMAGE_GEN_OAUTH_SESSION_SECRET || '').trim();
+  if (!secret) throw new Error('IMAGE_GEN_OAUTH_SESSION_SECRET is required for stateless OAuth sessions');
+  return crypto.createHash('sha256').update(secret, 'utf8').digest();
 }
 
-function signOAuthSessionPayload(payload) {
-  return crypto.createHmac('sha256', oauthSessionSigningSecret()).update(payload).digest('base64url');
+export function encryptOAuthSessionPayload(payload, secret) {
+  const key = secret
+    ? crypto.createHash('sha256').update(String(secret), 'utf8').digest()
+    : oauthSessionEncryptionKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const plaintext = Buffer.from(JSON.stringify(payload), 'utf8');
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return {
+    v: 1,
+    iv: iv.toString('base64url'),
+    tag: tag.toString('base64url'),
+    ct: ciphertext.toString('base64url'),
+  };
+}
+
+export function decryptOAuthSessionEnvelope(envelope, secret) {
+  if (!envelope || envelope.v !== 1) throw new Error('OAuth session envelope format is invalid');
+  const key = secret
+    ? crypto.createHash('sha256').update(String(secret), 'utf8').digest()
+    : oauthSessionEncryptionKey();
+  const iv = Buffer.from(String(envelope.iv || ''), 'base64url');
+  const tag = Buffer.from(String(envelope.tag || ''), 'base64url');
+  const ciphertext = Buffer.from(String(envelope.ct || ''), 'base64url');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(tag);
+  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  return JSON.parse(plaintext.toString('utf8'));
 }
 
 function safeEqualString(a = '', b = '') {
@@ -197,23 +223,31 @@ function safeEqualString(a = '', b = '') {
 }
 
 export function makeStatelessOAuthSessionId(session) {
+  if (!isServerlessRuntime()) {
+    return newOAuthSessionId();
+  }
+  const secret = process.env.IMAGE_GEN_OAUTH_SESSION_SECRET;
+  if (!secret) {
+    throw new Error('IMAGE_GEN_OAUTH_SESSION_SECRET is required in serverless environments for stateless OAuth sessions');
+  }
   const payload = {
     state: session?.state || '',
     codeVerifier: session?.codeVerifier || '',
     redirectUri: session?.redirectUri || OAUTH_REDIRECT_URI,
     createdAt: Number(session?.createdAt || Date.now()),
   };
-  const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-  return `pkce_${encoded}.${signOAuthSessionPayload(encoded)}`;
+  const envelope = encryptOAuthSessionPayload(payload, secret);
+  return `pkce_${Buffer.from(JSON.stringify(envelope), 'utf8').toString('base64url')}`;
 }
 
 export function getOAuthSessionFromStatelessId(sessionId) {
   if (!sessionId || !String(sessionId).startsWith('pkce_')) return null;
   try {
-    const [encoded, signature] = String(sessionId).slice(5).split('.');
-    if (!encoded || !signature || !safeEqualString(signOAuthSessionPayload(encoded), signature)) return null;
-    const raw = Buffer.from(encoded, 'base64url').toString('utf8');
-    const payload = JSON.parse(raw);
+    const secret = process.env.IMAGE_GEN_OAUTH_SESSION_SECRET;
+    if (!secret) return null;
+    const envelopeJson = Buffer.from(String(sessionId).slice(5), 'base64url').toString('utf8');
+    const envelope = JSON.parse(envelopeJson);
+    const payload = decryptOAuthSessionEnvelope(envelope, secret);
     const createdAt = Number(payload.createdAt || 0);
     if (!payload.state || !payload.codeVerifier || !createdAt) return null;
     if (Date.now() - createdAt > SESSION_TTL) return null;
@@ -631,6 +665,14 @@ async function handleOAuthStart(req, res) {
   res.end(JSON.stringify({ authorizationUrl, sessionId, state, redirectUri: OAUTH_REDIRECT_URI }));
 }
 
+function writeNoStoreJson(res, status, body) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+  });
+  res.end(JSON.stringify(body));
+}
+
 function handleOAuthStatus(req, res, sessionKey) {
   let sessionId = sessionKey;
   let session = getOAuthSessionById(sessionId);
@@ -639,20 +681,18 @@ function handleOAuthStatus(req, res, sessionKey) {
     if (session) sessionId = sessionKey;
   }
   if (!session) {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Session not found' }));
+    writeNoStoreJson(res, 404, { error: 'Session not found' });
     return;
   }
 
-  res.writeHead(200, { 'Content-Type': 'application/json' });
   if (session.status === 'success') {
-    res.end(JSON.stringify({ status: 'success', result: session.result }));
+    writeNoStoreJson(res, 200, { status: 'success', result: session.result });
     deleteOAuthSession(sessionId);
   } else if (session.status === 'error') {
-    res.end(JSON.stringify({ status: 'error', error: session.error }));
+    writeNoStoreJson(res, 200, { status: 'error', error: session.error });
     deleteOAuthSession(sessionId);
   } else {
-    res.end(JSON.stringify({ status: 'pending' }));
+    writeNoStoreJson(res, 200, { status: 'pending' });
   }
 }
 
@@ -668,8 +708,7 @@ async function handleOAuthExchange(req, res) {
   const state = parsedCallback.state;
 
   if (!code || !state) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Missing authorization code or state' }));
+    writeNoStoreJson(res, 400, { error: 'Missing authorization code or state' });
     return;
   }
 
@@ -681,27 +720,23 @@ async function handleOAuthExchange(req, res) {
     session = found.session;
   }
   if (!session) {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Session not found or expired' }));
+    writeNoStoreJson(res, 404, { error: 'Session not found or expired' });
     return;
   }
   if (session.state && state && session.state !== state) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Invalid oauth state' }));
+    writeNoStoreJson(res, 400, { error: 'Invalid oauth state' });
     return;
   }
 
   try {
     const result = await exchangeOAuthCodeForResult(code, session);
     deleteOAuthSession(resolvedSessionId);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'success', result }));
+    writeNoStoreJson(res, 200, { status: 'success', result });
   } catch (e) {
     session.lastError = e.message || 'Token exchange failed';
     saveOAuthSessions();
     const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
-    res.writeHead(status, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: session.lastError }));
+    writeNoStoreJson(res, status, { error: session.lastError });
   }
 }
 
@@ -711,8 +746,7 @@ async function handleOAuthRefresh(req, res) {
 
   const { refreshToken } = parsed;
   if (!refreshToken) {
-    res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Missing refreshToken' }));
+    writeNoStoreJson(res, 400, { error: 'Missing refreshToken' });
     return;
   }
 
@@ -729,15 +763,13 @@ async function handleOAuthRefresh(req, res) {
 
     const data = await resp.json();
     if (!resp.ok || !data.access_token) {
-      res.writeHead(resp.status, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: formatOAuthTokenError(data, 'Refresh failed') }));
+      writeNoStoreJson(res, resp.status, { error: formatOAuthTokenError(data, 'Refresh failed') });
       return;
     }
 
     const userInfo = data.id_token ? extractOpenAIUserInfo(data.id_token) : {};
 
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
+    writeNoStoreJson(res, 200, {
       accessToken: data.access_token,
       refreshToken: data.refresh_token || refreshToken,
       expiresIn: data.expires_in || 3600,
@@ -745,10 +777,9 @@ async function handleOAuthRefresh(req, res) {
       name: userInfo.name || userInfo.email || '',
       accountId: userInfo.accountId || '',
       planType: userInfo.planType || '',
-    }));
+    });
   } catch (e) {
-    res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: e.message }));
+    writeNoStoreJson(res, 500, { error: e.message });
   }
 }
 
@@ -884,6 +915,15 @@ async function handleOAuthTest(req, res) {
 }
 
 async function handleOAuthImages(req, res) {
+  if (!requireConfigAdmin(req, res)) return;
+  if (oauthImagesRateLimit(req, res)) return;
+
+  const cooldown = checkOAuthCooldown(req);
+  if (cooldown.cooled) {
+    oauthCooldownResponse(res, cooldown);
+    return;
+  }
+
   const parsed = await readJsonBody(req, res, { limitBytes: IMAGE_JOB_BODY_LIMIT_BYTES });
   if (!parsed) return;
 
@@ -893,6 +933,7 @@ async function handleOAuthImages(req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
   } catch (e) {
+    applyOAuthCooldown(req, e);
     const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: e.message || 'OAuth image generation failed' }));
@@ -919,6 +960,15 @@ async function handlePromptEnhance(req, res) {
 }
 
 async function handleOAuthImagesStream(req, res) {
+  if (!requireConfigAdmin(req, res)) return;
+  if (oauthImagesRateLimit(req, res)) return;
+
+  const cooldown = checkOAuthCooldown(req);
+  if (cooldown.cooled) {
+    oauthCooldownResponse(res, cooldown);
+    return;
+  }
+
   const parsed = await readJsonBody(req, res, { limitBytes: IMAGE_JOB_BODY_LIMIT_BYTES });
   if (!parsed) return;
 
@@ -952,6 +1002,7 @@ async function handleOAuthImagesStream(req, res) {
     send('done', { ok: true });
     res.end();
   } catch (e) {
+    applyOAuthCooldown(req, e);
     const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
     send('error', { status, error: e.message || 'OAuth image generation failed' });
     res.end();
@@ -2182,6 +2233,61 @@ function safeDecodePathComponent(value, res) {
 
 // Global rate limiting: 120 requests per minute per IP
 const rateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 120 });
+
+// OAuth image generation rate limiting: 30 requests per minute per IP
+// Uses real socket remoteAddress (trustProxy: false) to prevent spoofing
+const oauthImagesRateLimit = createRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 30,
+  message: 'OAuth 生图请求过于频繁，请稍后再试',
+  trustProxy: false,
+});
+
+// --- OAuth challenge / upstream auth failure cooldown ---
+// Tracks IPs that trigger challenge errors or upstream 401/403 to apply a cooling-off period
+const OAUTH_CHALLENGE_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+const OAUTH_COOLDOWN_CLEANUP_INTERVAL_MS = 60 * 1000;
+const oauthCooldowns = new Map(); // Map<ip, { until: number, reason: string }>
+
+const oauthCooldownCleanup = setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of oauthCooldowns) {
+    if (entry.until <= now) oauthCooldowns.delete(key);
+  }
+}, OAUTH_COOLDOWN_CLEANUP_INTERVAL_MS);
+oauthCooldownCleanup.unref();
+
+function checkOAuthCooldown(req) {
+  const ip = req.socket?.remoteAddress || 'unknown';
+  const entry = oauthCooldowns.get(ip);
+  if (entry && entry.until > Date.now()) {
+    const retryAfter = Math.ceil((entry.until - Date.now()) / 1000);
+    return { cooled: true, retryAfter, reason: entry.reason };
+  }
+  return { cooled: false };
+}
+
+function applyOAuthCooldown(req, error) {
+  const status = Number(error?.status || 0);
+  const isChallenge = error?.code && String(error.code).startsWith('CHAT_REQUIREMENTS_');
+  const isAuthFailure = status === 401 || status === 403;
+  if (!isChallenge && !isAuthFailure) return;
+
+  const ip = req.socket?.remoteAddress || 'unknown';
+  const reason = isChallenge ? `challenge:${error.code}` : `upstream_${status}`;
+  oauthCooldowns.set(ip, { until: Date.now() + OAUTH_CHALLENGE_COOLDOWN_MS, reason });
+}
+
+function oauthCooldownResponse(res, cooldown) {
+  res.writeHead(429, {
+    'Content-Type': 'application/json',
+    'Retry-After': String(cooldown.retryAfter),
+  });
+  res.end(JSON.stringify({
+    error: `OAuth 生图冷却中（${cooldown.reason}），请 ${cooldown.retryAfter} 秒后重试`,
+    retryAfter: cooldown.retryAfter,
+  }));
+}
 
 // --- Route table: [method, pattern, handlerFn] ---
 // pattern is a string or regex; handlerFn(url, req, res) is called on match.

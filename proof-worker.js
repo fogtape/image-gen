@@ -22,7 +22,7 @@ function generateChallengeAnswer(seed, difficulty, config) {
   return '';
 }
 
-function generateProofToken({ seed, difficulty, userAgent, chatgptBase }) {
+function generateProofToken({ seed, difficulty, userAgent, chatgptBase, dpl }) {
   const screen = String(seed).length % 2 === 0 ? 4010 : 3008;
   const token = [
     screen,
@@ -31,11 +31,11 @@ function generateProofToken({ seed, difficulty, userAgent, chatgptBase }) {
     0,
     userAgent,
     `${chatgptBase}/`,
-    'dpl=openai-images',
+    dpl || 'dpl=openai-images',
     'en',
     'en-US',
     null,
-    'plugins[object PluginArray]',
+    '5',
     '_reactListening',
     'alert',
   ];
@@ -45,8 +45,7 @@ function generateProofToken({ seed, difficulty, userAgent, chatgptBase }) {
     const encoded = Buffer.from(JSON.stringify(token)).toString('base64');
     if (sha3Hex(String(seed) + encoded).slice(0, diffLen) <= String(difficulty)) return `gAAAAAB${encoded}`;
   }
-  const fallbackBase = Buffer.from(JSON.stringify(String(seed))).toString('base64');
-  return `gAAAAA...xZ4D${fallbackBase}`;
+  return '';
 }
 
 const { type, data } = workerData;
