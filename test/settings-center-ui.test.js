@@ -14,89 +14,88 @@ function sectionById(id) {
   return html.slice(start, end >= 0 ? end : undefined);
 }
 
-test('设置入口打开的是统一设置中心，不再维护独立账号管理弹窗', () => {
-  assert.match(html, /<h2 id="settingsTitle">设置中心<\/h2>/);
-  assert.match(html, /id="settingsCenterNav"[^>]*role="tablist"[^>]*aria-label="设置中心导航"/);
-  assert.doesNotMatch(html, /id="accountOverlay"/);
-  assert.doesNotMatch(app, /openDialog\(\$\('#accountOverlay'\)/);
-  assert.match(app, /async function openSettingsCenter\(initialPanel = 'quick'/);
-  assert.match(app, /openSettingsCenter\('accounts', \{[^}]*restoreFocus: '#switcherBtn'[^}]*\}\)/);
+function accountOverlay() {
+  const start = html.indexOf('<div id="accountOverlay"');
+  if (start < 0) return '';
+  const end = html.indexOf('<!-- Add/Edit Account Modal -->', start);
+  return html.slice(start, end >= 0 ? end : undefined);
+}
+
+test('设置和账号管理分成两个入口，账号下拉打开独立账号管理弹窗', () => {
+  assert.match(html, /<h2 id="settingsTitle">设置<\/h2>/);
+  assert.match(html, /id="settingsCenterNav"[^>]*role="tablist"[^>]*aria-label="设置导航"/);
+  assert.match(html, /id="accountOverlay"[^>]*role="dialog"[^>]*aria-labelledby="accountManagerTitle"/);
+  assert.match(html, /<h2 id="accountManagerTitle">账号管理<\/h2>/);
+  assert.match(app, /async function openAccountManager\(initialTab = 'api'/);
+  assert.match(app, /openDialog\(\$\('#accountOverlay'\)/);
+  assert.match(app, /closeDialog\(\$\('#accountOverlay'\)/);
+  assert.match(app, /openAccountManager\('api', \{[^}]*restoreFocus: '#switcherBtn'[^}]*\}\)/);
+  assert.doesNotMatch(app, /openSettingsCenter\('accounts'/);
 });
 
-test('设置中心提供新用户可理解的九个语义分区', () => {
+test('设置页面只保留生成、外观、存储、部署、备份，不再混入管理员和账号分区', () => {
   const sections = [
-    ['quick', '快速开始'],
-    ['admin', '管理员'],
-    ['accounts', '账号'],
-    ['generation', '生成默认值'],
-    ['connection', '连接与代理'],
-    ['storage', '存储与同步'],
-    ['deploy', '部署同步'],
-    ['appearance', '增强与外观'],
-    ['backup', '导入 / 导出'],
+    ['generation', '生成'],
+    ['appearance', '外观'],
+    ['storage', '图片存储'],
+    ['deploy', '部署'],
+    ['backup', '备份'],
   ];
   for (const [key, label] of sections) {
     assert.match(html, new RegExp(`id="settingsNav${key[0].toUpperCase()}${key.slice(1)}"[\\s\\S]*role="tab"[\\s\\S]*>${label}`), `${label} nav should exist`);
     assert.match(html, new RegExp(`id="settingsPanel${key[0].toUpperCase()}${key.slice(1)}"[\\s\\S]*role="tabpanel"`), `${label} panel should exist`);
   }
+  for (const removed of ['settingsNavQuick', 'settingsNavAdmin', 'settingsNavAccounts', 'settingsPanelQuick', 'settingsPanelAdmin', 'settingsPanelAccounts']) {
+    assert.doesNotMatch(html, new RegExp(`id="${removed}"`), `${removed} should be removed`);
+  }
+  assert.doesNotMatch(html, /服务端默认配置|id="serverDefaultImageModel"|id="serverDefaultResponsesModel"|id="serverDefaultStreamMode"|id="serverDefaultForceProxy"/);
   assert.match(css, /\.settings-center-shell/);
   assert.match(css, /\.settings-center-nav/);
   assert.match(app, /function setSettingsPanel\(panel\)/);
 });
 
-test('快速开始明确提示先添加生成账号，并提供管理员、API Key、OAuth 和测试连接入口', () => {
-  const quick = sectionById('settingsPanelQuick');
-  assert.match(quick, /未配置账号/);
-  assert.match(quick, /添加 API Key 或登录 ChatGPT 后才能生成图片/);
-  assert.match(quick, /解锁管理员/);
-  assert.match(quick, /添加 API Key 账号/);
-  assert.match(quick, /登录 ChatGPT 账号/);
-  assert.match(quick, /测试当前账号连接/);
-  assert.match(html, /id="accountTestResult" class="toast hidden"/);
+test('账号管理承载 API Key、ChatGPT 登录、保存位置和连接测试', () => {
+  const account = accountOverlay();
+  assert.match(account, /API Key 账号/);
+  assert.match(account, /ChatGPT 登录/);
+  assert.match(account, /保存位置/);
+  assert.match(account, /id="accountTabApi"[^>]*role="tab"[^>]*aria-controls="accountPanelApi"/);
+  assert.match(account, /id="accountTabOauth"[^>]*role="tab"[^>]*aria-controls="accountPanelOauth"/);
+  assert.match(account, /id="accountTabAdvanced"[^>]*role="tab"[^>]*aria-controls="accountPanelAdvanced"/);
+  assert.match(account, /id="accountList"/);
+  assert.match(account, /id="oauthAccountList"/);
+  assert.match(account, /id="testConnection"/);
+  assert.match(account, /id="accountTestResult" class="toast hidden"/);
   assert.match(app, /function setConnectionTestResult\(/);
   assert.match(html, /id="switcherName">未配置账号<\/span>/);
   assert.match(app, /name\.textContent = '未配置账号'/);
 });
 
-test('管理员、连接、存储和部署能力从账号高级区拆出到对应分区', () => {
-  const admin = sectionById('settingsPanelAdmin');
-  const connection = sectionById('settingsPanelConnection');
+test('Upstash 与浏览器迁移入口放在账号管理的保存位置里，设置页不再承载账号存储配置', () => {
+  const account = accountOverlay();
   const storage = sectionById('settingsPanelStorage');
-  const deploy = sectionById('settingsPanelDeploy');
-  const accounts = sectionById('settingsPanelAccounts');
 
-  assert.match(admin, /管理员解锁/);
-  assert.match(admin, /登录后，?默认拥有全部管理权限/);
-  assert.match(connection, /全局代理/);
-  assert.match(connection, /CORS 失败时会自动回退代理/);
-  assert.match(storage, /Upstash/);
-  assert.match(storage, /未配置时继续保存到当前浏览器/);
-  assert.match(storage, /id="accountStoreTypeSelect"/);
-  assert.match(storage, /id="accountStoreUpstashRestUrl"/);
-  assert.match(storage, /id="accountStoreUpstashRestToken"/);
-  assert.match(storage, /id="accountStoreEncryptionKey"/);
-  assert.match(storage, /id="testAccountStoreConfig"/);
-  assert.match(deploy, /部署同步/);
-  assert.match(deploy, /同步环境变量/);
-  assert.doesNotMatch(accounts, /部署平台配置|deployApiToken|configPlatformSync/);
-});
+  assert.match(account, /账号保存位置/);
+  assert.match(account, /Node \/ Docker 将优先保存到服务端账号存储/);
+  assert.match(account, /未配置时继续保存到当前浏览器/);
+  assert.match(account, /id="accountStoreTypeSelect"/);
+  assert.match(account, /id="accountStoreUpstashRestUrl"/);
+  assert.match(account, /id="accountStoreUpstashRestToken"/);
+  assert.match(account, /id="accountStoreEncryptionKey"/);
+  assert.match(account, /id="saveAccountStoreConfig"/);
+  assert.match(account, /id="testAccountStoreConfig"/);
+  assert.match(account, /迁移当前浏览器账号到服务端/);
+  assert.doesNotMatch(storage, /账号存储配置|Upstash REST URL|accountStoreTypeSelect|migrateBrowserAccountsBtn/);
 
-test('设置中心提供 Upstash 配置保存和连接测试入口', () => {
-  const storage = sectionById('settingsPanelStorage');
-  assert.match(storage, /账号存储配置/);
-  assert.match(storage, /账号保存策略/);
-  assert.match(storage, /Upstash REST URL/);
-  assert.match(storage, /Upstash REST Token/);
-  assert.match(storage, /账号加密 Key/);
-  assert.match(storage, /测试账号存储/);
   assert.match(app, /accountStore:\s*readAccountStoreConfigForm\(\)/);
+  assert.match(app, /async function saveAccountStoreConfigFromForm/);
   assert.match(app, /function readAccountStoreConfigForm/);
   assert.match(app, /function fillAccountStoreConfigForm/);
   assert.match(app, /async function testAccountStoreConfigFromForm/);
 });
 
-test('未解锁管理员保存设置时提示先解锁，而不是误报部署不支持服务端配置', () => {
+test('登录态失效保存设置时提示重新登录，而不是让用户去设置页找管理员入口', () => {
   assert.match(app, /const serverSaveSkippedBecauseAdminLocked = !hasValidAdminSession\(\)/);
-  assert.match(app, /如需写入服务端配置，请先解锁管理员/);
+  assert.match(app, /请重新登录管理员/);
   assert.match(app, /当前部署不支持服务端配置保存/);
 });

@@ -19,8 +19,8 @@ test('前端恢复后台任务时只在明确 404 时清理 active job，并在�
   const app = read('app.js');
   assert.match(app, /if \(isMissingBackgroundJobError\(e\)\) \{[\s\S]*clearActiveJob\(\)[\s\S]*return;[\s\S]*\}/s);
   assert.match(app, /if \(isRetryableBackgroundJobError\(e\)\) \{[\s\S]*已保留后台任务[\s\S]*return;[\s\S]*\}/s);
-  assert.match(app, /window\.addEventListener\('online', \(\) => \{ void resumeActiveJobIfAny\(\); \}\)/);
-  assert.match(app, /window\.addEventListener\('focus', \(\) => \{ void resumeActiveJobIfAny\(\); \}\)/);
+  assert.match(app, /window\.addEventListener\('online', \(\) => \{ if \(hasValidAdminSession\(\)\) void resumeActiveJobIfAny\(\); \}\)/);
+  assert.match(app, /window\.addEventListener\('focus', \(\) => \{ if \(hasValidAdminSession\(\)\) void resumeActiveJobIfAny\(\); \}\)/);
   assert.match(app, /document\.addEventListener\('visibilitychange', \(\) => \{[\s\S]*document\.visibilityState === 'visible'[\s\S]*resumeActiveJobIfAny\(\)/s);
 });
 

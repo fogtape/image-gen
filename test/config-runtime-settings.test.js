@@ -20,18 +20,16 @@ test('服务端已接入统一配置中心与平台配置 API', () => {
   assert.match(server, /x-image-gen-admin-token/i);
 });
 
-test('前端设置中心提供管理员解锁、服务端默认配置与部署同步区块', () => {
+test('前端提供前置管理员登录、瘦身设置和部署同步区块', () => {
   const html = read('index.html');
-  assert.match(html, /管理员解锁/);
-  assert.match(html, /id="adminTokenInput"/);
-  assert.match(html, /id="adminLoginBtn"/);
-  assert.match(html, /id="adminLogoutBtn"/);
-  assert.match(html, /id="adminSessionStatus"/);
-  assert.match(html, /服务端默认配置/);
+  assert.match(html, /id="adminLoginShell"/);
+  assert.match(html, /id="adminGateTokenInput"/);
+  assert.match(html, /id="adminGateLoginBtn"/);
+  assert.doesNotMatch(html, /id="adminTokenInput"|id="adminLoginBtn"|id="adminLogoutBtn"|id="adminSessionStatus"/);
+  assert.doesNotMatch(html, /服务端默认配置/);
   assert.match(html, /部署同步/);
   assert.doesNotMatch(html, /id="serverDefaultApiUrl"/);
-  assert.match(html, /id="serverDefaultImageModel"/);
-  assert.match(html, /id="serverDefaultResponsesModel"/);
+  assert.doesNotMatch(html, /id="serverDefaultImageModel"|id="serverDefaultResponsesModel"/);
   assert.match(html, /id="deployPlatform"/);
   assert.match(html, /id="deployAccountId"/);
   assert.match(html, /id="deployProjectId"/);

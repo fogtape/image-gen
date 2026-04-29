@@ -430,23 +430,24 @@ function confirmImportBackup() {
   pendingBackupImport = null;
 }
 
-function setAdminSessionStatus(text = '', isError = false) {
-  const el = $('#adminSessionStatus');
+function setAdminGateStatus(text = '', isError = false) {
+  const el = $('#adminGateStatus');
   if (!el) return;
   el.textContent = text;
   el.classList.toggle('error', !!isError);
 }
 
-function syncAdminSessionUi() {
+function syncAdminGateUi() {
   const unlocked = hasValidAdminSession();
-  setAdminSessionStatus(
-    unlocked
-      ? '已解锁：你拥有全部管理权限。'
-      : '未解锁：只能保存浏览器本地偏好，不能修改服务端配置。',
+  const loginShell = $('#adminLoginShell');
+  const mainShell = $('#mainAppShell');
+  if (loginShell) loginShell.classList.toggle('hidden', unlocked);
+  if (mainShell) mainShell.classList.toggle('hidden', !unlocked);
+  document.body?.classList.toggle('admin-gate-active', !unlocked);
+  setAdminGateStatus(
+    unlocked ? '管理员已登录，已拥有全部管理权限。' : '请输入管理员鉴权后进入。',
     false,
   );
-  const logoutBtn = $('#adminLogoutBtn');
-  if (logoutBtn) logoutBtn.disabled = !unlocked;
 }
 
 async function verifyAdminTokenInput(token) {
@@ -465,43 +466,57 @@ async function verifyAdminTokenInput(token) {
   return data;
 }
 
-async function loginAdminFromForm() {
-  const token = ($('#adminTokenInput')?.value || '').trim();
+async function hydrateAdminUnlockedState({ resumeJob = false } = {}) {
+  try {
+    await fetchEditableRuntimeConfig();
+    fillServerConfigForm();
+  } catch (error) {
+    console.warn('Failed to refresh editable runtime config:', error?.message || error);
+    if (error?.code === 'ADMIN_AUTH_EXPIRED' || error?.code === 'ADMIN_AUTH_REQUIRED') {
+      syncAdminGateUi();
+      return;
+    }
+  }
+  await fetchAccountStoreCapabilities();
+  await loadServerAccountsIntoLocal({ silent: true });
+  renderSwitcher();
+  renderDropdown();
+  renderAccountList();
+  syncAccountMigrationUi();
+  if (resumeJob) void resumeActiveJobIfAny();
+}
+
+async function loginAdminFromGate() {
+  const token = ($('#adminGateTokenInput')?.value || '').trim();
   if (!token) {
-    setAdminSessionStatus('请输入管理员口令。', true);
+    setAdminGateStatus('请输入管理员鉴权。', true);
     return;
   }
+  const btn = $('#adminGateLoginBtn');
+  if (btn) btn.disabled = true;
+  setAdminGateStatus('正在验证管理员鉴权...');
   try {
     await verifyAdminTokenInput(token);
     persistAdminSession(token);
-    setInputValue('adminTokenInput', '');
-    syncAdminSessionUi();
-    try {
-      await fetchEditableRuntimeConfig();
-      fillServerConfigForm();
-    } catch (error) {
-      console.warn('Failed to refresh editable runtime config:', error?.message || error);
-    }
-    await fetchAccountStoreCapabilities();
-    await loadServerAccountsIntoLocal({ silent: true });
-    renderAccountList();
-    syncSettingsCenterSummary();
-    syncAccountMigrationUi();
-    notifyAction('管理员已解锁');
+    setInputValue('adminGateTokenInput', '');
+    syncAdminGateUi();
+    await hydrateAdminUnlockedState({ resumeJob: true });
+    notifyAction('管理员已登录');
   } catch (error) {
     clearAdminSession();
-    syncAdminSessionUi();
-    setAdminSessionStatus('管理员口令不正确或当前部署未启用管理接口。', true);
+    syncAdminGateUi();
+    setAdminGateStatus('管理员鉴权不正确或当前部署未启用管理接口。', true);
     showError(error, { context: 'admin' });
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
 function logoutAdminSession() {
   clearAdminSession();
-  setInputValue('adminTokenInput', '');
-  syncAdminSessionUi();
+  syncAdminGateUi();
   syncAccountMigrationUi();
-  notifyAction('已退出管理员模式');
+  notifyAction('已退出管理员登录');
 }
 
 async function fetchServerRuntimeConfig() {
@@ -616,7 +631,7 @@ function describeAccountStore(store = {}) {
     return {
       pill: '账号当前保存位置：服务端文件',
       type: '服务端文件存储',
-      detail: '当前 Node / Docker 部署具备服务端账号存储能力；管理员解锁后，账号会优先同步到服务端文件，并保留浏览器缓存作为兼容副本。',
+      detail: '当前 Node / Docker 部署具备服务端账号存储能力；管理员登录后，账号会优先同步到服务端文件，并保留浏览器缓存作为兼容副本。',
       encrypted: store.encrypted ? '敏感字段：已启用账号存储加密' : '敏感字段：尚未检测到账号加密 key，后续写入前会继续要求加密或本地密钥。',
     };
   }
@@ -831,7 +846,7 @@ function syncAccountMigrationUi() {
   if (!localCount) {
     setAccountMigrationStatus('当前浏览器没有可迁移账号。');
   } else if (!hasValidAdminSession()) {
-    setAccountMigrationStatus('先在“管理员”分区解锁管理员，再迁移当前浏览器账号。');
+    setAccountMigrationStatus('请先完成管理员登录，再迁移当前浏览器账号。');
   } else if (!canUseServerAccountStore()) {
     setAccountMigrationStatus('当前部署未启用可写的服务端账号存储，账号会继续保存在浏览器缓存。');
   } else {
@@ -859,7 +874,7 @@ async function migrateBrowserAccountsToServer() {
     return null;
   }
   if (!canUseServerAccountStore()) {
-    setAccountMigrationStatus('请先解锁管理员，并确认当前部署已启用服务端账号存储。', true);
+    setAccountMigrationStatus('请先完成管理员登录，并确认当前部署已启用服务端账号存储。', true);
     syncAccountMigrationUi();
     return null;
   }
@@ -969,6 +984,30 @@ async function testAccountStoreConfigFromForm() {
   } catch (error) {
     setAccountStoreConfigStatus('账号存储测试失败：请检查管理员登录态、Upstash URL、Token 和加密 Key。', true);
     showError(error, { context: 'account-store.test' });
+    return null;
+  }
+}
+
+async function saveAccountStoreConfigFromForm() {
+  if (!hasValidAdminSession()) {
+    setAccountStoreConfigStatus('请重新登录管理员后再保存账号存储设置。', true);
+    syncAdminGateUi();
+    return null;
+  }
+  setAccountStoreConfigStatus('正在保存账号存储设置...');
+  try {
+    const saved = await saveServerRuntimeConfig(readServerConfigForm());
+    if (saved?.runtime) state.serverConfig = saved.runtime;
+    fillAccountStoreConfigForm(state.serverConfig || {});
+    await fetchAccountStoreCapabilities();
+    await loadServerAccountsIntoLocal({ silent: true });
+    renderAccountList();
+    setAccountStoreConfigStatus('账号存储设置已保存；后续账号会优先写入可用的服务端或 Upstash 存储。');
+    notifyAction('账号存储设置已保存');
+    return saved;
+  } catch (error) {
+    setAccountStoreConfigStatus('账号存储设置保存失败，请检查管理员登录态和部署配置。', true);
+    showError(error, { context: 'account-store.config' });
     return null;
   }
 }
@@ -1278,12 +1317,6 @@ function fillAccountStoreConfigForm(cfg = state.serverConfig || {}) {
 function fillServerConfigForm() {
   const cfg = state.serverConfig;
   if (!cfg) return;
-  setInputValue('serverDefaultImageModel', cfg.providerDefaults?.imageModel || DEFAULT_IMAGE_MODEL);
-  setInputValue('serverDefaultResponsesModel', cfg.providerDefaults?.responsesModel || DEFAULT_RESPONSES_MODEL);
-  setChecked('serverDefaultStreamMode', cfg.providerDefaults?.streamMode === true);
-  setChecked('serverDefaultResponsesAutoFallback', cfg.providerDefaults?.responsesAutoFallback !== false);
-  setChecked('serverDefaultImageEditsCompatMode', cfg.providerDefaults?.imageEditsCompatMode === true);
-  setChecked('serverDefaultForceProxy', cfg.providerDefaults?.forceProxy === true);
   setSelectValue('deployPlatform', cfg.deploy?.platform || 'node');
   const maskedAccountId = cfg.deploy?.accountId === '***已配置***';
   const maskedProjectId = cfg.deploy?.projectId === '***已配置***';
@@ -1296,7 +1329,6 @@ function fillServerConfigForm() {
   setChecked('deployAutoSync', cfg.deploy?.autoSync === true);
   setChecked('deployAutoRedeploy', cfg.deploy?.autoRedeploy === true);
   fillAccountStoreConfigForm(cfg);
-  syncAdminSessionUi();
 }
 
 function assignDeployFieldFromInput(deploy, id, fieldName) {
@@ -1337,6 +1369,7 @@ function readAccountStoreConfigForm() {
 
 function readServerConfigForm() {
   const current = state.serverConfig || {};
+  const currentProviderDefaults = current.providerDefaults || {};
   const deploy = {
     ...(current.deploy || {}),
     platform: $('#deployPlatform')?.value || 'node',
@@ -1350,14 +1383,14 @@ function readServerConfigForm() {
   return {
     ...current,
     providerDefaults: {
-      ...(current.providerDefaults || {}),
+      ...currentProviderDefaults,
       apiUrl: current.providerDefaults?.apiUrl || getProviderDefaults().apiUrl,
-      imageModel: ($('#serverDefaultImageModel')?.value || '').trim() || DEFAULT_IMAGE_MODEL,
-      responsesModel: ($('#serverDefaultResponsesModel')?.value || '').trim() || DEFAULT_RESPONSES_MODEL,
-      streamMode: !!$('#serverDefaultStreamMode')?.checked,
-      responsesAutoFallback: !!$('#serverDefaultResponsesAutoFallback')?.checked,
-      imageEditsCompatMode: !!$('#serverDefaultImageEditsCompatMode')?.checked,
-      forceProxy: !!$('#serverDefaultForceProxy')?.checked,
+      imageModel: currentProviderDefaults.imageModel || getProviderDefaults().imageModel || DEFAULT_IMAGE_MODEL,
+      responsesModel: currentProviderDefaults.responsesModel || getProviderDefaults().responsesModel || DEFAULT_RESPONSES_MODEL,
+      streamMode: currentProviderDefaults.streamMode === true,
+      responsesAutoFallback: currentProviderDefaults.responsesAutoFallback !== false,
+      imageEditsCompatMode: currentProviderDefaults.imageEditsCompatMode === true,
+      forceProxy: currentProviderDefaults.forceProxy === true,
     },
     generation: {
       ...(current.generation || {}),
@@ -1435,7 +1468,7 @@ async function saveSettingsFromForm() {
         console.warn(e?.message || e);
       }
     } else {
-      console.warn('管理员未解锁，本次仅保存浏览器本地设置。');
+      console.warn('管理员未登录，本次仅保存浏览器本地设置。');
     }
     state.appSettings = nextAppSettings;
     saveAppSettings();
@@ -1451,7 +1484,7 @@ async function saveSettingsFromForm() {
     notifyAction(saved?.runtime
       ? '设置已保存'
       : serverSaveSkippedBecauseAdminLocked
-        ? '本地设置已保存；如需写入服务端配置，请先解锁管理员'
+        ? '本地设置已保存；如需写入服务端配置，请重新登录管理员'
         : '本地设置已保存；当前部署不支持服务端配置保存');
   } catch (e) {
     showError({ ...(typeof e === 'object' && e ? e : {}), message: e?.message || e, context: 'settings' });
@@ -2466,18 +2499,14 @@ function setAccountTab(tab) {
 }
 
 function setSettingsPanel(panel) {
-  const selected = ['quick', 'admin', 'accounts', 'generation', 'connection', 'storage', 'deploy', 'appearance', 'backup'].includes(panel)
+  const selected = ['generation', 'storage', 'deploy', 'appearance', 'backup'].includes(panel)
     ? panel
-    : 'quick';
+    : 'generation';
   const map = {
-    quick: ['settingsNavQuick', 'settingsPanelQuick'],
-    admin: ['settingsNavAdmin', 'settingsPanelAdmin'],
-    accounts: ['settingsNavAccounts', 'settingsPanelAccounts'],
     generation: ['settingsNavGeneration', 'settingsPanelGeneration'],
-    connection: ['settingsNavConnection', 'settingsPanelConnection'],
+    appearance: ['settingsNavAppearance', 'settingsPanelAppearance'],
     storage: ['settingsNavStorage', 'settingsPanelStorage'],
     deploy: ['settingsNavDeploy', 'settingsPanelDeploy'],
-    appearance: ['settingsNavAppearance', 'settingsPanelAppearance'],
     backup: ['settingsNavBackup', 'settingsPanelBackup'],
   };
   for (const [key, [tabId, panelId]] of Object.entries(map)) {
@@ -2492,16 +2521,7 @@ function setSettingsPanel(panel) {
 }
 
 function syncSettingsCenterSummary() {
-  const hasAccounts = state.data.accounts.length > 0;
   const active = getActiveAccount();
-  const quickTitle = $('#settingsPanelQuick .settings-hero h3');
-  const quickCopy = $('#settingsPanelQuick .settings-hero p');
-  if (quickTitle) quickTitle.textContent = hasAccounts ? '已配置账号' : '未配置账号';
-  if (quickCopy) {
-    quickCopy.textContent = hasAccounts
-      ? `当前账号：${active?.name || active?.email || active?.apiUrl || '未命名'}。你可以继续测试连接，或按需解锁管理员保存服务端配置。`
-      : '添加 API Key 或登录 ChatGPT 后才能生成图片。需要写入服务端配置时，先解锁管理员。';
-  }
   document.querySelectorAll('.settings-status-pill').forEach((el) => {
     if (el.textContent?.startsWith('当前账号：')) {
       el.textContent = `当前账号：${active ? (active.name || active.email || active.apiUrl || '未命名') : '未配置账号'}`;
@@ -2509,7 +2529,7 @@ function syncSettingsCenterSummary() {
   });
 }
 
-async function openSettingsCenter(initialPanel = 'quick', options = {}) {
+async function openSettingsCenter(initialPanel = 'generation', options = {}) {
   try { await fetchServerRuntimeConfig(); } catch (e) { console.warn('Failed to refresh runtime config:', e?.message || e); }
   await fetchAccountStoreCapabilities();
   if (hasValidAdminSession()) {
@@ -2518,16 +2538,29 @@ async function openSettingsCenter(initialPanel = 'quick', options = {}) {
   }
   loadAppSettings();
   fillSettingsForm();
-  renderAccountList();
   const proxy = $('#useProxy');
   if (proxy) proxy.checked = state.data.useProxy;
   syncSettingsCenterSummary();
   loadStorageStats();
   setSettingsPanel(initialPanel);
-  if (initialPanel === 'accounts') setAccountTab(options.accountTab || 'api');
   openDialog($('#settingsOverlay'), {
     focusSelector: options.focusSelector || `#settingsNav${initialPanel[0].toUpperCase()}${initialPanel.slice(1)}`,
     restoreFocus: options.restoreFocus || '#openSettings',
+  });
+}
+
+async function openAccountManager(initialTab = 'api', options = {}) {
+  await fetchAccountStoreCapabilities();
+  if (hasValidAdminSession()) {
+    try { await fetchEditableRuntimeConfig(); } catch (e) { console.warn('Failed to load editable runtime config:', e?.message || e); }
+    await loadServerAccountsIntoLocal({ silent: true });
+  }
+  fillAccountStoreConfigForm(state.serverConfig || {});
+  renderAccountList();
+  setAccountTab(initialTab);
+  openDialog($('#accountOverlay'), {
+    focusSelector: options.focusSelector || (initialTab === 'oauth' ? '#oauthLoginBtn' : initialTab === 'advanced' ? '#accountStoreTypeSelect' : '#addManualBtn'),
+    restoreFocus: options.restoreFocus || '#switcherBtn',
   });
 }
 
@@ -3130,6 +3163,7 @@ async function createBackgroundJob(payload) {
     const err = new Error(normalizeGenerationError(data.error || data.message || `HTTP ${resp.status}`));
     err.status = resp.status;
     err.data = data;
+    if (data.error || data.message) err.isBackgroundJobTerminalFailure = true;
     throw err;
   }
   return data;
@@ -3142,6 +3176,7 @@ async function fetchBackgroundJob(jobId) {
     const err = new Error(normalizeGenerationError(data.error || data.message || `HTTP ${resp.status}`));
     err.status = resp.status;
     err.data = data;
+    if (data.error || data.message) err.isBackgroundJobTerminalFailure = true;
     throw err;
   }
   return data;
@@ -3215,6 +3250,12 @@ async function pollBackgroundJob(jobId, format, isOAuth, resultMeta = {}) {
       await sleep(BACKGROUND_JOB_POLL_INTERVAL_MS);
     } catch (e) {
       if (isPollingStopped(state, jobId)) return;
+      if (e?.isBackgroundJobTerminalFailure) {
+        clearActiveJob();
+        stopWaitingStatusSequence();
+        hideActiveJobBanner();
+        throw e;
+      }
       if (!isRetryableBackgroundJobError(e) || isMissingBackgroundJobError(e)) throw e;
       retryCount += 1;
       if (retryCount > BACKGROUND_JOB_POLL_RETRY_LIMIT) throw e;
@@ -3868,6 +3909,7 @@ export {
 
 document.addEventListener('DOMContentLoaded', async () => {
   loadData();
+  syncAdminGateUi();
   try {
     await fetchServerRuntimeConfig();
   } catch (e) {
@@ -3878,6 +3920,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadPromptHistory();
   renderPromptHistory();
   renderSwitcher();
+  if (hasValidAdminSession()) await hydrateAdminUnlockedState();
+  syncAdminGateUi();
 
   // Account switcher dropdown
   $('#switcherBtn').onclick = (e) => { e.stopPropagation(); renderDropdown(); toggleDropdown(); };
@@ -3887,47 +3931,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (state.dropdownOpen && !$('#accountSwitcher').contains(e.target)) toggleDropdown(false);
   });
 
-  // Account management now opens the unified settings center on the account panel.
+  // Account management opens its own dialog, separate from global settings.
   $('#dropdownManage').onclick = () => {
     toggleDropdown(false);
-    void openSettingsCenter('accounts', { focusSelector: '#addManualBtn', restoreFocus: '#switcherBtn' });
+    void openAccountManager('api', { focusSelector: '#addManualBtn', restoreFocus: '#switcherBtn' });
   };
   $('#accountTabApi')?.addEventListener('click', () => setAccountTab('api'));
   $('#accountTabOauth')?.addEventListener('click', () => setAccountTab('oauth'));
   $('#accountTabAdvanced')?.addEventListener('click', () => setAccountTab('advanced'));
 
-  // Settings center overlay
-  $('#openSettings').onclick = () => { void openSettingsCenter('quick', { restoreFocus: '#openSettings' }); };
+  // Settings overlay
+  $('#openSettings').onclick = () => { void openSettingsCenter('generation', { restoreFocus: '#openSettings' }); };
   document.querySelectorAll('#settingsCenterNav [data-panel]').forEach((btn) => {
     btn.addEventListener('click', () => setSettingsPanel(btn.dataset.panel));
   });
-  $('#quickAdminBtn')?.addEventListener('click', () => {
-    setSettingsPanel('admin');
-    $('#adminTokenInput')?.focus();
-  });
-  $('#quickAddManualBtn')?.addEventListener('click', () => {
-    setSettingsPanel('accounts');
-    setAccountTab('api');
-    openEditModal(null);
-  });
-  $('#quickOauthLoginBtn')?.addEventListener('click', () => {
-    setSettingsPanel('accounts');
-    setAccountTab('oauth');
-    void startOAuth();
-  });
-  $('#quickTestConnection')?.addEventListener('click', testConnection);
   $('#closeSettings').onclick = () => closeDialog($('#settingsOverlay'));
   $('#cancelSettings').onclick = () => closeDialog($('#settingsOverlay'));
   $('#saveSettings').onclick = saveSettingsFromForm;
-  $('#adminLoginBtn')?.addEventListener('click', loginAdminFromForm);
-  $('#adminLogoutBtn')?.addEventListener('click', logoutAdminSession);
-  $('#adminTokenInput')?.addEventListener('keydown', (event) => {
+  $('#adminGateLoginBtn')?.addEventListener('click', loginAdminFromGate);
+  $('#adminGateTokenInput')?.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       event.preventDefault();
-      void loginAdminFromForm();
+      void loginAdminFromGate();
     }
   });
+  $('#adminLogoutTopBtn')?.addEventListener('click', logoutAdminSession);
   $('#settingsOverlay').onclick = (e) => { if (e.target === $('#settingsOverlay')) closeDialog($('#settingsOverlay')); };
+  $('#closeAccountManager')?.addEventListener('click', () => closeDialog($('#accountOverlay')));
+  $('#accountOverlay')?.addEventListener('click', (e) => { if (e.target === $('#accountOverlay')) closeDialog($('#accountOverlay')); });
   ['watermarkEnabled', 'watermarkTemporaryMode', 'watermarkMode', 'watermarkText', 'watermarkTimeFormat', 'watermarkPosition', 'watermarkOpacity', 'watermarkFontSize', 'watermarkColor', 'watermarkShadow', 'watermarkBackground'].forEach((id) => {
     const el = $(`#${id}`);
     if (el) el.oninput = el.onchange = renderWatermarkPreview;
@@ -4025,6 +4056,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   $('#testAccountStoreConfig')?.addEventListener('click', () => { void testAccountStoreConfigFromForm(); });
+  $('#saveAccountStoreConfig')?.addEventListener('click', () => { void saveAccountStoreConfigFromForm(); });
   $('#testConnection').onclick = testConnection;
 
   // Generate
@@ -4078,10 +4110,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyGenerationDefaultsToControls();
   syncPromptEnhancementUi();
   loadStorageStats();
-  window.addEventListener('online', () => { void resumeActiveJobIfAny(); });
-  window.addEventListener('focus', () => { void resumeActiveJobIfAny(); });
+  window.addEventListener('online', () => { if (hasValidAdminSession()) void resumeActiveJobIfAny(); });
+  window.addEventListener('focus', () => { if (hasValidAdminSession()) void resumeActiveJobIfAny(); });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') void resumeActiveJobIfAny();
+    if (document.visibilityState === 'visible' && hasValidAdminSession()) void resumeActiveJobIfAny();
   });
-  void resumeActiveJobIfAny();
+  if (hasValidAdminSession()) void resumeActiveJobIfAny();
 });

@@ -25,14 +25,15 @@ test('P4 产品增强路线有目标用户、优先级和验收标准', () => {
 test('README 链接 P0-P3 追踪和 P4 产品路线', () => {
   const readme = read('README.md');
   assert.match(readme, /docs\/audit-p0-p3-tracking-2026-04-28\.md/);
-  assert.match(readme, /docs\/admin-auth-settings-account-store-tracking-2026-04-29\.md/);
+  assert.match(readme, /docs\/admin-gate-account-settings-refactor-2026-04-29\.md/);
   assert.match(readme, /docs\/p4-product-roadmap\.md/);
 });
 
-test('README 说明管理员解锁、账号存储优先级和 Upstash 配置', () => {
+test('README 说明前置管理员登录、账号存储优先级和 Upstash 配置', () => {
   const readme = read('README.md');
   for (const phrase of [
-    '统一设置中心与管理员解锁',
+    '前置管理员登录',
+    '独立账号管理',
     '服务端优先账号存储',
     '此账号的 API 地址',
     'data/accounts.enc.json',

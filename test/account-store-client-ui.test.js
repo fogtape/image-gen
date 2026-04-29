@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const app = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 
-test('账号管理前端在可用且已解锁管理员时优先同步服务端账号 CRUD API', () => {
+test('账号管理前端在可用且已登录管理员时优先同步服务端账号 CRUD API', () => {
   assert.match(app, /function canUseServerAccountStore\(\)/);
   assert.match(app, /async function listServerAccounts\(/);
   assert.match(app, /function mergeServerAccountsIntoLocal\(/);

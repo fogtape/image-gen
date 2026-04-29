@@ -18,7 +18,7 @@ async function loadModules() {
   return { session, api };
 }
 
-test('adminFetch 未登录时拒绝请求并提示先管理员解锁', async () => {
+test('adminFetch 未登录时拒绝请求并提示先完成管理员登录', async () => {
   installStorage();
   const { api } = await loadModules();
   let called = false;
@@ -27,7 +27,7 @@ test('adminFetch 未登录时拒绝请求并提示先管理员解锁', async () 
   await assert.rejects(() => api.adminFetch('/api/config/editable'), (error) => {
     assert.equal(error.code, 'ADMIN_AUTH_REQUIRED');
     assert.equal(error.status, 401);
-    assert.match(error.message, /管理员解锁/);
+    assert.match(error.message, /管理员登录/);
     return true;
   });
   assert.equal(called, false);
@@ -61,7 +61,7 @@ test('adminFetch 遇到 401/403 会清理管理员会话', async () => {
   await assert.rejects(() => api.adminFetch('/api/config/editable'), (error) => {
     assert.equal(error.code, 'ADMIN_AUTH_EXPIRED');
     assert.equal(error.status, 401);
-    assert.match(error.message, /重新解锁/);
+    assert.match(error.message, /重新登录/);
     return true;
   });
   assert.equal(session.getAdminToken(), '');

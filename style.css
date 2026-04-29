@@ -48,6 +48,137 @@ body {
   overflow-x: hidden;
 }
 
+body.admin-gate-active {
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+.app-shell.hidden,
+.admin-gate-shell.hidden {
+  display: none;
+}
+
+/* ── Admin Gate ── */
+.admin-gate-shell {
+  min-height: 100dvh;
+  padding: max(28px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 16% 18%, rgba(0,102,230,0.15), transparent 28%),
+    radial-gradient(circle at 84% 10%, rgba(124,58,237,0.12), transparent 26%),
+    linear-gradient(135deg, #f8fbff 0%, #f2f2f7 46%, #ffffff 100%);
+}
+
+.admin-gate-surface {
+  width: min(920px, 100%);
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+  gap: 20px;
+  align-items: stretch;
+}
+
+.admin-gate-brand,
+.admin-gate-card {
+  border: 1px solid rgba(255,255,255,0.78);
+  border-radius: 28px;
+  background: rgba(255,255,255,0.78);
+  box-shadow: var(--shadow-xl);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+}
+
+.admin-gate-brand {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  padding: clamp(24px, 5vw, 44px);
+}
+
+.admin-gate-logo {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  font-size: 1.8rem;
+}
+
+.admin-gate-kicker {
+  margin-bottom: 8px;
+  color: var(--primary);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.admin-gate-brand h1 {
+  margin: 0 0 10px;
+  font-size: clamp(1.9rem, 5vw, 3.1rem);
+  line-height: 1.04;
+  letter-spacing: -0.055em;
+}
+
+.admin-gate-brand p:last-child {
+  max-width: 560px;
+  color: var(--text-2);
+  font-size: 0.98rem;
+  line-height: 1.7;
+}
+
+.admin-gate-card {
+  display: grid;
+  align-content: center;
+  gap: 12px;
+  padding: clamp(22px, 4vw, 32px);
+}
+
+.admin-gate-card label {
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.admin-gate-card input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  font: inherit;
+}
+
+.admin-gate-card input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px var(--primary-ring);
+}
+
+.admin-gate-card .btn {
+  width: 100%;
+  justify-content: center;
+  min-height: 42px;
+}
+
+.admin-gate-status {
+  min-height: 1.4em;
+  color: var(--text-2);
+  font-size: 0.8rem;
+}
+
+.admin-gate-status.error {
+  color: var(--danger);
+}
+
+.admin-gate-card small {
+  color: var(--text-3);
+  font-size: 0.74rem;
+  line-height: 1.55;
+}
+
 /* ── Topbar ── */
 .topbar {
   position: sticky;
@@ -118,6 +249,15 @@ body {
 
 .topbar-btn:hover { background: var(--surface-hover); color: var(--text); }
 .topbar-btn:active { transform: scale(0.92); }
+
+.admin-logout-top {
+  width: auto;
+  min-width: 42px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
 
 /* ── Overlay & Modal ── */
 .overlay {
@@ -2522,6 +2662,20 @@ input[type="color"]:hover { border-color: var(--primary); }
 /* ── Responsive: Settings Modal (≤640px) ── */
 
 @media (max-width: 640px) {
+  .admin-gate-shell {
+    padding: 18px;
+    align-items: start;
+  }
+  .admin-gate-surface {
+    grid-template-columns: 1fr;
+  }
+  .admin-gate-brand,
+  .admin-gate-card {
+    border-radius: 22px;
+  }
+  .admin-gate-brand {
+    flex-direction: column;
+  }
   .modal-settings { max-width: 96vw; }
   .modal-settings .modal-body { padding: 12px 14px 16px; }
   .settings-center-shell { grid-template-columns: 1fr; gap: 12px; }

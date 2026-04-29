@@ -31,3 +31,18 @@ test('后台任务已明确 failed 时应终止轮询并展示上游真实错误
     /function isRetryableBackgroundJobError\(error\) \{[\s\S]*if \(error\?\.isBackgroundJobTerminalFailure\) return false;[\s\S]*\}/s,
   );
 });
+
+test('轮询接口已返回明确错误正文时直接展示真实错误，不进入后台连接波动重试', () => {
+  assert.match(
+    app,
+    /async function fetchBackgroundJob\(jobId\) \{[\s\S]*err\.data = data;[\s\S]*if \(data\.error \|\| data\.message\) err\.isBackgroundJobTerminalFailure = true;[\s\S]*throw err;[\s\S]*\}/s,
+  );
+  assert.match(
+    app,
+    /if \(e\?\.isBackgroundJobTerminalFailure\) \{[\s\S]*clearActiveJob\(\);[\s\S]*stopWaitingStatusSequence\(\);[\s\S]*hideActiveJobBanner\(\);[\s\S]*throw e;[\s\S]*\}/s,
+  );
+  assert.match(
+    app,
+    /function isRetryableBackgroundJobError\(error\) \{[\s\S]*if \(error\?\.isBackgroundJobTerminalFailure\) return false;[\s\S]*\}/s,
+  );
+});

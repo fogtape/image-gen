@@ -84,7 +84,7 @@ const CONTEXT_ERROR_DIALOGS = {
     title: '设置保存失败',
     summary: '设置没有完全保存成功。',
     kind: '设置保存失败',
-    suggestion: '本地偏好可以继续保存；如果要修改服务端默认配置，请确认当前部署提供配置 API，并检查配置管理口令。',
+    suggestion: '本地偏好可以继续保存；如果要写入服务端运行配置，请确认当前部署提供配置 API，并重新完成管理员登录。',
   },
   platform: {
     title: '平台操作失败',
@@ -125,7 +125,7 @@ function inferErrorContext(error = {}, message = '') {
   if (explicit) return explicit;
   const code = String(error.code || error.type || '').toUpperCase();
   const text = String(message || '').toLowerCase();
-  if (code.startsWith('CONFIG_') || /服务端默认配置|配置管理|设置保存|runtime config/.test(text)) return 'settings';
+  if (code.startsWith('CONFIG_') || /服务端运行配置|配置管理|设置保存|runtime config/.test(text)) return 'settings';
   if (/备份|导入密码|加密密码|web crypto|backup/.test(text)) return /导入|解密|import/.test(text) ? 'backup-import' : 'backup-export';
   if (/参考图|上传.*图片|最多只能上传|图片.*超过|ref image|reference image/.test(text)) return 'reference';
   if (/提示词历史|历史提示词|原始提示词|最终提示词/.test(text)) return 'prompt-history';

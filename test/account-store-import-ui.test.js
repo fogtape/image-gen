@@ -5,7 +5,8 @@ import test from 'node:test';
 const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const app = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 
-test('设置中心提供浏览器账号迁移到服务端的清晰入口', () => {
+test('账号管理提供浏览器账号迁移到服务端的清晰入口', () => {
+  assert.match(html, /id="accountOverlay"/);
   assert.match(html, /id="migrateBrowserAccountsBtn"/);
   assert.match(html, /迁移当前浏览器账号到服务端/);
   assert.match(html, /id="accountMigrationStatus"/);

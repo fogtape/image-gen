@@ -13,7 +13,9 @@ test('顶部提供独立设置入口并包含生成、外观、存储分组', ()
   assert.match(html, /id="settingsOverlay"/);
   assert.match(html, />生成默认值</);
   assert.match(html, />水印设置</);
-  assert.match(html, />存储与同步</);
+  assert.match(html, />图片历史</);
+  assert.doesNotMatch(html, />存储与同步</);
+  assert.match(html, /id="accountOverlay"/);
 });
 
 test('设置面板支持默认尺寸质量格式和成熟水印配置', () => {
@@ -130,7 +132,8 @@ test('设置保存失败会标记为设置错误，不再显示成图片生成�
   assert.match(app, /if \(resp\.status === 404\) throw markConfigApiUnavailable\(resp\.status\)/);
 });
 
-test('设置中心账号分区按 API Key、ChatGPT 登录和保存位置三段分流', () => {
+test('独立账号管理按 API Key、ChatGPT 登录和保存位置三段分流', () => {
+  assert.match(html, /id="accountOverlay"/);
   assert.match(html, /class="account-tabs"[^>]*role="tablist"/);
   assert.match(html, /id="accountTabApi"[^>]*role="tab"[^>]*aria-controls="accountPanelApi"/);
   assert.match(html, /id="accountTabOauth"[^>]*role="tab"[^>]*aria-controls="accountPanelOauth"/);

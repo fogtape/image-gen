@@ -22,11 +22,19 @@ test('前端管理 API 统一走 adminFetch 和 Bearer 会话', () => {
   assert.doesNotMatch(app, /\$\('#configAdminToken'\)/);
 });
 
-test('设置页有独立管理员解锁入口，不再把管理口令放在部署平台配置里', () => {
-  assert.match(html, />管理员解锁</);
-  for (const id of ['adminTokenInput', 'adminLoginBtn', 'adminLogoutBtn', 'adminSessionStatus']) {
+test('前端先进入管理员登录页，登录后再显示主应用并拥有全部管理权限', () => {
+  for (const id of ['adminLoginShell', 'adminGateTokenInput', 'adminGateLoginBtn', 'adminGateStatus', 'mainAppShell']) {
     assert.match(html, new RegExp(`id="${id}"`), `${id} should exist`);
   }
+  assert.match(html, /id="mainAppShell"[^>]*class="[^"]*hidden/);
+  assert.match(app, /function syncAdminGateUi\(\)/);
+  assert.match(app, /hasValidAdminSession\(\)/);
+  assert.match(app, /mainShell\.classList\.toggle\('hidden', !unlocked\)/);
+  assert.match(app, /loginShell\.classList\.toggle\('hidden', unlocked\)/);
+  assert.match(app, /async function loginAdminFromGate\(\)/);
+  assert.match(app, /persistAdminSession\(token\)/);
+  assert.match(app, /await hydrateAdminUnlockedState\(/);
+  assert.doesNotMatch(html, /id="adminTokenInput"|id="adminLoginBtn"|id="adminLogoutBtn"|id="adminSessionStatus"/);
   assert.doesNotMatch(html, /id="configAdminToken"/);
   const deploySection = html.match(/<section class="settings-section account-deploy-section">[\s\S]*?<\/section>/)?.[0] || '';
   assert.doesNotMatch(deploySection, /管理员|口令|adminTokenInput|configAdminToken/);

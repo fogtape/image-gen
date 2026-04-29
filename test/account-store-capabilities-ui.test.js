@@ -6,8 +6,8 @@ const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const app = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 const state = fs.readFileSync(new URL('../frontend/state.js', import.meta.url), 'utf8');
 
-test('设置中心账号保存位置接入服务端能力接口并保留浏览器 fallback 文案', () => {
-  assert.match(html, /id="settingsAccountStorageStatus"/);
+test('账号管理保存位置接入服务端能力接口并保留浏览器 fallback 文案', () => {
+  assert.match(html, /id="accountOverlay"/);
   assert.match(html, /id="accountStoreType"/);
   assert.match(html, /id="accountStoreDetail"/);
   assert.match(html, /id="accountStoreEncrypted"/);

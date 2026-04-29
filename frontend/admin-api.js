@@ -18,7 +18,7 @@ function buildHeaders(headers = {}, token = '') {
 export async function adminFetch(input, init = {}) {
   const token = getAdminToken();
   if (!token) {
-    throw makeAdminError('请先完成管理员解锁，再执行管理操作。', {
+    throw makeAdminError('请先完成管理员登录，再执行管理操作。', {
       code: 'ADMIN_AUTH_REQUIRED',
       status: 401,
     });
@@ -29,7 +29,7 @@ export async function adminFetch(input, init = {}) {
   });
   if (resp.status === 401 || resp.status === 403) {
     clearAdminSession();
-    throw makeAdminError('管理员登录已过期或口令无效，请重新解锁。', {
+    throw makeAdminError('管理员登录已过期或口令无效，请重新登录。', {
       code: 'ADMIN_AUTH_EXPIRED',
       status: resp.status,
     });
