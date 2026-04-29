@@ -10,14 +10,13 @@ function readAdminToken(req) {
   const authorization = String(req.headers?.authorization || '').trim();
   const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
   if (bearer) return bearer;
-  const headerValue = req.headers?.['x-image-gen-token'] || req.headers?.['x-image-gen-token'.toLowerCase()];
+  const headerValue = req.headers?.['x-image-gen-admin-token'] || req.headers?.['x-image-gen-admin-token'.toLowerCase()];
   return String(headerValue || '').trim();
 }
 
-function verifyAdminToken(token, configService) {
-  // If no config service available, fall back to env-based check
+function verifyAdminToken(token) {
   const adminToken = process.env.IMAGE_GEN_ADMIN_TOKEN || '';
-  if (!adminToken) return true; // No admin token configured = open access
+  if (!adminToken) return false; // No admin token configured = deny access (fail-closed)
   return token === adminToken;
 }
 

@@ -669,6 +669,7 @@ function writeNoStoreJson(res, status, body) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Cache-Control': 'no-store',
+    'Pragma': 'no-cache',
   });
   res.end(JSON.stringify(body));
 }

@@ -27,6 +27,23 @@ export const MAX_REF_IMAGES = 3;
 export const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 /**
+ * Parse a data URL or raw base64 string and extract MIME + decoded byte length.
+ */
+function parseRefImageInput(data) {
+  const value = String(data || '').trim();
+  const match = value.match(/^data:(image\/[^;]+);base64,(.*)$/is);
+  if (match) return { mime: match[1].toLowerCase(), base64: match[2] };
+  return { mime: '', base64: value };
+}
+
+function decodedBase64Bytes(base64 = '') {
+  const clean = String(base64 || '').replace(/\s/g, '');
+  if (!clean) return 0;
+  const padding = clean.endsWith('==') ? 2 : (clean.endsWith('=') ? 1 : 0);
+  return Math.max(0, Math.floor((clean.length * 3) / 4) - padding);
+}
+
+/**
  * Maximum bytes for a single reference image.
  */
 export function getOAuthMaxRefImageBytes(env = process.env) {
@@ -57,6 +74,39 @@ export function validateOAuthImageRequest(parsed, { maxBodyBytes } = {}) {
   if (refImages.length > MAX_REF_IMAGES) {
     const err = new Error('最多只能上传 3 张参考图');
     err.status = 400;
+    throw err;
+  }
+
+  // Validate MIME type, single image size, and total size
+  const maxSingleBytes = getOAuthMaxRefImageBytes();
+  const maxTotalBytes = getOAuthMaxRefImagesTotalBytes();
+  let totalBytes = 0;
+
+  for (const raw of refImages) {
+    const { mime, base64 } = parseRefImageInput(raw);
+    const bytes = decodedBase64Bytes(base64);
+
+    // MIME type check: only validate if data URL declares a MIME
+    if (mime && !ALLOWED_MIME.has(mime)) {
+      const err = new Error('参考图格式不支持，请上传 PNG、JPEG 或 WebP 图片');
+      err.status = 400;
+      throw err;
+    }
+
+    // Single image size check
+    if (bytes > maxSingleBytes) {
+      const err = new Error('单张参考图过大，请换用更小图片');
+      err.status = 413;
+      throw err;
+    }
+
+    totalBytes += bytes;
+  }
+
+  // Total size check
+  if (totalBytes > maxTotalBytes) {
+    const err = new Error('参考图总大小过大，请减少数量或换用更小图片');
+    err.status = 413;
     throw err;
   }
 }

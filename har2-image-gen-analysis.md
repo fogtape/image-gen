@@ -24,7 +24,7 @@
 | **15** | **14:59:45** | **POST** | **/backend-api/sentinel/req** | **200** |
 | 16-18 | 14:59:45~15:00:09 | POST | /backend-api/sentinel/ping (x3) | 200 |
 | 19 | 15:00:13 | POST | /backend-api/sentinel/heartbeat | 200 |
-| **20** | **15:00:18** | **GET** | **/backend-api/files/download/file_00000000262c71fdab1d2f26bf1528cb** | **200** |
+| **20** | **15:00:18** | **GET** | **/backend-api/files/download/file_*** | **200** |
 | 21 | 15:00:19 | POST | /backend-api/lat/r | 200 |
 | **22** | **15:00:19** | **GET** | **/backend-api/estuary/content?id=...&sig=...** | **200** |
 | 23 | 15:00:20 | POST | /backend-api/f/conversation/prepare | 200 |
@@ -58,9 +58,9 @@
 
 ### 请求
 ```json
-{"prepare_token": "gAAAAA...WcmV"}
+{"prepare_token": "gAAAAA...WcmV", "proofofwork": "...", "turnstile": "..."}
 ```
-> 注意：请求中 **没有** `proofofwork` 字段
+> 请求包含 `prepare_token`、`proofofwork`、`turnstile` 三个字段
 
 ### 响应
 ```json
@@ -233,7 +233,7 @@ data: {"p": "/message/status", "o": "replace", "v": "finished_successfully"}
         "content_type": "multimodal_text",
         "parts": [{
           "content_type": "image_asset_pointer",
-          "asset_pointer": "sediment://file_00000000262c71fdab1d2f26bf1528cb",
+          "asset_pointer": "sediment://file_***",
           "size_bytes": 1755161,
           "width": 1402,
           "height": 1122,
@@ -293,14 +293,14 @@ data: [DONE]
 
 ### 步骤 1: files/download (ENTRY 20)
 ```
-GET /backend-api/files/download/file_00000000262c71fdab1d2f26bf1528cb?conversation_id=69f21cdb-...&inline=false
+GET /backend-api/files/download/file_***?conversation_id=...&inline=false
 ```
 响应：
 ```json
 {
   "status": "success",
-  "download_url": "https://chatgpt.com/backend-api/estuary/content?id=file_00000000262c71fdab1d2f26bf1528cb&ts=493743&p=fs&cid=1&sig=d27536a553d663efb106f1dd75db9b9aa7c1f21fbb04d1822ff398b61b4e1aff&v=0",
-  "file_name": "user-x5lvOtqm0OwsXp2zOQcd8qzt/5c6fcace-2511-4352-a4ce-e88bbe2e5c14.png",
+  "download_url": "https://chatgpt.com/backend-api/estuary/content?id=file_***&ts=...&p=fs&cid=1&sig=...&v=0",
+  "file_name": "user-***/***.png",
   "file_size_bytes": 1755161
 }
 ```

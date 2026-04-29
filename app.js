@@ -3472,9 +3472,8 @@ async function genOAuthImages(cfg, prompt, quality, background, size, format, re
   };
 
   setGenerationStatus('request:send');
-  const resp = await fetch('/api/oauth/images/stream', {
+  const resp = await adminFetch('/api/oauth/images/stream', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 
