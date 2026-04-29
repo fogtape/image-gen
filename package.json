@@ -13,9 +13,13 @@
     "test": "node --test --test-concurrency=1 test/*.js api/oauth/test.js",
     "test:docker:packaging": "node --test test/docker-packaging.test.js",
     "smoke:docker": "node scripts/docker-smoke-test.mjs",
-    "ci:release-gate": "npm test && npm run build && npm run smoke:docker"
+    "ci:release-gate": "npm test && npm run build && npm run smoke:docker",
+    "test:e2e": "npx playwright test"
   },
   "dependencies": {
     "sharp": "^0.33.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
   }
 }

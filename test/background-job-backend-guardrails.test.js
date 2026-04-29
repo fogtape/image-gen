@@ -32,8 +32,7 @@ test('主路由统一捕获异步 handler 异常并安全解码路径参数', ()
   assert.match(server, /function dispatchRoute\(req, res, handler\)/);
   assert.match(server, /Promise\.resolve\(\)\s*\.then\(handler\)\s*\.catch/);
   assert.match(server, /function safeDecodePathComponent\(value, res\)/);
-  assert.match(server, /safeDecodePathComponent\(rawJobId, res\)/);
-  assert.match(server, /safeDecodePathComponent\(rawImageId, res\)/);
+  assert.match(server, /safeDecodePathComponent\(match\[1\], res\)/);
 });
 
 test('后台图片任务限制批量生成数量并统一 batch 元数据', () => {

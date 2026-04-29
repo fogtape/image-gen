@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { createRateLimiter } from './rate-limiter.js';
 import { handleOAuthImageRequestBody, testOAuthAccessToken } from './openai-oauth-image.js';
 import { createJobStore } from './background-jobs.js';
 import { createImageStore } from './image-storage.js';
@@ -771,7 +772,7 @@ async function readRequestText(req, res, { limitBytes = JSON_BODY_LIMIT_BYTES } 
     return null;
   }
 
-  let body = '';
+  const chunks = [];
   let receivedBytes = 0;
   for await (const chunk of req) {
     receivedBytes += Buffer.byteLength(chunk);
@@ -780,9 +781,9 @@ async function readRequestText(req, res, { limitBytes = JSON_BODY_LIMIT_BYTES } 
       res.end(JSON.stringify({ error: '请求体过大，请减少参考图数量或换用更小图片' }));
       return null;
     }
-    body += chunk;
+    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
   }
-  return body;
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 async function readJsonBody(req, res, { limitBytes = JSON_BODY_LIMIT_BYTES, allowEmpty = true, emptyValue = {} } = {}) {
@@ -2179,102 +2180,83 @@ function safeDecodePathComponent(value, res) {
   }
 }
 
+// Global rate limiting: 120 requests per minute per IP
+const rateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 120 });
+
+// --- Route table: [method, pattern, handlerFn] ---
+// pattern is a string or regex; handlerFn(url, req, res) is called on match.
+const ROUTES = [
+  ['POST', '/api/proxy', (u, req, res) => handleProxy(req, res)],
+  ['GET', '/api/admin/session', (u, req, res) => handleAdminSession(req, res)],
+  ['GET', '/api/admin/security', (u, req, res) => handleAdminSecurity(req, res)],
+  ['GET', '/api/accounts/capabilities', (u, req, res) => handleAccountCapabilities(req, res)],
+  ['GET', '/api/accounts', (u, req, res) => handleAccountsList(req, res)],
+  ['POST', '/api/accounts', (u, req, res) => handleAccountCreate(req, res)],
+  ['POST', '/api/accounts/import-local', (u, req, res) => handleAccountsImportLocal(req, res)],
+  ['POST', '/api/accounts/store/test', (u, req, res) => handleAccountStoreTest(req, res)],
+  ['GET', '/api/config/runtime', (u, req, res) => handleConfigRuntime(req, res)],
+  ['GET', '/api/config/editable', (u, req, res) => handleConfigEditable(req, res)],
+  ['GET', '/api/config/schema', (u, req, res) => handleConfigSchema(req, res)],
+  ['POST', '/api/config/save', (u, req, res) => handleConfigSave(req, res)],
+  ['POST', '/api/config/platform/check', (u, req, res) => handlePlatformCheck(req, res)],
+  ['POST', '/api/config/platform/sync', (u, req, res) => handlePlatformSync(req, res)],
+  ['POST', '/api/config/platform/deploy', (u, req, res) => handlePlatformDeploy(req, res)],
+  ['POST', '/api/prompt/enhance', (u, req, res) => handlePromptEnhance(req, res)],
+  ['POST', '/api/jobs', (u, req, res) => handleCreateImageJob(req, res)],
+  ['POST', '/api/storage/clear', (u, req, res) => handleStorageClear(req, res)],
+  ['GET', '/api/storage/history', (u, req, res) => handleStorageHistory(req, res, u)],
+  ['GET', '/api/storage', (u, req, res) => handleStorageStats(req, res)],
+  ['POST', '/api/oauth/start', (u, req, res) => handleOAuthStart(req, res)],
+  ['POST', '/api/oauth/exchange', (u, req, res) => handleOAuthExchange(req, res)],
+  ['POST', '/api/oauth/refresh', (u, req, res) => handleOAuthRefresh(req, res)],
+  ['POST', '/api/oauth/test', (u, req, res) => handleOAuthTest(req, res)],
+  ['POST', '/api/oauth/images', (u, req, res) => handleOAuthImages(req, res)],
+  ['POST', '/api/oauth/images/stream', (u, req, res) => handleOAuthImagesStream(req, res)],
+];
+
+// Parameterized route patterns (tested after exact matches fail)
+const PARAM_ROUTES = [
+  { method: 'PATCH', re: /^\/api\/accounts\/(.+)$/, handler: (m, req, res) => handleAccountPatch(req, res, m[1]) },
+  { method: 'DELETE', re: /^\/api\/accounts\/(.+)$/, handler: (m, req, res) => handleAccountDelete(req, res, m[1]) },
+  { method: 'POST', re: /^\/api\/jobs\/(.+)\/cancel$/, handler: (m, req, res) => handleCancelImageJob(req, res, m[1]) },
+  { method: 'GET', re: /^\/api\/jobs\/(.+)$/, handler: (m, req, res) => handleGetImageJob(req, res, m[1]) },
+  { method: 'PATCH', re: /^\/api\/images\/(.+)\/meta$/, handler: (m, req, res) => handleImageMetaPatch(req, res, m[1]) },
+  { method: 'DELETE', re: /^\/api\/images\/(.+)$/, handler: (m, req, res) => handleDeleteStoredImage(req, res, m[1]) },
+  { method: 'GET', re: /^\/api\/images\/(.+)$/, handler: (m, req, res) => handleStoredImage(req, res, m[1]) },
+  { method: 'GET', re: /^\/api\/oauth\/status\/(.+)$/, handler: (m, req, res) => handleOAuthStatus(req, res, m[1]) },
+];
+
 export const server = http.createServer((req, res) => {
   try {
     applyCorsHeaders(req, res);
 
     if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
 
+    // Apply rate limiting after CORS/OPTIONS
+    if (rateLimit(req, res)) return;
+
     const url = new URL(req.url, `http://localhost:${PORT}`);
     const run = (handler) => dispatchRoute(req, res, handler);
 
-    if (url.pathname === '/api/proxy' && req.method === 'POST') {
-      return run(() => handleProxy(req, res));
-    } else if (url.pathname === '/api/admin/session' && req.method === 'GET') {
-      return run(() => handleAdminSession(req, res));
-    } else if (url.pathname === '/api/admin/security' && req.method === 'GET') {
-      return run(() => handleAdminSecurity(req, res));
-    } else if (url.pathname === '/api/accounts/capabilities' && req.method === 'GET') {
-      return run(() => handleAccountCapabilities(req, res));
-    } else if (url.pathname === '/api/accounts' && req.method === 'GET') {
-      return run(() => handleAccountsList(req, res));
-    } else if (url.pathname === '/api/accounts' && req.method === 'POST') {
-      return run(() => handleAccountCreate(req, res));
-    } else if (url.pathname === '/api/accounts/import-local' && req.method === 'POST') {
-      return run(() => handleAccountsImportLocal(req, res));
-    } else if (url.pathname === '/api/accounts/store/test' && req.method === 'POST') {
-      return run(() => handleAccountStoreTest(req, res));
-    } else if (url.pathname.startsWith('/api/accounts/') && req.method === 'PATCH') {
-      const accountId = safeDecodePathComponent(url.pathname.slice('/api/accounts/'.length).replace(/\/+$/, ''), res);
-      if (accountId === null) return;
-      return run(() => handleAccountPatch(req, res, accountId));
-    } else if (url.pathname.startsWith('/api/accounts/') && req.method === 'DELETE') {
-      const accountId = safeDecodePathComponent(url.pathname.slice('/api/accounts/'.length).replace(/\/+$/, ''), res);
-      if (accountId === null) return;
-      return run(() => handleAccountDelete(req, res, accountId));
-    } else if (url.pathname === '/api/config/runtime' && req.method === 'GET') {
-      return run(() => handleConfigRuntime(req, res));
-    } else if (url.pathname === '/api/config/editable' && req.method === 'GET') {
-      return run(() => handleConfigEditable(req, res));
-    } else if (url.pathname === '/api/config/schema' && req.method === 'GET') {
-      return run(() => handleConfigSchema(req, res));
-    } else if (url.pathname === '/api/config/save' && req.method === 'POST') {
-      return run(() => handleConfigSave(req, res));
-    } else if (url.pathname === '/api/config/platform/check' && req.method === 'POST') {
-      return run(() => handlePlatformCheck(req, res));
-    } else if (url.pathname === '/api/config/platform/sync' && req.method === 'POST') {
-      return run(() => handlePlatformSync(req, res));
-    } else if (url.pathname === '/api/config/platform/deploy' && req.method === 'POST') {
-      return run(() => handlePlatformDeploy(req, res));
-    } else if (url.pathname === '/api/prompt/enhance' && req.method === 'POST') {
-      return run(() => handlePromptEnhance(req, res));
-    } else if (url.pathname === '/api/jobs' && req.method === 'POST') {
-      return run(() => handleCreateImageJob(req, res));
-    } else if (url.pathname.startsWith('/api/jobs/') && url.pathname.endsWith('/cancel') && req.method === 'POST') {
-      const rawJobId = url.pathname.slice('/api/jobs/'.length, -'/cancel'.length).replace(/\/+$/, '');
-      const jobId = safeDecodePathComponent(rawJobId, res);
-      if (jobId === null) return;
-      return run(() => handleCancelImageJob(req, res, jobId));
-    } else if (url.pathname.startsWith('/api/jobs/') && req.method === 'GET') {
-      const jobId = safeDecodePathComponent(url.pathname.split('/api/jobs/')[1] || '', res);
-      if (jobId === null) return;
-      return run(() => handleGetImageJob(req, res, jobId));
-    } else if (url.pathname === '/api/storage/history' && req.method === 'GET') {
-      return run(() => handleStorageHistory(req, res, url));
-    } else if (url.pathname === '/api/storage' && req.method === 'GET') {
-      return run(() => handleStorageStats(req, res));
-    } else if (url.pathname === '/api/storage/clear' && req.method === 'POST') {
-      return run(() => handleStorageClear(req, res));
-    } else if (url.pathname.startsWith('/api/images/') && url.pathname.endsWith('/meta') && req.method === 'PATCH') {
-      const rawImageId = url.pathname.slice('/api/images/'.length, -'/meta'.length).replace(/\/+$/, '');
-      const imageId = safeDecodePathComponent(rawImageId, res);
-      if (imageId === null) return;
-      return run(() => handleImageMetaPatch(req, res, imageId));
-    } else if (url.pathname.startsWith('/api/images/') && req.method === 'DELETE') {
-      const imageId = safeDecodePathComponent(url.pathname.split('/api/images/')[1] || '', res);
-      if (imageId === null) return;
-      return run(() => handleDeleteStoredImage(req, res, imageId));
-    } else if (url.pathname.startsWith('/api/images/') && req.method === 'GET') {
-      const imageId = safeDecodePathComponent(url.pathname.split('/api/images/')[1] || '', res);
-      if (imageId === null) return;
-      return run(() => handleStoredImage(req, res, imageId));
-    } else if (url.pathname === '/api/oauth/start' && req.method === 'POST') {
-      return run(() => handleOAuthStart(req, res));
-    } else if (url.pathname.startsWith('/api/oauth/status/') && req.method === 'GET') {
-      const state = safeDecodePathComponent(url.pathname.split('/api/oauth/status/')[1] || '', res);
-      if (state === null) return;
-      return run(() => handleOAuthStatus(req, res, state));
-    } else if (url.pathname === '/api/oauth/exchange' && req.method === 'POST') {
-      return run(() => handleOAuthExchange(req, res));
-    } else if (url.pathname === '/api/oauth/refresh' && req.method === 'POST') {
-      return run(() => handleOAuthRefresh(req, res));
-    } else if (url.pathname === '/api/oauth/test' && req.method === 'POST') {
-      return run(() => handleOAuthTest(req, res));
-    } else if (url.pathname === '/api/oauth/images' && req.method === 'POST') {
-      return run(() => handleOAuthImages(req, res));
-    } else if (url.pathname === '/api/oauth/images/stream' && req.method === 'POST') {
-      return run(() => handleOAuthImagesStream(req, res));
+    // 1) Exact-match routes (O(n) scan, fast for ~30 entries)
+    for (const [method, path, handler] of ROUTES) {
+      if (req.method === method && url.pathname === path) {
+        return run(() => handler(url, req, res));
+      }
     }
+
+    // 2) Parameterized routes (regex match)
+    for (const { method, re, handler } of PARAM_ROUTES) {
+      if (req.method === method) {
+        const match = url.pathname.match(re);
+        if (match) {
+          const decoded = safeDecodePathComponent(match[1], res);
+          if (decoded === null) return;
+          return run(() => handler([null, decoded], req, res));
+        }
+      }
+    }
+
     return run(() => serveStatic(req, res));
   } catch (error) {
     console.error('Unhandled request dispatch error:', error?.message || error);

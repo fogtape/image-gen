@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { createMutex } from './mutex.js';
 
 const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
 const DEFAULT_RESPONSES_MODEL = 'gpt-5.4';
@@ -188,6 +189,9 @@ export function createFileAccountStore({ filePath, encryptionKey } = {}) {
   if (!filePath) throw new Error('Account store file path is required');
   keyFromSecret(encryptionKey);
 
+  // Serialize read-modify-write operations to prevent concurrent race conditions.
+  const lock = createMutex();
+
   async function loadPlainState() {
     if (!fs.existsSync(filePath)) return normalizeAccountState({ accounts: [], activeId: null });
     const envelope = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -226,34 +230,40 @@ export function createFileAccountStore({ filePath, encryptionKey } = {}) {
       return savePlainState(nextState);
     },
     async upsertAccount(account, { activeId } = {}) {
-      const state = await loadPlainState();
-      const normalized = normalizeAccountForStorage(account);
-      const index = state.accounts.findIndex((item) => item.id === normalized.id);
-      if (index >= 0) state.accounts[index] = { ...state.accounts[index], ...normalized };
-      else state.accounts.push(normalized);
-      state.activeId = activeId || state.activeId || normalized.id;
-      return savePlainState(state);
+      return lock(async () => {
+        const state = await loadPlainState();
+        const normalized = normalizeAccountForStorage(account);
+        const index = state.accounts.findIndex((item) => item.id === normalized.id);
+        if (index >= 0) state.accounts[index] = { ...state.accounts[index], ...normalized };
+        else state.accounts.push(normalized);
+        state.activeId = activeId || state.activeId || normalized.id;
+        return savePlainState(state);
+      });
     },
     async patchAccount(id, patch = {}, { activeId } = {}) {
-      const state = await loadPlainState();
-      const index = state.accounts.findIndex((item) => item.id === id);
-      if (index < 0) throw accountNotFoundError(id);
-      const merged = normalizeAccountForStorage({
-        ...state.accounts[index],
-        ...(patch || {}),
-        id,
+      return lock(async () => {
+        const state = await loadPlainState();
+        const index = state.accounts.findIndex((item) => item.id === id);
+        if (index < 0) throw accountNotFoundError(id);
+        const merged = normalizeAccountForStorage({
+          ...state.accounts[index],
+          ...(patch || {}),
+          id,
+        });
+        state.accounts[index] = merged;
+        if (activeId && state.accounts.some((item) => item.id === activeId)) state.activeId = activeId;
+        return savePlainState(state);
       });
-      state.accounts[index] = merged;
-      if (activeId && state.accounts.some((item) => item.id === activeId)) state.activeId = activeId;
-      return savePlainState(state);
     },
     async deleteAccount(id) {
-      const state = await loadPlainState();
-      const nextAccounts = state.accounts.filter((item) => item.id !== id);
-      const nextActiveId = state.activeId === id
-        ? (nextAccounts[0]?.id || null)
-        : (nextAccounts.some((item) => item.id === state.activeId) ? state.activeId : (nextAccounts[0]?.id || null));
-      return savePlainState({ ...state, activeId: nextActiveId, accounts: nextAccounts });
+      return lock(async () => {
+        const state = await loadPlainState();
+        const nextAccounts = state.accounts.filter((item) => item.id !== id);
+        const nextActiveId = state.activeId === id
+          ? (nextAccounts[0]?.id || null)
+          : (nextAccounts.some((item) => item.id === state.activeId) ? state.activeId : (nextAccounts[0]?.id || null));
+        return savePlainState({ ...state, activeId: nextActiveId, accounts: nextAccounts });
+      });
     },
   };
 }

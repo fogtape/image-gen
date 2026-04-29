@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 function defaultIdFactory() {
   return `job_${crypto.randomBytes(12).toString('hex')}`;
@@ -35,6 +37,7 @@ export function createJobStore({
   now = () => Date.now(),
   maxConcurrency = Infinity,
   maxQueue = Infinity,
+  persistencePath = null,
 } = {}) {
   if (typeof runner !== 'function') throw new Error('Missing background job runner');
   const retentionTtlMs = normalizeDurationMs(ttlMs, 30 * 60 * 1000);
@@ -43,6 +46,53 @@ export function createJobStore({
   const jobs = new Map();
   const queue = [];
   let runningCount = 0;
+
+  // --- File persistence for job recovery across restarts ---
+  function persistJobs() {
+    if (!persistencePath) return;
+    try {
+      const active = [];
+      for (const [, job] of jobs) {
+        if (!isFinalStatus(job.status)) {
+          active.push({ id: job.id, status: job.status, createdAt: job.createdAt, progress: job.progress.slice(-5) });
+        }
+      }
+      const dir = path.dirname(persistencePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const tmp = `${persistencePath}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify({ active, savedAt: now() }), 'utf8');
+      fs.renameSync(tmp, persistencePath);
+    } catch { /* best-effort persistence */ }
+  }
+
+  function recoverPersistedJobs() {
+    if (!persistencePath) return;
+    try {
+      if (!fs.existsSync(persistencePath)) return;
+      const data = JSON.parse(fs.readFileSync(persistencePath, 'utf8'));
+      if (!Array.isArray(data?.active)) return;
+      for (const saved of data.active) {
+        if (!saved?.id) continue;
+        jobs.set(saved.id, {
+          id: saved.id,
+          status: 'failed',
+          progress: saved.progress || [],
+          result: null,
+          error: '服务重启，任务中断',
+          errorInfo: { code: 'SERVER_RESTARTED' },
+          createdAt: saved.createdAt || now(),
+          updatedAt: now(),
+          finishedAt: now(),
+          cancelledAt: null,
+          started: false,
+          slotReleased: true,
+        });
+      }
+      try { fs.unlinkSync(persistencePath); } catch {}
+    } catch { /* best-effort recovery */ }
+  }
+
+  recoverPersistedJobs();
 
   function isFinalStatus(status) {
     return status === 'completed' || status === 'failed' || status === 'cancelled';
@@ -106,6 +156,7 @@ export function createJobStore({
             payload: undefined,
             finishedAt: now(),
           });
+          persistJobs();
         }
       } catch (e) {
         if (isFinalStatus(job.status)) {
@@ -122,6 +173,7 @@ export function createJobStore({
               finishedAt: cancelledAt,
               cancelledAt,
             });
+            persistJobs();
           }
         } else {
           update(job, {
@@ -137,6 +189,7 @@ export function createJobStore({
             payload: undefined,
             finishedAt: now(),
           });
+          persistJobs();
         }
       } finally {
         releaseRunningSlot(job);
@@ -173,6 +226,7 @@ export function createJobStore({
     };
     jobs.set(job.id, job);
     addProgress(job, 'queue:accepted', runningCount >= maxConcurrency ? '任务已进入队列，等待执行' : '任务已提交，等待执行');
+    persistJobs();
     if (runningCount < maxConcurrency) start(job);
     else queue.push(job);
 

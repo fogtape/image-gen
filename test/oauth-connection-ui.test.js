@@ -22,7 +22,7 @@ test('OAuth 连接测试走 ChatGPT backend 探活，不调用需要 api.respons
 });
 
 test('服务端提供 /api/oauth/test 探活路由，供 Vercel OAuth 连接测试返回 JSON', () => {
-  assert.match(server, /url\.pathname === '\/api\/oauth\/test'/);
+  assert.match(server, /'\/api\/oauth\/test'/);
   assert.match(server, /handleOAuthTest/);
   assert.ok(fs.existsSync(new URL('../api/oauth/test.js', import.meta.url)), 'Vercel explicit OAuth test route should exist');
 });

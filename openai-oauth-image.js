@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { isPolicyViolationText, normalizeGenerationError } from './ui-feedback.js';
 import { isLocalOrPrivateHost } from './proxy-policy.js';
+import { runProofOfWork } from './proof-worker-runner.js';
 
 const CHATGPT_BASE = 'https://chatgpt.com';
 const CHATGPT_START_URL = `${CHATGPT_BASE}/`;
@@ -695,7 +696,7 @@ export function getImageQuotaMessage(data = {}) {
   return '';
 }
 
-export function generateRequirementsToken(userAgent = IMAGE_BACKEND_USER_AGENT) {
+export async function generateRequirementsToken(userAgent = IMAGE_BACKEND_USER_AGENT) {
   const now = new Date();
   const config = [
     'core3008',
@@ -717,7 +718,11 @@ export function generateRequirementsToken(userAgent = IMAGE_BACKEND_USER_AGENT) 
     8,
     Math.floor(Date.now() / 1000),
   ];
-  const answer = generateChallengeAnswer(String(process.hrtime.bigint()), REQUIREMENTS_DIFF, config);
+  const answer = await runProofOfWork('challenge', {
+    seed: String(process.hrtime.bigint()),
+    difficulty: REQUIREMENTS_DIFF,
+    config,
+  });
   return answer ? `gAAAAAC${answer}` : '';
 }
 
@@ -734,32 +739,14 @@ function generateChallengeAnswer(seed, difficulty, config) {
   return '';
 }
 
-export function generateProofToken({ required, seed, difficulty, userAgent = IMAGE_BACKEND_USER_AGENT } = {}) {
+export async function generateProofToken({ required, seed, difficulty, userAgent = IMAGE_BACKEND_USER_AGENT } = {}) {
   if (!required || !String(seed || '').trim() || !String(difficulty || '').trim()) return '';
-  const screen = String(seed).length % 2 === 0 ? 4010 : 3008;
-  const token = [
-    screen,
-    new Date().toUTCString(),
-    null,
-    0,
-    coalesce(userAgent, IMAGE_BACKEND_USER_AGENT),
-    `${CHATGPT_BASE}/`,
-    'dpl=openai-images',
-    'en',
-    'en-US',
-    null,
-    'plugins[object PluginArray]',
-    '_reactListening',
-    'alert',
-  ];
-  const diffLen = String(difficulty).length;
-  for (let i = 0; i < 100000; i++) {
-    token[3] = i;
-    const encoded = Buffer.from(JSON.stringify(token)).toString('base64');
-    if (sha3Hex(String(seed) + encoded).slice(0, diffLen) <= String(difficulty)) return `gAAAAAB${encoded}`;
-  }
-  const fallbackBase = Buffer.from(JSON.stringify(String(seed))).toString('base64');
-  return `gAAAAA...xZ4D${fallbackBase}`;
+  return runProofOfWork('proof', {
+    seed,
+    difficulty,
+    userAgent: coalesce(userAgent, IMAGE_BACKEND_USER_AGENT),
+    chatgptBase: CHATGPT_BASE,
+  });
 }
 
 async function bootstrap(headers) {
@@ -777,7 +764,8 @@ function chatRequirementChallengeError(challenge) {
 
 async function fetchChatRequirementsLegacy(headers) {
   let lastErr = null;
-  const payloads = [{ p: null }, { p: generateRequirementsToken(headers['User-Agent']) }];
+  const reqToken = await generateRequirementsToken(headers['User-Agent']);
+  const payloads = [{ p: null }, { p: reqToken }];
   for (const payload of payloads) {
     const resp = await fetchWithTimeout(CHATGPT_CHAT_REQUIREMENTS_URL, {
       method: 'POST',
@@ -798,7 +786,8 @@ async function fetchChatRequirementsLegacy(headers) {
 
 async function fetchChatRequirementsViaPrepareFinalize(headers) {
   let lastErr = null;
-  const payloads = [{ p: generateRequirementsToken(headers['User-Agent']) }, { p: null }];
+  const reqToken = await generateRequirementsToken(headers['User-Agent']);
+  const payloads = [{ p: reqToken }, { p: null }];
   for (const payload of payloads) {
     const prepareResp = await fetchWithTimeout(CHATGPT_CHAT_REQUIREMENTS_PREPARE_URL, {
       method: 'POST',
@@ -826,7 +815,7 @@ async function fetchChatRequirementsViaPrepareFinalize(headers) {
 
     const finalizeBody = { prepare_token: prepareToken };
     if (isChatChallengeRequired(prepared?.proofofwork)) {
-      const proof = generateProofToken({
+      const proof = await generateProofToken({
         required: true,
         seed: prepared.proofofwork.seed,
         difficulty: prepared.proofofwork.difficulty,
@@ -1236,7 +1225,7 @@ async function resolvePointerBytes(headers, conversationId, pointer) {
 
 async function generateOneImage({ headers, prompt, chatReqs, onProgress, refImages = [] }) {
   const parentMessageId = randomUUID();
-  const proofToken = generateProofToken({
+  const proofToken = await generateProofToken({
     required: !!chatReqs?.proofofwork?.required,
     seed: chatReqs?.proofofwork?.seed,
     difficulty: chatReqs?.proofofwork?.difficulty,
