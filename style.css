@@ -387,39 +387,85 @@ textarea { resize: vertical; }
 
 .active-job-banner {
   margin-top: 12px;
-  padding: 12px 14px;
-  border: 1px solid rgba(0,102,230,0.12);
-  background: rgba(0,102,230,0.03);
-  border-radius: var(--radius);
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: stretch;
+  overflow: hidden;
+  animation: bannerSlideIn 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+@keyframes bannerSlideIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.active-job-banner::before {
+  content: '';
+  width: 3px;
+  flex-shrink: 0;
+  background: var(--primary);
+  border-radius: 3px 0 0 3px;
 }
 
 .active-job-banner.hidden { display: none; }
-.active-job-main { min-width: 0; flex: 1 1 auto; }
+
+.active-job-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 10px 0 10px 12px;
+}
+
 .active-job-title {
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   font-weight: 600;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .active-job-meta {
   margin-top: 2px;
-  font-size: 0.74rem;
-  color: var(--text-2);
+  font-size: 0.72rem;
+  color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .active-job-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+  padding: 8px 10px;
   flex-shrink: 0;
+}
+
+.active-job-actions .btn {
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  border-radius: 980px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  transition: all var(--transition-fast);
+}
+
+.active-job-actions .btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.active-job-actions .btn:first-child {
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.active-job-actions .btn:first-child:hover {
+  background: var(--primary-bg);
 }
 
 .modal-footer {
@@ -805,7 +851,7 @@ textarea { resize: vertical; }
 .history-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
@@ -813,15 +859,37 @@ textarea { resize: vertical; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 10px;
-  font-size: 0.76rem;
+  padding: 5px 10px;
+  font-size: 0.74rem;
+  border-radius: 980px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  transition: all var(--transition);
 }
+
+.history-actions .btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+  box-shadow: var(--shadow-xs);
+}
+
+.history-actions .btn svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  transition: transform 0.3s ease;
+}
+
+.history-actions .btn:hover svg { transform: rotate(20deg); }
 
 .history-fav-btn.active {
   background: #fffbeb;
   border-color: #fcd34d;
   color: #b45309;
 }
+
+.history-fav-btn.active svg { fill: #f59e0b; stroke: #f59e0b; }
 
 .history-status {
   display: inline-flex;
@@ -835,63 +903,76 @@ textarea { resize: vertical; }
 /* ── Prompt History ── */
 .prompt-history-panel {
   margin: 0 16px 14px;
-  padding: 14px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--surface-3);
+  border-radius: var(--radius-xs);
 }
 
 .prompt-history-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .prompt-history-header h2 {
-  margin: 0 0 3px;
-  font-size: 0.94rem;
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-2);
 }
 
 .prompt-history-header p {
-  margin: 0;
-  color: var(--text-3);
-  font-size: 0.76rem;
+  display: none;
+}
+
+.prompt-history-header .btn {
+  padding: 3px 10px;
+  font-size: 0.7rem;
+  border-radius: 980px;
 }
 
 .prompt-history-row {
   display: flex;
-  align-items: end;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .prompt-history-row label {
-  display: block;
-  margin-bottom: 5px;
-  color: var(--text-2);
-  font-size: 0.78rem;
-  font-weight: 600;
+  display: none;
 }
 
 .prompt-history-row select {
-  min-width: 220px;
-  width: auto;
-  flex: 1 1 260px;
-  padding: 9px 11px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  min-width: 0;
+  flex: 1 1 180px;
+  padding: 6px 8px;
+  font-size: 0.78rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
   background: var(--surface);
   color: var(--text);
 }
 
-.prompt-history-status {
-  min-height: 18px;
-  margin-top: 8px;
-  color: var(--text-3);
-  font-size: 0.78rem;
+.prompt-history-row .btn {
+  padding: 4px 10px;
+  font-size: 0.7rem;
+  border-radius: 980px;
 }
+
+.prompt-history-row .btn.danger {
+  margin-left: auto;
+}
+
+.prompt-history-status {
+  min-height: 0;
+  margin-top: 6px;
+  color: var(--text-3);
+  font-size: 0.72rem;
+}
+
+.prompt-history-status:empty { display: none; }
 
 .prompt-history-status.error { color: var(--danger); }
 
@@ -2049,43 +2130,6 @@ input[type="color"]:hover { border-color: var(--primary); }
 .oauth-flow-info span {
   line-height: 1.45;
 }
-
-/* ── Active Job Banner ── */
-
-.active-job-banner {
-  margin-top: 12px;
-  padding: 12px 14px;
-  border-radius: var(--radius-sm);
-  background: var(--primary-bg);
-  border: 1px solid var(--primary-ring);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.active-job-main { flex: 1; min-width: 0; }
-
-.active-job-title {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.active-job-meta {
-  font-size: 0.72rem;
-  color: var(--text-2);
-  margin-top: 2px;
-}
-
-.active-job-actions {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.active-job-actions .btn { font-size: 0.75rem; padding: 5px 12px; }
 
 /* ── Responsive: Settings Modal (≤640px) ── */
 
