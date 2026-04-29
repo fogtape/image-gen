@@ -443,6 +443,7 @@ function syncAdminGateUi() {
   const mainShell = $('#mainAppShell');
   if (loginShell) loginShell.classList.toggle('hidden', unlocked);
   if (mainShell) mainShell.classList.toggle('hidden', !unlocked);
+  document.documentElement.dataset.adminSession = unlocked ? 'active' : 'locked';
   document.body?.classList.toggle('admin-gate-active', !unlocked);
   setAdminGateStatus(
     unlocked ? '管理员已登录，已拥有全部管理权限。' : '请输入管理员鉴权后进入。',

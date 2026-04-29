@@ -5,6 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Image Studio</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎨</text></svg>">
+  <script>
+    (() => {
+      try {
+        const storage = window.localStorage;
+        const token = String(storage.getItem('img-gen-admin-token') || '').trim();
+        const expiresAt = Number(storage.getItem('img-gen-admin-token-expires-at') || 0);
+        const legacyToken = String(storage.getItem('img-gen-config-admin-token') || '').trim();
+        const hasActiveSession = token
+          ? Number.isFinite(expiresAt) && expiresAt > Date.now()
+          : !!legacyToken;
+        document.documentElement.dataset.adminSession = hasActiveSession ? 'active' : 'locked';
+      } catch {
+        document.documentElement.dataset.adminSession = 'locked';
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -23,7 +39,6 @@
         <input type="password" id="adminGateTokenInput" autocomplete="current-password" placeholder="输入 IMAGE_GEN_ADMIN_TOKEN">
         <button id="adminGateLoginBtn" class="btn btn-primary" type="button">登录</button>
         <p id="adminGateStatus" class="admin-gate-status" role="status" aria-live="polite">请输入管理员鉴权后进入。</p>
-        <small>Docker / Node 可在环境变量或 config/.env 配置；云平台按 metapi 类似方式配置环境变量。</small>
       </div>
     </div>
   </section>

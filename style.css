@@ -58,6 +58,14 @@ body.admin-gate-active {
   display: none;
 }
 
+html[data-admin-session="active"] .admin-gate-shell {
+  display: none;
+}
+
+html[data-admin-session="active"] .app-shell.hidden {
+  display: block;
+}
+
 /* ── Admin Gate ── */
 .admin-gate-shell {
   min-height: 100dvh;
