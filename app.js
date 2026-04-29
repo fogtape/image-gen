@@ -1038,7 +1038,7 @@ function setHistoryControlsEnabled(enabled) {
 function getHistoryFilters() {
   return {
     query: ($('#historySearch')?.value || '').trim(),
-    favorite: $('#historyFavoriteOnly')?.checked === true,
+    favorite: $('#historyFavoriteOnly')?.getAttribute('aria-pressed') === 'true',
     limit: 60,
   };
 }
@@ -3302,7 +3302,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('#restorePromptBefore')?.addEventListener('click', () => { try { restorePromptHistoryVersion('source'); } catch (e) { showError(e, { context: 'prompt-history' }); } });
   $('#restorePromptAfter')?.addEventListener('click', () => { try { restorePromptHistoryVersion('final'); } catch (e) { showError(e, { context: 'prompt-history' }); } });
   $('#historyRefresh')?.addEventListener('click', async () => { try { await loadHistoryWithFilters(); } catch (e) { setHistoryStatus('历史读取失败', true); showError(e, { context: 'history' }); } });
-  $('#historyFavoriteOnly')?.addEventListener('change', async () => { try { await loadHistoryWithFilters(); } catch (e) { setHistoryStatus('历史读取失败', true); showError(e, { context: 'history' }); } });
+  $('#historyFavoriteOnly')?.addEventListener('click', async () => { try { const btn = $('#historyFavoriteOnly'); const pressed = btn.getAttribute('aria-pressed') === 'true'; btn.setAttribute('aria-pressed', String(!pressed)); btn.classList.toggle('active', !pressed); await loadHistoryWithFilters(); } catch (e) { setHistoryStatus('历史读取失败', true); showError(e, { context: 'history' }); } });
   $('#historySearch')?.addEventListener('input', () => {
     clearTimeout(historySearchTimer);
     historySearchTimer = setTimeout(async () => {

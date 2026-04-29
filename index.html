@@ -543,18 +543,26 @@
             </div>
           </div>
           <div class="opt">
-            <label>尺寸</label>
-            <div class="custom-select" id="sizeSelect" data-value="auto">
-              <button class="cs-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">自动</button>
-              <div class="cs-dropdown hidden" role="listbox" aria-label="选择图片尺寸">
-                <div class="cs-item active" data-value="auto" data-label="自动" role="option" tabindex="-1" aria-selected="true">自动</div>
-                <div class="cs-divider"></div>
-                <div class="cs-item" data-value="1024x1024" data-label="方形 1:1" role="option" tabindex="-1" aria-selected="false">方形 1:1</div>
-                <div class="cs-item" data-value="1056x1408" data-label="竖版 3:4" role="option" tabindex="-1" aria-selected="false">竖版 3:4</div>
-                <div class="cs-item" data-value="864x1536" data-label="故事 9:16" role="option" tabindex="-1" aria-selected="false">故事 9:16</div>
-                <div class="cs-item" data-value="1408x1056" data-label="横屏 4:3" role="option" tabindex="-1" aria-selected="false">横屏 4:3</div>
-                <div class="cs-item" data-value="1536x864" data-label="宽屏 16:9" role="option" tabindex="-1" aria-selected="false">宽屏 16:9</div>
+            <label>尺寸 / 数量</label>
+            <div class="opt-row">
+              <div class="custom-select" id="sizeSelect" data-value="auto">
+                <button class="cs-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">自动</button>
+                <div class="cs-dropdown hidden" role="listbox" aria-label="选择图片尺寸">
+                  <div class="cs-item active" data-value="auto" data-label="自动" role="option" tabindex="-1" aria-selected="true">自动</div>
+                  <div class="cs-divider"></div>
+                  <div class="cs-item" data-value="1024x1024" data-label="方形 1:1" role="option" tabindex="-1" aria-selected="false">方形 1:1</div>
+                  <div class="cs-item" data-value="1056x1408" data-label="竖版 3:4" role="option" tabindex="-1" aria-selected="false">竖版 3:4</div>
+                  <div class="cs-item" data-value="864x1536" data-label="故事 9:16" role="option" tabindex="-1" aria-selected="false">故事 9:16</div>
+                  <div class="cs-item" data-value="1408x1056" data-label="横屏 4:3" role="option" tabindex="-1" aria-selected="false">横屏 4:3</div>
+                  <div class="cs-item" data-value="1536x864" data-label="宽屏 16:9" role="option" tabindex="-1" aria-selected="false">宽屏 16:9</div>
+                </div>
               </div>
+              <select id="countSelect" title="数量">
+                <option value="1" selected>1 张</option>
+                <option value="2">2 张</option>
+                <option value="3">3 张</option>
+                <option value="4">4 张</option>
+              </select>
             </div>
           </div>
           <div class="opt">
@@ -571,15 +579,6 @@
               <option value="png" selected>PNG</option>
               <option value="webp">WebP</option>
               <option value="jpeg">JPEG</option>
-            </select>
-          </div>
-          <div class="opt">
-            <label for="countSelect">数量</label>
-            <select id="countSelect">
-              <option value="1" selected>1 张</option>
-              <option value="2">2 张</option>
-              <option value="3">3 张</option>
-              <option value="4">4 张</option>
             </select>
           </div>
         </div>
@@ -638,15 +637,17 @@
 
       <!-- Results -->
       <div id="historyToolbar" class="history-toolbar" aria-label="历史记录工具栏">
-        <div class="history-search">
-          <label for="historySearch">历史搜索</label>
-          <input id="historySearch" type="search" placeholder="搜索提示词、模型、标签或批次">
+        <input id="historySearch" type="search" placeholder="搜索提示词、标签或批次">
+        <div class="history-actions">
+          <button id="historyFavoriteOnly" class="btn btn-outline history-fav-btn" type="button" aria-pressed="false">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            收藏
+          </button>
+          <button id="historyRefresh" class="btn btn-outline" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            刷新
+          </button>
         </div>
-        <label class="history-favorite-filter">
-          <input type="checkbox" id="historyFavoriteOnly">
-          <span>只看收藏</span>
-        </label>
-        <button id="historyRefresh" class="btn btn-outline" type="button">刷新历史</button>
         <span id="historyStatus" class="history-status" aria-live="polite"></span>
       </div>
       <div id="results" class="gallery"></div>
