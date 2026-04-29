@@ -22,6 +22,8 @@ import {
 import { enhancePrompt } from './prompt-enhancement.js';
 import { createConfigService } from './config-service.js';
 import { createPlatformHandler, getSupportedPlatforms } from './handlers/handler-factory.js';
+import { resolveAccountStoreCapabilities } from './account-store-capabilities.js';
+import { createAccountStore } from './account-store.js';
 import {
   getProxyAllowedHosts,
   isExplicitLocalDevProxyAllowed,
@@ -1754,6 +1756,9 @@ async function handleDeleteStoredImage(req, res, imageId) {
 
 
 function readAdminToken(req, parsedBody = null) {
+  const authorization = String(req.headers?.authorization || '').trim();
+  const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  if (bearer) return bearer;
   const headerValue = req.headers?.[ADMIN_TOKEN_HEADER] || req.headers?.[ADMIN_TOKEN_HEADER.toLowerCase()];
   return String(headerValue || parsedBody?.adminToken || '').trim();
 }
@@ -1779,6 +1784,243 @@ function requireConfigAdmin(req, res, parsedBody = null) {
     return false;
   }
   return true;
+}
+
+function handleAdminSession(req, res) {
+  if (!requireConfigAdmin(req, res)) return;
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, role: 'admin' }));
+}
+
+function handleAdminSecurity(req, res) {
+  const runtime = configService.getRuntimeConfig();
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    ok: true,
+    security: {
+      adminTokenConfigured: runtime.config?.security?.adminTokenConfigured === true,
+    },
+    capabilities: runtime.capabilities || {},
+  }));
+}
+
+function handleAccountCapabilities(req, res) {
+  const env = typeof configService.getEnvMapForRuntimeConfig === 'function'
+    ? configService.getEnvMapForRuntimeConfig(undefined, { preserveSecrets: true })
+    : process.env;
+  const capabilities = resolveAccountStoreCapabilities({
+    env,
+    isServerless: isServerlessRuntime(),
+    dataDir: DATA_DIR,
+  });
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(capabilities));
+}
+
+function getAccountStoreContext(env = null) {
+  return createAccountStore({
+    env: env || (typeof configService.getEnvMapForRuntimeConfig === 'function'
+      ? configService.getEnvMapForRuntimeConfig(undefined, { preserveSecrets: true })
+      : process.env),
+    isServerless: isServerlessRuntime(),
+    dataDir: DATA_DIR,
+    configDir: configService.configDir,
+  });
+}
+
+function sendJson(res, status, payload) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(payload));
+}
+
+function accountStoreUnavailable(res, capabilities) {
+  sendJson(res, 501, {
+    ok: false,
+    error: 'Server account store is not available',
+    store: capabilities?.store || null,
+  });
+  return null;
+}
+
+function getAvailableAccountStore(res) {
+  const context = getAccountStoreContext();
+  if (!context.store) return accountStoreUnavailable(res, context.capabilities);
+  return context;
+}
+
+function sanitizeAccountPayload(parsed = {}) {
+  const source = parsed?.account && typeof parsed.account === 'object' ? parsed.account : parsed;
+  return source && typeof source === 'object' ? source : {};
+}
+
+function sanitizeAccountImportPayload(parsed = {}) {
+  const accounts = Array.isArray(parsed?.accounts) ? parsed.accounts : [];
+  return accounts
+    .filter((item) => item && typeof item === 'object' && !Array.isArray(item))
+    .slice(0, 50)
+    .map((item) => ({
+      ...item,
+      id: String(item.id || '').trim() || crypto.randomUUID(),
+    }));
+}
+
+function accountStoreError(res, error, fallbackMessage = 'Account store operation failed') {
+  const status = Number(error?.status || 400);
+  sendJson(res, status >= 400 && status < 600 ? status : 400, {
+    ok: false,
+    error: error?.code === 'ACCOUNT_NOT_FOUND' ? 'Account not found' : fallbackMessage,
+  });
+}
+
+async function handleAccountsList(req, res) {
+  if (!requireConfigAdmin(req, res)) return;
+  const context = getAvailableAccountStore(res);
+  if (!context) return;
+  try {
+    const listing = await context.store.listAccounts();
+    sendJson(res, 200, {
+      ok: true,
+      ...listing,
+      store: context.capabilities.store,
+    });
+  } catch (error) {
+    accountStoreError(res, error, 'Failed to list accounts');
+  }
+}
+
+async function handleAccountCreate(req, res) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
+  if (!requireConfigAdmin(req, res, parsed)) return;
+  const context = getAvailableAccountStore(res);
+  if (!context) return;
+  try {
+    const accountInput = sanitizeAccountPayload(parsed);
+    const saved = await context.store.upsertAccount(accountInput, { activeId: parsed.activeId || accountInput.id });
+    const listing = await context.store.listAccounts();
+    const savedId = accountInput.id || saved.accounts.at(-1)?.id;
+    const account = listing.accounts.find((item) => item.id === savedId) || listing.accounts.at(-1) || null;
+    sendJson(res, 201, {
+      ok: true,
+      activeId: listing.activeId,
+      account,
+      accounts: listing.accounts,
+      store: context.capabilities.store,
+    });
+  } catch (error) {
+    accountStoreError(res, error, 'Failed to save account');
+  }
+}
+
+async function handleAccountPatch(req, res, accountId) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
+  if (!requireConfigAdmin(req, res, parsed)) return;
+  const context = getAvailableAccountStore(res);
+  if (!context) return;
+  try {
+    const patch = sanitizeAccountPayload(parsed);
+    await context.store.patchAccount(accountId, patch, { activeId: parsed.activeId });
+    const listing = await context.store.listAccounts();
+    const account = listing.accounts.find((item) => item.id === accountId) || null;
+    sendJson(res, 200, {
+      ok: true,
+      activeId: listing.activeId,
+      account,
+      accounts: listing.accounts,
+      store: context.capabilities.store,
+    });
+  } catch (error) {
+    accountStoreError(res, error, 'Failed to update account');
+  }
+}
+
+async function handleAccountsImportLocal(req, res) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
+  if (!requireConfigAdmin(req, res, parsed)) return;
+  const context = getAvailableAccountStore(res);
+  if (!context) return;
+  try {
+    const importedAccounts = sanitizeAccountImportPayload(parsed);
+    const current = typeof context.store.loadAccounts === 'function'
+      ? await context.store.loadAccounts({ includeSecrets: true })
+      : { activeId: null, accounts: [] };
+    const byId = new Map((current.accounts || []).map((item) => [item.id, item]));
+    for (const account of importedAccounts) byId.set(account.id, account);
+    const accounts = Array.from(byId.values()).slice(0, 50);
+    const requestedActiveId = String(parsed.activeId || '').trim();
+    const activeId = accounts.some((item) => item.id === requestedActiveId)
+      ? requestedActiveId
+      : (current.activeId || accounts[0]?.id || null);
+    await context.store.saveAccounts({ activeId, accounts });
+    const listing = await context.store.listAccounts();
+    sendJson(res, 200, {
+      ok: true,
+      imported: importedAccounts.length,
+      activeId: listing.activeId,
+      accounts: listing.accounts,
+      store: context.capabilities.store,
+    });
+  } catch (error) {
+    accountStoreError(res, error, 'Failed to import browser accounts');
+  }
+}
+
+async function handleAccountStoreTest(req, res) {
+  const parsed = await readJsonBody(req, res);
+  if (!parsed) return;
+  if (!requireConfigAdmin(req, res, parsed)) return;
+  try {
+    const env = typeof configService.getEnvMapForRuntimeConfig === 'function'
+      ? configService.getEnvMapForRuntimeConfig(parsed.config || parsed.runtime || parsed, { preserveSecrets: true })
+      : process.env;
+    const context = getAccountStoreContext(env);
+    const store = context.capabilities?.store || null;
+    if (!context.store || !store?.available || store.type === 'browser') {
+      sendJson(res, 200, {
+        ok: false,
+        store,
+        message: '当前未启用可测试的服务端账号存储，将继续使用浏览器缓存。',
+      });
+      return;
+    }
+    const listing = await context.store.listAccounts();
+    sendJson(res, 200, {
+      ok: true,
+      store,
+      accountCount: Array.isArray(listing.accounts) ? listing.accounts.length : 0,
+      message: store.type === 'upstash' ? 'Upstash 账号存储连接正常。' : '服务端账号存储可用。',
+    });
+  } catch (error) {
+    accountStoreError(res, error, 'Failed to test account store');
+  }
+}
+
+async function handleAccountDelete(req, res, accountId) {
+  if (!requireConfigAdmin(req, res)) return;
+  const context = getAvailableAccountStore(res);
+  if (!context) return;
+  try {
+    const before = await context.store.listAccounts();
+    if (!before.accounts.some((item) => item.id === accountId)) {
+      const error = new Error('Account not found');
+      error.status = 404;
+      error.code = 'ACCOUNT_NOT_FOUND';
+      throw error;
+    }
+    await context.store.deleteAccount(accountId);
+    const listing = await context.store.listAccounts();
+    sendJson(res, 200, {
+      ok: true,
+      deletedId: accountId,
+      activeId: listing.activeId,
+      accounts: listing.accounts,
+      store: context.capabilities.store,
+    });
+  } catch (error) {
+    accountStoreError(res, error, 'Failed to delete account');
+  }
 }
 
 function handleConfigRuntime(req, res) {
@@ -1948,6 +2190,28 @@ export const server = http.createServer((req, res) => {
 
     if (url.pathname === '/api/proxy' && req.method === 'POST') {
       return run(() => handleProxy(req, res));
+    } else if (url.pathname === '/api/admin/session' && req.method === 'GET') {
+      return run(() => handleAdminSession(req, res));
+    } else if (url.pathname === '/api/admin/security' && req.method === 'GET') {
+      return run(() => handleAdminSecurity(req, res));
+    } else if (url.pathname === '/api/accounts/capabilities' && req.method === 'GET') {
+      return run(() => handleAccountCapabilities(req, res));
+    } else if (url.pathname === '/api/accounts' && req.method === 'GET') {
+      return run(() => handleAccountsList(req, res));
+    } else if (url.pathname === '/api/accounts' && req.method === 'POST') {
+      return run(() => handleAccountCreate(req, res));
+    } else if (url.pathname === '/api/accounts/import-local' && req.method === 'POST') {
+      return run(() => handleAccountsImportLocal(req, res));
+    } else if (url.pathname === '/api/accounts/store/test' && req.method === 'POST') {
+      return run(() => handleAccountStoreTest(req, res));
+    } else if (url.pathname.startsWith('/api/accounts/') && req.method === 'PATCH') {
+      const accountId = safeDecodePathComponent(url.pathname.slice('/api/accounts/'.length).replace(/\/+$/, ''), res);
+      if (accountId === null) return;
+      return run(() => handleAccountPatch(req, res, accountId));
+    } else if (url.pathname.startsWith('/api/accounts/') && req.method === 'DELETE') {
+      const accountId = safeDecodePathComponent(url.pathname.slice('/api/accounts/'.length).replace(/\/+$/, ''), res);
+      if (accountId === null) return;
+      return run(() => handleAccountDelete(req, res, accountId));
     } else if (url.pathname === '/api/config/runtime' && req.method === 'GET') {
       return run(() => handleConfigRuntime(req, res));
     } else if (url.pathname === '/api/config/editable' && req.method === 'GET') {

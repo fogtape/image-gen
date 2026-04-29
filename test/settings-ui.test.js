@@ -8,12 +8,12 @@ const errorDialog = fs.readFileSync(new URL('../frontend/error-dialog.js', impor
 const stateSource = fs.readFileSync(new URL('../frontend/state.js', import.meta.url), 'utf8');
 const css = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
 
-test('顶部提供独立设置入口并包含生成、水印、存储分组', () => {
+test('顶部提供独立设置入口并包含生成、外观、存储分组', () => {
   assert.match(html, /id="openSettings"/);
   assert.match(html, /id="settingsOverlay"/);
-  assert.match(html, />生成设置</);
+  assert.match(html, />生成默认值</);
   assert.match(html, />水印设置</);
-  assert.match(html, />存储管理</);
+  assert.match(html, />存储与同步</);
 });
 
 test('设置面板支持默认尺寸质量格式和成熟水印配置', () => {
@@ -62,7 +62,7 @@ test('设置会参与后台生成任务且不依赖刷新内存结果', () => {
   assert.match(html, /清理页面和图片/);
   assert.match(app, /if \(scope === 'conversations'\)[\s\S]*?return;/);
   assert.match(app, /if \(scope === 'all'\)[\s\S]*?clearActiveJob\(\)/);
-  assert.match(app, /headers:\s*getConfigRequestHeaders\(\)/);
+  assert.match(app, /adminFetch\('\/api\/storage\/clear'/);
 });
 
 test('提示词增强默认关闭，开启后可选择自动或手动修饰', () => {
@@ -130,7 +130,7 @@ test('设置保存失败会标记为设置错误，不再显示成图片生成�
   assert.match(app, /if \(resp\.status === 404\) throw markConfigApiUnavailable\(resp\.status\)/);
 });
 
-test('账号管理弹窗按 API Key、ChatGPT 登录和高级设置三段分流', () => {
+test('设置中心账号分区按 API Key、ChatGPT 登录和保存位置三段分流', () => {
   assert.match(html, /class="account-tabs"[^>]*role="tablist"/);
   assert.match(html, /id="accountTabApi"[^>]*role="tab"[^>]*aria-controls="accountPanelApi"/);
   assert.match(html, /id="accountTabOauth"[^>]*role="tab"[^>]*aria-controls="accountPanelOauth"/);

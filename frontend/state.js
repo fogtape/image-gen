@@ -43,6 +43,7 @@ export const state = {
   data: { activeId: null, accounts: [], useProxy: false },
   serverConfig: null,
   serverCapabilities: null,
+  accountStoreCapabilities: null,
   configSchema: null,
   appSettings: cloneDefaultSettings(),
   refImagesBase64: [],

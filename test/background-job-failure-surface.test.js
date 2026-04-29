@@ -20,3 +20,14 @@ test('图片持久化失败会进入后台任务进度并在前端显示可理�
   assert.match(app, /'storage:partial': '部分图片保存历史失败，生成结果仍可查看'/);
   assert.match(app, /'storage:error': '图片历史保存失败，生成结果仍可查看'/);
 });
+
+test('后台任务已明确 failed 时应终止轮询并展示上游真实错误，而不是当成连接波动继续保留任务', () => {
+  assert.match(
+    app,
+    /if \(job\.status === 'failed'\) \{[\s\S]*clearActiveJob\(\);[\s\S]*const err = new Error\(normalizeGenerationError\(job\.errorInfo\?\.message \|\| job\.error \|\| '后台生成失败'\)\);[\s\S]*err\.isBackgroundJobTerminalFailure = true;[\s\S]*throw err;[\s\S]*\}/s,
+  );
+  assert.match(
+    app,
+    /function isRetryableBackgroundJobError\(error\) \{[\s\S]*if \(error\?\.isBackgroundJobTerminalFailure\) return false;[\s\S]*\}/s,
+  );
+});

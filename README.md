@@ -23,7 +23,10 @@ Docker 镜像：`fogtape/image-gen:latest`
 - 图片历史：保存生成结果、收藏、搜索、删除、继续作为参考图
 - 水印：自定义文字、时间、相机时间、阴影、半透明底板、位置和字号
 - 提示词润色：手动润色或生成前自动润色
-- 服务端配置中心：默认 API 地址、模型、尺寸、质量、格式、水印、存储等
+- 统一设置中心与管理员解锁：输入管理口令后默认拥有全部管理权限
+- 账号级 API 地址：在每个 API Key 账号里填写“此账号的 API 地址”
+- 服务端配置中心：默认模型、尺寸、质量、格式、水印、存储、部署同步等
+- 服务端优先账号存储：Node / Docker 加密文件、云平台 Upstash、浏览器 fallback
 - 安全导入 / 导出：安全导出不包含 API key、OAuth token、Cookie、session；完整导出必须加密
 - Docker / Node / Vercel / Netlify / Cloudflare Pages / EdgeOne Pages 部署
 
@@ -71,6 +74,14 @@ npm run dev
 ```text
 http://localhost:3000
 ```
+
+首次使用推荐路径：
+
+1. 打开右上角“设置中心”。
+2. 如需保存服务端配置或服务端账号，先在“管理员”里输入管理口令解锁。
+3. 在“账号”里添加 API Key 账号，或登录 ChatGPT 账号。
+4. API 地址在账号编辑里的“此账号的 API 地址”填写；不要再去找服务端默认 API 地址。
+5. 点击“测试当前账号连接”，成功后回到首页生成图片。
 
 Node 服务默认从 `dist/` 提供前端静态文件。修改 `index.html`、`app.js`、`style.css` 后，重新运行：
 
@@ -127,12 +138,22 @@ docker run --rm -p 3000:3000 image-gen:local
 
 这样可以保证：
 
-- 前端保存服务端配置时，写入宿主机 `config/.env`
-- 容器重建后配置还在
-- 图片历史保存到 `data/`
-- 容器更新不会丢历史图片
+- 前端保存服务端配置时，会落到宿主机 `config/.env`
+- 服务端账号加密 key 会保存在 `config/.account-store-key`（如果没有通过 env 显式提供）
+- API Key / OAuth 账号会加密保存到 `data/accounts.enc.json`
+- 服务端 watcher 会检测文件变化
+- 配置支持热更新
+- 历史图片等数据会持久化到 `data/`
 
 Docker 镜像构建时只复制 `config/.env.example`，不会把本地 `config/.env`、`data/`、`.oauth-sessions.json` 或 `.tmp_*` 临时文件打进镜像。容器首次启动时如果没有挂载自己的 `config/.env`，服务端会按模板生成默认配置。
+
+如果你**没有同时挂载 `config/` 和 `data/`**，那会有几个问题：
+
+1. 容器重建后配置丢失
+2. 服务端账号文件或账号加密 key 丢失，导致换浏览器/重建容器后无法复用账号
+3. 前端保存配置后即使容器内生效，也不便于长期维护
+
+所以 Docker 场景下，**强烈建议使用 compose 或手动同时挂载 `config/` 与 `data/`**。
 
 存储清理 scope 的含义：
 
@@ -142,31 +163,41 @@ Docker 镜像构建时只复制 `config/.env.example`，不会把本地 `config/
 
 ## 添加账号
 
-打开页面后，点右上角账号管理。
+打开页面后，点右上角“设置中心”，在“账号”分区添加 API Key 账号或 ChatGPT OAuth 账号。需要服务端保存账号时，先在“管理员”分区解锁；解锁后默认拥有所有管理权限，不需要在各个设置区重复填写口令。
 
 ### API Key 账号
 
 填写：
 
 - 账号名称
-- API 地址，例如 `https://api.openai.com` 或你的 OpenAI 兼容中转地址
+- 此账号的 API 地址，例如 `https://api.openai.com` 或你的 OpenAI 兼容中转地址
 - API Key
 - 图片模型，通常是 `gpt-image-2`
 - 如果你的中转支持 Responses 生图，可以打开流式模式并填写 Responses 模型
 
-账号信息保存在当前浏览器 localStorage，不会自动写入服务端配置或云平台环境变量。
+API 地址已经回到账号维度：在“账号 → API Key 账号 → 此账号的 API 地址”中填写。服务端仍保留旧 `IMAGE_GEN_DEFAULT_API_URL` / `providerDefaults.apiUrl` 作为兼容和新账号预填，不再作为新用户主入口。
 
 ### ChatGPT OAuth 账号
 
 适合没有 API Key，但想用 ChatGPT 账号授权尝试图片生成的场景。
 
-OAuth token 也保存在当前浏览器 / 后端会话相关流程中，不会被同步到云平台环境变量。
+OAuth token 不会被同步到云平台环境变量。管理员解锁且服务端账号存储可用时，OAuth 账号会和 API Key 账号一样优先加密保存到服务端。
+
+### 账号存储模式
+
+- **Node / Docker**：默认使用服务端文件账号存储，写入 `data/accounts.enc.json`；加密 key 来自 `IMAGE_GEN_ACCOUNT_ENCRYPTION_KEY`，未设置时会生成 `config/.account-store-key`。
+- **云平台**：设置 `IMAGE_GEN_ACCOUNT_STORE=upstash` 并配置 Upstash REST URL / Token / 账号加密 Key 后，账号写入 Upstash。
+- **无服务端账号存储**：自动回退浏览器缓存，旧用户路径不受影响。
+
+Upstash 配置入口在“设置中心 → 存储与同步 → 账号存储配置”。保存后不会回显 REST URL、REST Token 或账号加密 Key；可以点击“测试账号存储”确认连接。
+
+浏览器副本会保留作为 fallback，因此服务端同步失败不会阻止你继续生成。服务端账号列表接口只返回脱敏元数据，不会把 API Key、OAuth access token、refresh token 或 Upstash token 回显到前端。
 
 ## ChatGPT OAuth 登录流程
 
 OAuth 登录大致流程：
 
-1. 在账号管理里切到 **ChatGPT 登录**。
+1. 在设置中心的账号分区切到 **ChatGPT 登录**。
 2. 点击登录按钮。
 3. 页面请求后端创建 OAuth 会话，后端返回 `授权链接`。
 4. 浏览器打开 OpenAI / ChatGPT 的授权页面。
@@ -219,21 +250,21 @@ dist
 - ⚠️：可用但有明显降级、前提或生命周期限制
 - ❌：该部署形态下当前不可用
 
-| 部署方式 | 静态页面 | 浏览器直连生图 | 服务端代理 `/api/proxy` | OAuth 后端 | 后台任务 | 图片持久化 | 服务端配置保存 | 平台同步/重部署 | 说明 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| Node / VPS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ 本地无需远程重部署 | 最完整形态；适合正式自用和长期后台生图。 |
-| Docker / Compose | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ 需挂载 `./data` | ✅ 需挂载 `./config` | ⚠️ 本地无需远程重部署 | 推荐部署方式；配置和图片历史可持久化。 |
-| Vercel | ✅ | ✅ | ✅ | ✅ | ⚠️ serverless 中同步执行并直接返回结果 | ⚠️ serverless 本地文件不可当长期存储 | ⚠️ 当前实例运行态可保存，持久化需同步平台 env 后重部署 | ✅ | 云端形态里最完整，但后台任务不做跨实例长轮询。 |
-| Netlify | ✅ | ✅ | ✅ | ⚠️ 仅 `/api/oauth/images`，缺 `start/exchange/status/stream` | ❌ | ❌ | ❌ | ❌ | 当前只提供 `proxy` 和部分 OAuth 生图函数；配置中心和后台任务需 Node/Vercel 形态。 |
-| Cloudflare Pages | ✅ | ✅ 需要目标 API 支持 CORS | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 当前仓库提供纯静态 Pages 构建；Cloudflare handler 只是在 Node/Vercel 配置中心里管理外部 Worker/Script env。 |
-| EdgeOne Pages | ✅ | ✅ 需要目标 API 支持 CORS | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 当前仓库提供纯静态 Pages 构建；EdgeOne handler 只是在 Node/Vercel 配置中心里调用 Pages API。 |
+| 部署方式 | 静态页面 | 浏览器直连生图 | 服务端代理 `/api/proxy` | OAuth 后端 | 后台任务 | 图片持久化 | 服务端配置保存 | 账号存储 | 平台同步/重部署 | 说明 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| Node / VPS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ 服务端文件 | ⚠️ 本地无需远程重部署 | 最完整形态；`config/.env`、`config/.account-store-key` 和 `data/` 可长期保留。 |
+| Docker / Compose | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ 需挂载 `./data` | ✅ 需挂载 `./config` | ✅ 需挂载 `./data` + `./config` | ⚠️ 本地无需远程重部署 | 推荐使用 compose，避免容器重建后配置、账号和历史丢失。 |
+| Vercel | ✅ | ✅ | ✅ | ✅ | ⚠️ serverless 中同步执行并直接返回结果 | ⚠️ serverless 本地文件不可当长期存储 | ⚠️ 当前实例运行态可保存，持久化需同步平台 env 后重部署 | ✅ 配置 Upstash；否则浏览器缓存 | ✅ | 当前最完整的云端 serverless 形态；后台任务不做跨实例长轮询。 |
+| Netlify | ✅ | ✅ | ✅ | ⚠️ 仅 `/api/oauth/images`，缺 `start/exchange/status/stream` | ❌ | ❌ | ❌ | ⚠️ 浏览器缓存 | ❌ | 当前只提供 `proxy` 和部分 OAuth 生图函数；配置中心和后台任务需 Node/Vercel 形态。 |
+| Cloudflare Pages | ✅ | ✅ 需要目标 API 支持 CORS | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ 浏览器缓存 | ❌ | 当前仓库提供纯静态 Pages 构建；Cloudflare handler 只是在 Node/Vercel 配置中心里管理外部 Worker/Script env。 |
+| EdgeOne Pages | ✅ | ✅ 需要目标 API 支持 CORS | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ 浏览器缓存 | ❌ | 当前仓库提供纯静态 Pages 构建；EdgeOne handler 只是在 Node/Vercel 配置中心里调用 Pages API。 |
 
 关键结论：
 
-- 要完整体验：选 **Node / VPS** 或 **Docker / Compose**。
-- 要免服务器且能接受 serverless 限制：选 **Vercel**。
-- 只是展示页面或临时使用：选 **Cloudflare Pages / EdgeOne Pages / Netlify**。
-- 云平台后台生图不太好用，不建议把长任务体验寄托在纯静态 Pages 或短生命周期 serverless 上。
+- 想要完整的配置中心、后台任务、OAuth 后端和图片历史：优先选 **Node / Docker**。
+- 想要云端免服务器且功能尽量完整：优先选 **Vercel**，并配置 **Upstash** 作为账号存储。
+- 只想快速上线前端页面：**Netlify / Cloudflare Pages / EdgeOne Pages** 可以零配置导入，但要接受后端能力降级。
+- 浏览器直连生图依赖目标 API 的 CORS；如果目标 API 不允许跨域，就需要 Node / Docker / Vercel / Netlify 的 `/api/proxy`。
 
 ## 云平台说明
 
@@ -289,22 +320,22 @@ EdgeOne Pages 纯静态部署同样没有本项目的 Node 后端。项目里的
 
 浏览器本地保存：
 
-- 账号列表
-- API 地址 / API Key
-- OAuth 账号信息
+- 账号兼容副本：服务端账号存储不可用时继续可用
 - 当前激活账号
 - UI 偏好
 
 服务端配置保存：
 
-- 默认 API 地址
 - 默认图片模型 / Responses 模型
 - 默认尺寸、质量、格式、背景
 - 代理开关
 - 水印配置
 - 存储配置
+- 账号存储配置：文件 / Upstash / 浏览器 fallback，以及 Upstash 连接参数
 - 提示词润色配置
 - 部署平台配置
+
+API 地址已经回到账号维度：在“账号 → API Key 账号 → 此账号的 API 地址”中填写。服务端仍保留旧 `IMAGE_GEN_DEFAULT_API_URL` / `providerDefaults.apiUrl` 作为兼容和新账号预填，不再作为新用户主入口。
 
 在 Node / Docker 中，保存服务端配置会写入 `config/.env` 并热更新。云平台环境变量需要同步后重新部署。
 
@@ -329,12 +360,15 @@ IMAGE_GEN_DEPLOY_AUTO_REDEPLOY=true
 | `IMAGE_GEN_ENV_FILE` | 配置文件路径，默认 `IMAGE_GEN_CONFIG_DIR/.env` |
 | `IMAGE_GEN_DATA_DIR` | 图片历史目录，Docker 推荐 `/app/data` 并挂载宿主机目录 |
 | `IMAGE_GEN_STATIC_DIR` | 静态文件目录，默认 `dist/` |
+| `IMAGE_GEN_ACCOUNT_STORE_ENCRYPTION_KEY` | `IMAGE_GEN_ACCOUNT_ENCRYPTION_KEY` 的兼容别名 |
+| `UPSTASH_REDIS_REST_URL` | `IMAGE_GEN_UPSTASH_REDIS_REST_URL` 的兼容别名 |
+| `UPSTASH_REDIS_REST_TOKEN` | `IMAGE_GEN_UPSTASH_REDIS_REST_TOKEN` 的兼容别名 |
 
 ### 默认生成配置
 
 | 变量名 | 说明 |
 |---|---|
-| `IMAGE_GEN_DEFAULT_API_URL` | 默认 OpenAI 兼容 API 地址 |
+| `IMAGE_GEN_DEFAULT_API_URL` | 旧版默认 API 地址 / 新账号预填兼容；新用户请在账号编辑里填“此账号的 API 地址” |
 | `IMAGE_GEN_DEFAULT_IMAGE_MODEL` | 默认图片模型，通常是 `gpt-image-2` |
 | `IMAGE_GEN_DEFAULT_RESPONSES_MODEL` | 默认 Responses 模型 |
 | `IMAGE_GEN_DEFAULT_STREAM_MODE` | 是否默认启用 Responses 流式生图 |
@@ -367,6 +401,18 @@ IMAGE_GEN_DEPLOY_AUTO_REDEPLOY=true
 | `IMAGE_GEN_PROMPT_ENHANCEMENT_MODEL` | 润色模型，空值则跟随账号模型 |
 | `IMAGE_GEN_PROMPT_ENHANCEMENT_MODE` | 润色风格 |
 | `IMAGE_GEN_PROMPT_ENHANCEMENT_LANGUAGE` | 语言偏好 |
+
+### 账号存储 / Upstash
+
+| 变量名 | 说明 |
+|---|---|
+| `IMAGE_GEN_ACCOUNT_STORE` | `auto` / `file` / `upstash` / `browser`。默认 `auto`：Node / Docker 用文件，serverless 有 Upstash 则用 Upstash，否则浏览器缓存。 |
+| `IMAGE_GEN_ACCOUNT_STORE_NAMESPACE` | Upstash / 账号存储命名空间，默认 `image-gen`。 |
+| `IMAGE_GEN_ACCOUNT_STORE_FILE` | Node / Docker 账号加密文件路径，默认 `data/accounts.enc.json`。 |
+| `IMAGE_GEN_DEPLOYMENT_ID` | 账号存储隔离 ID，默认 `default`；多环境共用 Upstash 时建议显式设置。 |
+| `IMAGE_GEN_ACCOUNT_ENCRYPTION_KEY` | 账号存储加密 Key；Upstash 必填，Node / Docker 未填时会生成 `config/.account-store-key`。 |
+| `IMAGE_GEN_UPSTASH_REDIS_REST_URL` | Upstash Redis REST URL；配置后不会在 runtime 响应中回显。 |
+| `IMAGE_GEN_UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST Token；配置后不会在 runtime 响应中回显。 |
 
 ### 云平台配置
 
@@ -401,6 +447,45 @@ IMAGE_GEN_DEPLOY_AUTO_REDEPLOY=true
 | `IMAGE_GEN_PLATFORM_API_TIMEOUT_MS` | 平台 API 调用超时 |
 | `REQUIRE_DOCKER_SMOKE` | 设为 `1` 时 Docker smoke 不可用会让发布门禁失败 |
 
+### Serverless 行为差异
+
+- **Node / Docker**：会读取并维护本地 `config/.env`，支持 watcher 热更新、后台任务轮询、图片持久化、服务端文件账号存储、完整 `/api/proxy` 和 OAuth 后端。
+- **Vercel**：初始化时只读取环境变量，不创建本地配置文件；后台任务在 serverless 中同步完成并直接返回结果。账号长期保存请配置 Upstash，否则回退浏览器缓存。
+- **Netlify**：当前只提供 JSON proxy 和部分 OAuth 生图函数；没有完整配置中心、后台任务和图片持久化。
+- **Cloudflare Pages / EdgeOne Pages**：默认是静态站点导入；仓库内 handler 主要用于 Node / Vercel 配置中心里管理对应平台环境变量，不等于 Pages 静态站点天然具备完整后端。
+
+## 前端保存 + 云端同步 + 重新部署的工作流
+
+### Node / Docker
+
+1. 前端修改服务端默认配置
+2. 点击保存
+3. 配置写入 `config/.env`
+4. watcher 自动热更新
+5. 无需重启
+6. 管理员解锁后新增/编辑账号会优先写入 `data/accounts.enc.json`，浏览器副本作为 fallback 保留
+
+### 云平台
+
+1. 在“存储与同步”里选择 Upstash，填写 REST URL / Token / 账号加密 Key
+2. 点击“测试账号存储”确认 Upstash 可用
+3. 前端修改服务端默认配置并点击保存（先写当前运行态配置）
+4. 点击“平台校验”确认 `accountId/projectId/token` 正确
+5. 点击“同步平台变量”
+6. 如平台需要，点击“重新部署”
+7. 新部署实例读取最新环境变量，账号继续写入 Upstash
+
+### 自动模式
+
+如果你打开：
+
+- `IMAGE_GEN_DEPLOY_AUTO_SYNC=true`
+- `IMAGE_GEN_DEPLOY_AUTO_REDEPLOY=true`
+
+那么保存服务端配置时会自动执行平台变量同步和重新部署，并在接口响应的 `operations` 里返回每一步结果。
+
+如果你刚开始配置平台 token，建议先关闭自动模式，手动点击“平台校验 / 同步平台变量 / 重新部署”确认成功后再打开。
+
 ## 代理说明
 
 如果目标 OpenAI 兼容 API 不支持浏览器 CORS，可以在账号设置里开启代理。
@@ -425,6 +510,10 @@ npm test
 ```bash
 npm run build
 ```
+
+管理员鉴权、设置中心、账号存储与 Upstash 改造记录见：
+
+- `docs/admin-auth-settings-account-store-tracking-2026-04-29.md`
 
 发布镜像前门禁：
 
@@ -464,9 +553,15 @@ DOCKERHUB_TOKEN
 
 因为 Vercel / Netlify 这类 serverless 平台请求生命周期短，实例之间不共享内存；Cloudflare Pages / EdgeOne Pages 默认又是纯静态页面。长时间后台生图更适合 Node / Docker 常驻进程。
 
-### 为什么保存配置后，浏览器里的账号没变？
+### 账号到底保存在哪里？
 
-账号列表、API Key、OAuth token 默认存在浏览器本地 localStorage，不属于服务端默认配置。
+看设置中心里的“账号保存位置”：
+
+- Node / Docker 且管理员已解锁：优先保存到服务端加密文件。
+- 云平台配置 Upstash：优先保存到 Upstash。
+- 没有服务端账号存储、接口 404 或配置不完整：继续保存到当前浏览器缓存。
+
+浏览器副本会保留作为 fallback，因此同步失败不会阻止你继续生成。
 
 ### Docker 更新后配置或图片丢了怎么办？
 
@@ -482,6 +577,10 @@ DOCKERHUB_TOKEN
 ### API Key 和 token 应该放哪里？
 
 个人 API Key、OAuth token、平台 token 都不要提交到 Git 仓库。服务端管理口令和平台 token 建议放在 `config/.env` 或平台环境变量里，并限制访问权限。
+
+### Upstash 里会明文保存 API Key 或 OAuth token 吗？
+
+不会。账号存储在写入文件或 Upstash 前会使用 AES-GCM envelope 加密；列表接口和运行时配置接口都只返回脱敏状态，不回显 API Key、OAuth token、Upstash REST Token 或账号加密 Key。
 
 ## 产品路线与记录
 

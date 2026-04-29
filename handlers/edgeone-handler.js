@@ -1,13 +1,15 @@
 import { BaseHandler } from './base-handler.js';
-import { fetchJsonWithTimeout, redactMessage } from './platform-fetch.js';
+import { collectRequestBodyRedactions, fetchJsonWithTimeout, redactMessage } from './platform-fetch.js';
 
 async function postJson(token, data) {
+  const body = JSON.stringify(data);
+  const requestRedactions = [token, ...await collectRequestBodyRedactions(body)];
   const json = await fetchJsonWithTimeout('https://pages-api.cloud.tencent.com/v1', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  }, { redactions: [token] });
-  if (json?.Code && json.Code !== 0 && json?.data?.Code !== 0) throw new Error(redactMessage(json?.Message || json?.data?.Message || 'EdgeOne API failed', [token]));
+    body,
+  }, { redactions: requestRedactions });
+  if (json?.Code && json.Code !== 0 && json?.data?.Code !== 0) throw new Error(redactMessage(json?.Message || json?.data?.Message || 'EdgeOne API failed', requestRedactions));
   return json;
 }
 

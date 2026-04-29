@@ -181,3 +181,43 @@ test('EdgeOne check 不调用 ModifyPagesProjectEnvs，sync 才执行环境变�
     globalThis.fetch = originalFetch;
   }
 });
+
+test('EdgeOne 平台同步业务错误不会回显请求体中的账号存储 secret', async () => {
+  const originalFetch = globalThis.fetch;
+  const upstashToken = 'edgeone-handler-upstash-secret';
+  const encryptionKey = 'edgeone-handler-encryption-secret';
+  globalThis.fetch = async () => jsonResponse({
+    Code: 1001,
+    Message: `invalid env ${upstashToken} ${encryptionKey}`,
+  });
+
+  try {
+    const configService = createConfigService({ isServerless: true });
+    configService.setRuntimeConfig({
+      accountStore: {
+        type: 'upstash',
+        upstashRestUrl: 'https://edgeone-handler-upstash.example.invalid',
+        upstashRestToken: upstashToken,
+        encryptionKey,
+      },
+      deploy: {
+        platform: 'edgeone',
+        projectId: 'p18-edge-project',
+        apiToken: DEPLOY_TOKEN,
+      },
+    }, { preserveSecrets: true });
+    const handler = createPlatformHandler('edgeone', { configService });
+
+    await assert.rejects(
+      () => handler.sync(),
+      (error) => {
+        assert.match(error.message, /invalid env/);
+        assert.doesNotMatch(error.message, new RegExp(upstashToken));
+        assert.doesNotMatch(error.message, new RegExp(encryptionKey));
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

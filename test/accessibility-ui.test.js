@@ -21,7 +21,8 @@ test('P3.9 弹窗统一支持焦点陷阱、Escape 关闭和恢复焦点', () =>
   assert.match(dialogA11y, /restoreFocus/);
   assert.match(app, /openDialog\(\$\('#settingsOverlay'\)/);
   assert.match(app, /closeDialog\(\$\('#settingsOverlay'\)/);
-  assert.match(app, /openDialog\(\$\('#accountOverlay'\)/);
+  assert.match(app, /openSettingsCenter\('accounts'/);
+  assert.doesNotMatch(app, /openDialog\(\$\('#accountOverlay'\)/);
   assert.match(app, /openDialog\(\$\('#editOverlay'\)/);
   assert.match(app, /openDialog\(\$\('#lightbox'\)/);
   assert.match(errorDialog, /openDialog\(overlay,\s*\{\s*focusSelector:\s*'#generationErrorConfirm'/);

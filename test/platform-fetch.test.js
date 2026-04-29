@@ -48,6 +48,111 @@ test('platform fetch redacts bearer token from upstream error messages', async (
   }
 });
 
+test('platform fetch redacts sensitive environment values echoed from request body', async () => {
+  const originalFetch = globalThis.fetch;
+  const upstashToken = 'upstash-body-secret-token';
+  const encryptionKey = 'account-encryption-secret-key';
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    error: {
+      message: `invalid env values ${upstashToken} and ${encryptionKey}`,
+    },
+  }), {
+    status: 400,
+    headers: { 'Content-Type': 'application/json' },
+  });
+  try {
+    await assert.rejects(
+      fetchJsonWithTimeout('https://platform.example.test/api', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: 'IMAGE_GEN_UPSTASH_REDIS_REST_TOKEN',
+          value: upstashToken,
+          values: [{ context: 'all', value: encryptionKey, key: 'IMAGE_GEN_ACCOUNT_ENCRYPTION_KEY' }],
+        }),
+      }, { timeoutMs: 100 }),
+      (error) => {
+        assert.match(error.message, /invalid env values/);
+        assert.doesNotMatch(error.message, new RegExp(upstashToken));
+        assert.doesNotMatch(error.message, new RegExp(encryptionKey));
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('platform fetch redacts EdgeOne uppercase Key/Value env values echoed by upstream', async () => {
+  const originalFetch = globalThis.fetch;
+  const upstashToken = 'edgeone-upstash-body-secret';
+  const encryptionKey = 'edgeone-encryption-body-secret';
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    Message: `invalid EnvVars ${upstashToken} ${encryptionKey}`,
+  }), {
+    status: 400,
+    headers: { 'Content-Type': 'application/json' },
+  });
+  try {
+    await assert.rejects(
+      fetchJsonWithTimeout('https://platform.example.test/api', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          Action: 'ModifyPagesProjectEnvs',
+          EnvVars: [
+            { Key: 'IMAGE_GEN_UPSTASH_REDIS_REST_TOKEN', Value: upstashToken },
+            { Key: 'IMAGE_GEN_ACCOUNT_ENCRYPTION_KEY', Value: encryptionKey },
+          ],
+        }),
+      }, { timeoutMs: 100 }),
+      (error) => {
+        assert.match(error.message, /invalid EnvVars/);
+        assert.doesNotMatch(error.message, new RegExp(upstashToken));
+        assert.doesNotMatch(error.message, new RegExp(encryptionKey));
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('platform fetch redacts Cloudflare FormData settings env values echoed by upstream', async () => {
+  const originalFetch = globalThis.fetch;
+  const upstashToken = 'cloudflare-upstash-body-secret';
+  const encryptionKey = 'cloudflare-encryption-body-secret';
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    errors: [{ message: `invalid bindings ${upstashToken} ${encryptionKey}` }],
+  }), {
+    status: 400,
+    headers: { 'Content-Type': 'application/json' },
+  });
+  const formData = new FormData();
+  formData.append('settings', new Blob([JSON.stringify({
+    bindings: [
+      { name: 'IMAGE_GEN_UPSTASH_REDIS_REST_TOKEN', text: upstashToken, type: 'plain_text' },
+      { name: 'IMAGE_GEN_ACCOUNT_ENCRYPTION_KEY', text: encryptionKey, type: 'plain_text' },
+    ],
+  })], { type: 'application/json' }), 'settings.json');
+  try {
+    await assert.rejects(
+      fetchJsonWithTimeout('https://platform.example.test/api', {
+        method: 'PATCH',
+        body: formData,
+      }, { timeoutMs: 100 }),
+      (error) => {
+        assert.match(error.message, /invalid bindings/);
+        assert.doesNotMatch(error.message, new RegExp(upstashToken));
+        assert.doesNotMatch(error.message, new RegExp(encryptionKey));
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('platform fetch timeout env is bounded', () => {
   const previous = process.env.IMAGE_GEN_PLATFORM_API_TIMEOUT_MS;
   process.env.IMAGE_GEN_PLATFORM_API_TIMEOUT_MS = '1';

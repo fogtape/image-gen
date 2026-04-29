@@ -8,6 +8,7 @@ npm-debug.log*
 .env
 .env.*
 config/.env
+config/.account-store-key
 config/*.local
 config/*.secret
 !config/.env.example

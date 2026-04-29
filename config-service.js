@@ -34,6 +34,14 @@ const DEFAULT_RUNTIME_CONFIG = {
     background: true,
   },
   storage: { enabled: true },
+  accountStore: {
+    type: 'auto',
+    namespace: 'image-gen',
+    deploymentId: 'default',
+    upstashRestUrl: '',
+    upstashRestToken: '',
+    encryptionKey: '',
+  },
   promptEnhancement: {
     enabled: false,
     runMode: 'manual',
@@ -83,6 +91,14 @@ const CONFIG_SCHEMA = {
   },
   storage: {
     enabled: { env: 'IMAGE_GEN_STORAGE_ENABLED', type: 'boolean' },
+  },
+  accountStore: {
+    type: { env: 'IMAGE_GEN_ACCOUNT_STORE', type: 'string' },
+    namespace: { env: 'IMAGE_GEN_ACCOUNT_STORE_NAMESPACE', type: 'string' },
+    deploymentId: { env: 'IMAGE_GEN_DEPLOYMENT_ID', type: 'string' },
+    upstashRestUrl: { env: 'IMAGE_GEN_UPSTASH_REDIS_REST_URL', type: 'string', secret: true },
+    upstashRestToken: { env: 'IMAGE_GEN_UPSTASH_REDIS_REST_TOKEN', type: 'string', secret: true },
+    encryptionKey: { env: 'IMAGE_GEN_ACCOUNT_ENCRYPTION_KEY', type: 'string', secret: true },
   },
   promptEnhancement: {
     enabled: { env: 'IMAGE_GEN_PROMPT_ENHANCEMENT_ENABLED', type: 'boolean' },
@@ -263,6 +279,15 @@ function validateRuntimeConfig(input = {}) {
   const storage = source.storage || {};
   cfg.storage.enabled = storage.enabled !== false;
 
+  const accountStore = source.accountStore || {};
+  const accountStoreType = String(accountStore.type || DEFAULT_RUNTIME_CONFIG.accountStore.type).trim().toLowerCase();
+  cfg.accountStore.type = ['auto', 'browser', 'file', 'upstash'].includes(accountStoreType) ? accountStoreType : DEFAULT_RUNTIME_CONFIG.accountStore.type;
+  cfg.accountStore.namespace = String(accountStore.namespace || DEFAULT_RUNTIME_CONFIG.accountStore.namespace).trim().slice(0, 120) || DEFAULT_RUNTIME_CONFIG.accountStore.namespace;
+  cfg.accountStore.deploymentId = String(accountStore.deploymentId || DEFAULT_RUNTIME_CONFIG.accountStore.deploymentId).trim().slice(0, 120) || DEFAULT_RUNTIME_CONFIG.accountStore.deploymentId;
+  cfg.accountStore.upstashRestUrl = String(accountStore.upstashRestUrl || '').trim().replace(/\/+$/, '');
+  cfg.accountStore.upstashRestToken = String(accountStore.upstashRestToken || '').trim();
+  cfg.accountStore.encryptionKey = String(accountStore.encryptionKey || '').trim();
+
   const prompt = source.promptEnhancement || {};
   cfg.promptEnhancement.enabled = prompt.enabled === true;
   cfg.promptEnhancement.runMode = prompt.runMode === 'auto' ? 'auto' : 'manual';
@@ -289,6 +314,14 @@ function toPublicConfig(config) {
     generation: deepClone(cfg.generation),
     watermark: deepClone(cfg.watermark),
     storage: deepClone(cfg.storage),
+    accountStore: {
+      type: cfg.accountStore.type,
+      namespace: cfg.accountStore.namespace,
+      deploymentId: cfg.accountStore.deploymentId,
+      upstashRestUrlConfigured: !!cfg.accountStore.upstashRestUrl,
+      upstashRestTokenConfigured: !!cfg.accountStore.upstashRestToken,
+      encryptionKeyConfigured: !!cfg.accountStore.encryptionKey,
+    },
     promptEnhancement: deepClone(cfg.promptEnhancement),
     deploy: {
       platform: cfg.deploy.platform,
@@ -313,6 +346,14 @@ function toEditableConfig(config) {
     generation: deepClone(cfg.generation),
     watermark: deepClone(cfg.watermark),
     storage: deepClone(cfg.storage),
+    accountStore: {
+      type: cfg.accountStore.type,
+      namespace: cfg.accountStore.namespace,
+      deploymentId: cfg.accountStore.deploymentId,
+      upstashRestUrlConfigured: !!cfg.accountStore.upstashRestUrl,
+      upstashRestTokenConfigured: !!cfg.accountStore.upstashRestToken,
+      encryptionKeyConfigured: !!cfg.accountStore.encryptionKey,
+    },
     promptEnhancement: deepClone(cfg.promptEnhancement),
     deploy: {
       platform: cfg.deploy.platform,
@@ -410,6 +451,55 @@ function getEnvMapForPlatformSync(config = currentConfig) {
   delete envMap.IMAGE_GEN_DEPLOY_API_TOKEN;
   return envMap;
 }
+
+  function mergeNextRuntimeConfig(nextConfig, { preserveSecrets = true } = {}) {
+    return validateRuntimeConfig({
+      ...currentConfig,
+      ...nextConfig,
+      providerDefaults: { ...currentConfig.providerDefaults, ...(nextConfig.providerDefaults || {}) },
+      generation: { ...currentConfig.generation, ...(nextConfig.generation || {}) },
+      watermark: { ...currentConfig.watermark, ...(nextConfig.watermark || {}) },
+      storage: { ...currentConfig.storage, ...(nextConfig.storage || {}) },
+      accountStore: {
+        ...currentConfig.accountStore,
+        ...(nextConfig.accountStore || {}),
+        upstashRestUrl: preserveSecrets && nextConfig?.accountStore && !('upstashRestUrl' in nextConfig.accountStore)
+          ? currentConfig.accountStore.upstashRestUrl
+          : String(nextConfig?.accountStore?.upstashRestUrl ?? currentConfig.accountStore.upstashRestUrl ?? ''),
+        upstashRestToken: preserveSecrets && nextConfig?.accountStore && !('upstashRestToken' in nextConfig.accountStore)
+          ? currentConfig.accountStore.upstashRestToken
+          : String(nextConfig?.accountStore?.upstashRestToken ?? currentConfig.accountStore.upstashRestToken ?? ''),
+        encryptionKey: preserveSecrets && nextConfig?.accountStore && !('encryptionKey' in nextConfig.accountStore)
+          ? currentConfig.accountStore.encryptionKey
+          : String(nextConfig?.accountStore?.encryptionKey ?? currentConfig.accountStore.encryptionKey ?? ''),
+      },
+      promptEnhancement: { ...currentConfig.promptEnhancement, ...(nextConfig.promptEnhancement || {}) },
+      deploy: {
+        ...currentConfig.deploy,
+        ...(nextConfig.deploy || {}),
+        accountId: preserveSecrets && nextConfig?.deploy && !('accountId' in nextConfig.deploy)
+          ? currentConfig.deploy.accountId
+          : String(nextConfig?.deploy?.accountId ?? currentConfig.deploy.accountId ?? ''),
+        projectId: preserveSecrets && nextConfig?.deploy && !('projectId' in nextConfig.deploy)
+          ? currentConfig.deploy.projectId
+          : String(nextConfig?.deploy?.projectId ?? currentConfig.deploy.projectId ?? ''),
+        apiToken: preserveSecrets && nextConfig?.deploy && !('apiToken' in nextConfig.deploy)
+          ? currentConfig.deploy.apiToken
+          : String(nextConfig?.deploy?.apiToken ?? currentConfig.deploy.apiToken ?? ''),
+      },
+      adminToken: preserveSecrets && !('adminToken' in (nextConfig || {}))
+        ? currentConfig.adminToken
+        : String(nextConfig?.adminToken || currentConfig.adminToken || ''),
+    });
+  }
+
+  function getEnvMapForRuntimeConfig(nextConfig = currentConfig, { preserveSecrets = true, includeProcessEnv = true } = {}) {
+    const merged = nextConfig === currentConfig
+      ? validateRuntimeConfig(currentConfig)
+      : mergeNextRuntimeConfig(nextConfig, { preserveSecrets });
+    const envMap = buildEnvMapFromConfig(merged, {});
+    return includeProcessEnv ? { ...process.env, ...envMap } : envMap;
+  }
   function getSchema() {
     return {
       schemaVersion: 1,
@@ -434,31 +524,7 @@ function getEnvMapForPlatformSync(config = currentConfig) {
   }
 
   function setRuntimeConfig(nextConfig, { preserveSecrets = true } = {}) {
-    const merged = validateRuntimeConfig({
-      ...currentConfig,
-      ...nextConfig,
-      providerDefaults: { ...currentConfig.providerDefaults, ...(nextConfig.providerDefaults || {}) },
-      generation: { ...currentConfig.generation, ...(nextConfig.generation || {}) },
-      watermark: { ...currentConfig.watermark, ...(nextConfig.watermark || {}) },
-      storage: { ...currentConfig.storage, ...(nextConfig.storage || {}) },
-      promptEnhancement: { ...currentConfig.promptEnhancement, ...(nextConfig.promptEnhancement || {}) },
-      deploy: {
-        ...currentConfig.deploy,
-        ...(nextConfig.deploy || {}),
-        accountId: preserveSecrets && nextConfig?.deploy && !('accountId' in nextConfig.deploy)
-          ? currentConfig.deploy.accountId
-          : String(nextConfig?.deploy?.accountId ?? currentConfig.deploy.accountId ?? ''),
-        projectId: preserveSecrets && nextConfig?.deploy && !('projectId' in nextConfig.deploy)
-          ? currentConfig.deploy.projectId
-          : String(nextConfig?.deploy?.projectId ?? currentConfig.deploy.projectId ?? ''),
-        apiToken: preserveSecrets && nextConfig?.deploy && !('apiToken' in nextConfig.deploy)
-          ? currentConfig.deploy.apiToken
-          : String(nextConfig?.deploy?.apiToken ?? currentConfig.deploy.apiToken ?? ''),
-      },
-      adminToken: preserveSecrets && !('adminToken' in (nextConfig || {}))
-        ? currentConfig.adminToken
-        : String(nextConfig?.adminToken || currentConfig.adminToken || ''),
-    });
+    const merged = mergeNextRuntimeConfig(nextConfig, { preserveSecrets });
     currentConfig = merged;
     currentEnv = buildEnvMapFromConfig(merged, currentEnv);
     if (!isServerless) writeEnvFile(currentEnv);
@@ -501,6 +567,7 @@ function getEnvMapForPlatformSync(config = currentConfig) {
     getResolvedConfig,
     getSchema,
     getEnvMapForPlatformSync,
+    getEnvMapForRuntimeConfig,
     setRuntimeConfig,
     refreshFromDisk,
     verifyAdminToken,

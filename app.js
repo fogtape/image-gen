@@ -34,11 +34,16 @@ import {
 import { closeDialog, openDialog } from './frontend/dialog-a11y.js';
 import { confirmAction, createButton, createIconButton, notifyAction } from './frontend/ui-actions.js';
 import { state, cloneDefaultSettings, mergeAppSettings } from './frontend/state.js';
+import { adminFetch } from './frontend/admin-api.js';
+import {
+  clearAdminSession,
+  hasValidAdminSession,
+  persistAdminSession,
+} from './frontend/admin-session.js';
 
 const ACCOUNTS_KEY = 'img-gen-accounts';
 const APP_SETTINGS_KEY = 'img-gen-app-settings';
 const PROMPT_HISTORY_KEY = 'img-gen-prompt-history';
-const CONFIG_ADMIN_TOKEN_KEY = 'img-gen-config-admin-token';
 const OLD_KEY = 'img-gen-settings';
 const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
 const DEFAULT_RESPONSES_MODEL = 'gpt-5.4';
@@ -425,25 +430,82 @@ function confirmImportBackup() {
   pendingBackupImport = null;
 }
 
-function loadConfigAdminToken() {
-  return localStorage.getItem(CONFIG_ADMIN_TOKEN_KEY) || '';
+function setAdminSessionStatus(text = '', isError = false) {
+  const el = $('#adminSessionStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('error', !!isError);
 }
 
-function saveConfigAdminToken(value) {
-  const text = String(value || '').trim();
-  if (text) localStorage.setItem(CONFIG_ADMIN_TOKEN_KEY, text);
-  else localStorage.removeItem(CONFIG_ADMIN_TOKEN_KEY);
+function syncAdminSessionUi() {
+  const unlocked = hasValidAdminSession();
+  setAdminSessionStatus(
+    unlocked
+      ? '已解锁：你拥有全部管理权限。'
+      : '未解锁：只能保存浏览器本地偏好，不能修改服务端配置。',
+    false,
+  );
+  const logoutBtn = $('#adminLogoutBtn');
+  if (logoutBtn) logoutBtn.disabled = !unlocked;
 }
 
-function getConfigRequestHeaders(extra = {}) {
-  const headers = { 'Content-Type': 'application/json', ...extra };
-  const token = loadConfigAdminToken();
-  if (token) headers['X-Image-Gen-Admin-Token'] = token;
-  return headers;
+async function verifyAdminTokenInput(token) {
+  const resp = await fetch('/api/admin/session', {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const error = new Error(data.error || '管理员口令不正确或当前部署未启用管理接口。');
+    error.status = resp.status;
+    error.code = 'ADMIN_AUTH_FAILED';
+    error.context = 'admin';
+    throw error;
+  }
+  return data;
+}
+
+async function loginAdminFromForm() {
+  const token = ($('#adminTokenInput')?.value || '').trim();
+  if (!token) {
+    setAdminSessionStatus('请输入管理员口令。', true);
+    return;
+  }
+  try {
+    await verifyAdminTokenInput(token);
+    persistAdminSession(token);
+    setInputValue('adminTokenInput', '');
+    syncAdminSessionUi();
+    try {
+      await fetchEditableRuntimeConfig();
+      fillServerConfigForm();
+    } catch (error) {
+      console.warn('Failed to refresh editable runtime config:', error?.message || error);
+    }
+    await fetchAccountStoreCapabilities();
+    await loadServerAccountsIntoLocal({ silent: true });
+    renderAccountList();
+    syncSettingsCenterSummary();
+    syncAccountMigrationUi();
+    notifyAction('管理员已解锁');
+  } catch (error) {
+    clearAdminSession();
+    syncAdminSessionUi();
+    setAdminSessionStatus('管理员口令不正确或当前部署未启用管理接口。', true);
+    showError(error, { context: 'admin' });
+  }
+}
+
+function logoutAdminSession() {
+  clearAdminSession();
+  setInputValue('adminTokenInput', '');
+  syncAdminSessionUi();
+  syncAccountMigrationUi();
+  notifyAction('已退出管理员模式');
 }
 
 async function fetchServerRuntimeConfig() {
-  const resp = await fetch('/api/config/runtime', { headers: getConfigRequestHeaders() });
+  const resp = await fetch('/api/config/runtime');
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
   state.serverConfig = data.runtime || null;
@@ -453,7 +515,7 @@ async function fetchServerRuntimeConfig() {
 }
 
 async function fetchEditableRuntimeConfig() {
-  const resp = await fetch('/api/config/editable', { headers: getConfigRequestHeaders() });
+  const resp = await adminFetch('/api/config/editable', { method: 'GET' });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
   state.serverConfig = data.runtime || state.serverConfig;
@@ -494,6 +556,349 @@ function canUseConfigSaveApi() {
   return getServerCapabilities().canUseConfigSaveApi !== false;
 }
 
+function normalizeAccountStoreCapabilities(input = {}) {
+  const source = input.store || input.accountStore || input;
+  const type = ['file', 'upstash', 'browser'].includes(source?.type) ? source.type : 'browser';
+  return {
+    ok: input.ok !== false,
+    schemaVersion: Number(input.schemaVersion || 1),
+    store: {
+      requested: source?.requested || 'auto',
+      type,
+      available: source?.available !== false,
+      encrypted: source?.encrypted === true,
+      fallback: source?.fallback || 'browser',
+      fallbackActive: source?.fallbackActive === true || type === 'browser' || source?.available === false,
+      scope: source?.scope || (type === 'upstash' ? 'remote' : type === 'file' ? 'server' : 'browser'),
+      reason: source?.reason || '',
+    },
+  };
+}
+
+function fallbackAccountStoreCapabilities(reason = 'api-unavailable') {
+  return normalizeAccountStoreCapabilities({
+    ok: true,
+    store: {
+      requested: 'auto',
+      type: 'browser',
+      available: true,
+      encrypted: false,
+      fallback: 'browser',
+      fallbackActive: true,
+      scope: 'browser',
+      reason,
+    },
+  });
+}
+
+async function fetchAccountStoreCapabilities() {
+  try {
+    const resp = await fetch('/api/accounts/capabilities');
+    if (resp.status === 404) {
+      state.accountStoreCapabilities = fallbackAccountStoreCapabilities('api-not-found');
+      syncAccountStoreUi();
+      return state.accountStoreCapabilities;
+    }
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    state.accountStoreCapabilities = normalizeAccountStoreCapabilities(data);
+  } catch (error) {
+    console.warn('Failed to load account store capabilities:', error?.message || error);
+    state.accountStoreCapabilities = fallbackAccountStoreCapabilities('api-error');
+  }
+  syncAccountStoreUi();
+  return state.accountStoreCapabilities;
+}
+
+function describeAccountStore(store = {}) {
+  const type = store.type || 'browser';
+  if (type === 'file' && store.available) {
+    return {
+      pill: '账号当前保存位置：服务端文件',
+      type: '服务端文件存储',
+      detail: '当前 Node / Docker 部署具备服务端账号存储能力；管理员解锁后，账号会优先同步到服务端文件，并保留浏览器缓存作为兼容副本。',
+      encrypted: store.encrypted ? '敏感字段：已启用账号存储加密' : '敏感字段：尚未检测到账号加密 key，后续写入前会继续要求加密或本地密钥。',
+    };
+  }
+  if (type === 'upstash' && store.available) {
+    return {
+      pill: '账号当前保存位置：Upstash',
+      type: 'Upstash 远程存储',
+      detail: '已检测到 Upstash 账号存储配置，适合云平台多浏览器共享账号；页面不会展示 Upstash URL、Token 或账号密钥。',
+      encrypted: store.encrypted ? '敏感字段：已启用加密配置' : '敏感字段：缺少加密配置，暂不应写入远程存储。',
+    };
+  }
+  if (type !== 'browser' && store.available === false) {
+    return {
+      pill: '账号当前保存位置：浏览器缓存',
+      type: type === 'upstash' ? 'Upstash 未就绪' : '服务端账号存储未就绪',
+      detail: '已检测到服务端账号存储配置不完整。为避免影响使用，API Key 与 OAuth 账号会继续保存在当前浏览器。',
+      encrypted: '敏感字段：未写入服务端或远程存储。',
+    };
+  }
+  return {
+    pill: '账号当前保存位置：浏览器缓存',
+    type: '当前浏览器缓存',
+    detail: '当前部署未检测到可用的服务端账号存储或 Upstash，API Key 与 OAuth 账号会按旧逻辑保存在此浏览器。',
+    encrypted: '敏感字段：仅保存在当前浏览器；换设备、无痕模式或清理浏览器数据后需要重新配置。',
+  };
+}
+
+function syncAccountStoreUi() {
+  const capabilities = state.accountStoreCapabilities || fallbackAccountStoreCapabilities('not-loaded');
+  const store = capabilities.store || {};
+  const copy = describeAccountStore(store);
+  const quickStatus = $('#settingsAccountStorageStatus');
+  if (quickStatus) quickStatus.textContent = copy.pill;
+  const storageStatus = $('#storageAccountStoreStatus');
+  if (storageStatus) storageStatus.textContent = copy.pill.replace('账号当前保存位置：', '');
+  const typeEl = $('#accountStoreType');
+  if (typeEl) typeEl.textContent = copy.type;
+  const detailEl = $('#accountStoreDetail');
+  if (detailEl) detailEl.textContent = copy.detail;
+  const encryptedEl = $('#accountStoreEncrypted');
+  if (encryptedEl) encryptedEl.textContent = copy.encrypted;
+  syncAccountMigrationUi();
+}
+
+function canUseServerAccountStore() {
+  const store = state.accountStoreCapabilities?.store || {};
+  return hasValidAdminSession()
+    && store.available === true
+    && store.type !== 'browser';
+}
+
+function accountStoreSyncWarning(action, error) {
+  const message = error?.message || error;
+  console.warn(`Failed to ${action} server account store:`, message);
+}
+
+function compactServerAccountPayload(account = {}) {
+  const payload = sanitizeAccountForExport(account, true);
+  for (const key of ['apiKey', 'refreshToken', 'email', 'accountId', 'planType', 'openaiDeviceId', 'openaiSessionId']) {
+    if (!String(payload[key] || '').trim()) delete payload[key];
+  }
+  if (!Number.isFinite(Number(payload.tokenExpiresAt || 0))) delete payload.tokenExpiresAt;
+  return payload;
+}
+
+function compactServerAccountPatch(fields = {}) {
+  const source = fields && typeof fields === 'object' ? fields : {};
+  const patch = {};
+  const textKeys = ['type', 'name', 'apiUrl', 'model', 'responsesModel', 'email', 'accountId', 'planType'];
+  const secretKeys = ['apiKey', 'refreshToken', 'openaiDeviceId', 'openaiSessionId'];
+  for (const key of textKeys) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+    const value = String(source[key] || '').trim();
+    if (value) patch[key] = value;
+  }
+  for (const key of secretKeys) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+    const value = String(source[key] || '').trim();
+    if (value) patch[key] = value;
+  }
+  for (const key of ['streamMode', 'responsesAutoFallback', 'imageEditsCompatMode']) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) patch[key] = source[key] === true;
+  }
+  if (Object.prototype.hasOwnProperty.call(source, 'tokenExpiresAt')) {
+    const expires = Number(source.tokenExpiresAt);
+    if (Number.isFinite(expires) && expires > 0) patch.tokenExpiresAt = expires;
+  }
+  return patch;
+}
+
+async function readAccountStoreResponse(resp, label) {
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const error = new Error(data.error || `${label} failed: HTTP ${resp.status}`);
+    error.status = resp.status;
+    error.code = data.code || 'ACCOUNT_STORE_SYNC_FAILED';
+    error.context = 'account-store';
+    throw error;
+  }
+  return data;
+}
+
+async function listServerAccounts() {
+  if (!canUseServerAccountStore()) return null;
+  const resp = await adminFetch('/api/accounts', {
+    method: 'GET',
+  });
+  return readAccountStoreResponse(resp, 'List accounts');
+}
+
+function mergeServerAccountsIntoLocal(data = {}) {
+  const accounts = Array.isArray(data?.accounts) ? data.accounts : [];
+  let changed = false;
+  for (const serverAccount of accounts) {
+    const id = String(serverAccount?.id || '').trim();
+    if (!id) continue;
+    const existing = state.data.accounts.find((item) => item.id === id);
+    const merged = {
+      ...(existing || {}),
+      ...serverAccount,
+      id,
+      serverStored: true,
+      apiKey: existing?.apiKey || '',
+      refreshToken: existing?.refreshToken || '',
+      openaiDeviceId: existing?.openaiDeviceId || serverAccount.openaiDeviceId || '',
+      openaiSessionId: existing?.openaiSessionId || serverAccount.openaiSessionId || '',
+    };
+    if (existing) Object.assign(existing, merged);
+    else state.data.accounts.push(merged);
+    changed = true;
+  }
+  const activeId = String(data?.activeId || '').trim();
+  if (activeId && state.data.accounts.some((item) => item.id === activeId)) {
+    state.data.activeId = activeId;
+    changed = true;
+  } else if (!state.data.activeId && state.data.accounts.length) {
+    state.data.activeId = state.data.accounts[0].id;
+    changed = true;
+  }
+  if (changed) saveData();
+  return changed;
+}
+
+async function loadServerAccountsIntoLocal({ silent = false } = {}) {
+  if (!canUseServerAccountStore()) return null;
+  try {
+    const data = await listServerAccounts();
+    const changed = mergeServerAccountsIntoLocal(data);
+    if (changed) {
+      renderSwitcher();
+      renderDropdown();
+      renderAccountList();
+      syncSettingsCenterSummary();
+    }
+    if (!silent) {
+      const count = Array.isArray(data?.accounts) ? data.accounts.length : 0;
+      setAccountMigrationStatus(count ? `已从服务端加载 ${count} 个账号；敏感字段仍不会回显。` : '服务端账号存储当前没有账号。');
+    }
+    return data;
+  } catch (error) {
+    accountStoreSyncWarning('list', error);
+    if (!silent) setAccountMigrationStatus('服务端账号读取失败，已继续使用浏览器缓存。', true);
+    return null;
+  }
+}
+
+async function createServerAccount(account, { activeId = state.data.activeId } = {}) {
+  if (!canUseServerAccountStore()) return null;
+  const resp = await adminFetch('/api/accounts', {
+    method: 'POST',
+    body: JSON.stringify({
+      activeId: activeId || account?.id || state.data.activeId,
+      account: compactServerAccountPayload(account),
+    }),
+  });
+  return readAccountStoreResponse(resp, 'Create account');
+}
+
+async function patchServerAccount(id, fields) {
+  if (!canUseServerAccountStore() || !id) return null;
+  const resp = await adminFetch(`/api/accounts/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      activeId: state.data.activeId,
+      account: compactServerAccountPatch(fields),
+    }),
+  });
+  return readAccountStoreResponse(resp, 'Update account');
+}
+
+async function deleteServerAccountOnServer(id) {
+  if (!canUseServerAccountStore() || !id) return null;
+  const resp = await adminFetch(`/api/accounts/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  return readAccountStoreResponse(resp, 'Delete account');
+}
+
+function setAccountMigrationStatus(text = '', isError = false) {
+  const el = $('#accountMigrationStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('error', !!isError);
+}
+
+function syncAccountMigrationUi() {
+  const btn = $('#migrateBrowserAccountsBtn');
+  const localCount = state.data.accounts.length;
+  const canMigrate = canUseServerAccountStore() && localCount > 0;
+  if (btn) btn.disabled = !canMigrate;
+  if (!$('#accountMigrationStatus')) return;
+  if (!localCount) {
+    setAccountMigrationStatus('当前浏览器没有可迁移账号。');
+  } else if (!hasValidAdminSession()) {
+    setAccountMigrationStatus('先在“管理员”分区解锁管理员，再迁移当前浏览器账号。');
+  } else if (!canUseServerAccountStore()) {
+    setAccountMigrationStatus('当前部署未启用可写的服务端账号存储，账号会继续保存在浏览器缓存。');
+  } else {
+    setAccountMigrationStatus(`可迁移 ${localCount} 个浏览器账号到服务端；迁移后仍保留浏览器副本作为 fallback。`);
+  }
+}
+
+async function importLocalAccountsToServer(accounts, { activeId = state.data.activeId } = {}) {
+  if (!canUseServerAccountStore()) return null;
+  const resp = await adminFetch('/api/accounts/import-local', {
+    method: 'POST',
+    body: JSON.stringify({
+      activeId,
+      accounts,
+    }),
+  });
+  return readAccountStoreResponse(resp, 'Import browser accounts');
+}
+
+async function migrateBrowserAccountsToServer() {
+  const accounts = state.data.accounts.map(compactServerAccountPayload);
+  if (!accounts.length) {
+    setAccountMigrationStatus('当前浏览器没有可迁移账号。', true);
+    syncAccountMigrationUi();
+    return null;
+  }
+  if (!canUseServerAccountStore()) {
+    setAccountMigrationStatus('请先解锁管理员，并确认当前部署已启用服务端账号存储。', true);
+    syncAccountMigrationUi();
+    return null;
+  }
+
+  const btn = $('#migrateBrowserAccountsBtn');
+  if (btn) btn.disabled = true;
+  setAccountMigrationStatus('正在迁移当前浏览器账号到服务端...');
+  try {
+    const data = await importLocalAccountsToServer(accounts, { activeId: state.data.activeId });
+    if (data?.activeId && state.data.accounts.some((item) => item.id === data.activeId)) {
+      state.data.activeId = data.activeId;
+      saveData();
+      renderSwitcher();
+      renderDropdown();
+    }
+    setAccountMigrationStatus(`已迁移 ${data?.imported ?? accounts.length} 个账号到服务端；浏览器副本已保留。`);
+    notifyAction('浏览器账号已迁移到服务端');
+    return data;
+  } catch (error) {
+    setAccountMigrationStatus('迁移失败：请检查管理员登录态和服务端账号存储配置。', true);
+    showError(error, { context: 'account-store.import' });
+    return null;
+  } finally {
+    if (btn) btn.disabled = !canUseServerAccountStore() || !state.data.accounts.length;
+  }
+}
+
+function applyServerAccountMetadata(account = {}) {
+  const id = String(account.id || '').trim();
+  if (!id) return;
+  const fields = compactServerAccountPatch(account);
+  const existing = state.data.accounts.find((item) => item.id === id);
+  if (existing) {
+    updateAccount(id, fields, { syncServer: false });
+  } else {
+    addAccount(account, { syncServer: false });
+  }
+}
+
 function markConfigApiUnavailable(status = 0) {
   state.serverCapabilities = {
     ...(state.serverCapabilities || {}),
@@ -516,11 +921,8 @@ async function saveServerRuntimeConfig(config) {
   if (!canUseConfigSaveApi()) {
     throw markConfigApiUnavailable();
   }
-  const adminToken = ($('#configAdminToken')?.value || '').trim();
-  saveConfigAdminToken(adminToken);
-  const resp = await fetch('/api/config/save', {
+  const resp = await adminFetch('/api/config/save', {
     method: 'POST',
-    headers: getConfigRequestHeaders(),
     body: JSON.stringify({ config }),
   });
   const data = await resp.json().catch(() => ({}));
@@ -538,16 +940,37 @@ async function saveServerRuntimeConfig(config) {
 }
 
 async function runPlatformAction(action, config) {
-  const adminToken = ($('#configAdminToken')?.value || '').trim();
-  saveConfigAdminToken(adminToken);
-  const resp = await fetch(`/api/config/platform/${action}`, {
+  const resp = await adminFetch(`/api/config/platform/${action}`, {
     method: 'POST',
-    headers: getConfigRequestHeaders(),
     body: JSON.stringify({ config, platform: config?.deploy?.platform }),
   });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
   return data.result || data;
+}
+
+async function testAccountStoreConfigFromForm() {
+  setAccountStoreConfigStatus('正在测试账号存储连接...');
+  try {
+    const resp = await adminFetch('/api/accounts/store/test', {
+      method: 'POST',
+      body: JSON.stringify({ config: readServerConfigForm() }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const error = new Error(data.error || `HTTP ${resp.status}`);
+      error.status = resp.status;
+      throw error;
+    }
+    setAccountStoreConfigStatus(data.message || (data.ok ? '账号存储连接正常。' : '当前账号存储不可用，将继续使用浏览器缓存。'), data.ok !== true);
+    await fetchAccountStoreCapabilities();
+    if (data.ok) notifyAction(data.message || '账号存储连接正常');
+    return data;
+  } catch (error) {
+    setAccountStoreConfigStatus('账号存储测试失败：请检查管理员登录态、Upstash URL、Token 和加密 Key。', true);
+    showError(error, { context: 'account-store.test' });
+    return null;
+  }
 }
 
 function loadAppSettings() {
@@ -601,6 +1024,19 @@ function setExistingSecretHint(id, hasExisting, placeholderWhenExisting) {
     el.placeholder = placeholderWhenExisting;
   } else {
     delete el.dataset.hasExisting;
+  }
+}
+
+function setSensitiveConfigHint(id, hasExisting, placeholderWhenExisting, placeholderWhenEmpty = '') {
+  const el = $(`#${id}`);
+  if (!el) return;
+  el.value = '';
+  if (hasExisting) {
+    el.dataset.hasExisting = 'true';
+    el.placeholder = placeholderWhenExisting;
+  } else {
+    delete el.dataset.hasExisting;
+    if (placeholderWhenEmpty) el.placeholder = placeholderWhenEmpty;
   }
 }
 
@@ -805,11 +1241,43 @@ function readWatermarkForm() {
   };
 }
 
+function setAccountStoreConfigStatus(text = '', isError = false) {
+  const el = $('#accountStoreConfigStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('error', !!isError);
+}
+
+function fillAccountStoreConfigForm(cfg = state.serverConfig || {}) {
+  const accountStore = cfg.accountStore || {};
+  setSelectValue('accountStoreTypeSelect', accountStore.type || 'auto');
+  setInputValue('accountStoreNamespace', accountStore.namespace || 'image-gen');
+  setInputValue('accountStoreDeploymentId', accountStore.deploymentId || 'default');
+  setSensitiveConfigHint(
+    'accountStoreUpstashRestUrl',
+    accountStore.upstashRestUrlConfigured === true,
+    '已配置，留空保存会保留，输入新值可覆盖',
+    'https://...upstash.io',
+  );
+  setSensitiveConfigHint(
+    'accountStoreUpstashRestToken',
+    accountStore.upstashRestTokenConfigured === true,
+    '已配置，留空保存会保留，输入新值可覆盖',
+    '保存后不回显，留空保留已有值',
+  );
+  setSensitiveConfigHint(
+    'accountStoreEncryptionKey',
+    accountStore.encryptionKeyConfigured === true,
+    '已配置，留空保存会保留，输入新值可覆盖',
+    '建议使用长随机字符串，保存后不回显',
+  );
+  setAccountStoreConfigStatus('保存服务端配置后，账号会优先写入可用的服务端或 Upstash 存储。');
+}
+
 
 function fillServerConfigForm() {
   const cfg = state.serverConfig;
   if (!cfg) return;
-  setInputValue('serverDefaultApiUrl', cfg.providerDefaults?.apiUrl || '');
   setInputValue('serverDefaultImageModel', cfg.providerDefaults?.imageModel || DEFAULT_IMAGE_MODEL);
   setInputValue('serverDefaultResponsesModel', cfg.providerDefaults?.responsesModel || DEFAULT_RESPONSES_MODEL);
   setChecked('serverDefaultStreamMode', cfg.providerDefaults?.streamMode === true);
@@ -827,7 +1295,8 @@ function fillServerConfigForm() {
   setExistingSecretHint('deployApiToken', cfg.deploy?.apiTokenConfigured === true, '已配置，留空保存会保留，输入新值可覆盖');
   setChecked('deployAutoSync', cfg.deploy?.autoSync === true);
   setChecked('deployAutoRedeploy', cfg.deploy?.autoRedeploy === true);
-  setInputValue('configAdminToken', loadConfigAdminToken());
+  fillAccountStoreConfigForm(cfg);
+  syncAdminSessionUi();
 }
 
 function assignDeployFieldFromInput(deploy, id, fieldName) {
@@ -839,6 +1308,31 @@ function assignDeployFieldFromInput(deploy, id, fieldName) {
   }
   if (el?.dataset?.hasExisting === 'true') return;
   delete deploy[fieldName];
+}
+
+function assignSensitiveConfigFieldFromInput(target, id, fieldName) {
+  const el = $(`#${id}`);
+  const value = (el?.value || '').trim();
+  if (value && value !== '***已配置***') {
+    target[fieldName] = value;
+    return;
+  }
+  if (el?.dataset?.hasExisting === 'true') return;
+  delete target[fieldName];
+}
+
+function readAccountStoreConfigForm() {
+  const current = state.serverConfig?.accountStore || {};
+  const accountStore = {
+    ...(current || {}),
+    type: $('#accountStoreTypeSelect')?.value || 'auto',
+    namespace: ($('#accountStoreNamespace')?.value || 'image-gen').trim() || 'image-gen',
+    deploymentId: ($('#accountStoreDeploymentId')?.value || 'default').trim() || 'default',
+  };
+  assignSensitiveConfigFieldFromInput(accountStore, 'accountStoreUpstashRestUrl', 'upstashRestUrl');
+  assignSensitiveConfigFieldFromInput(accountStore, 'accountStoreUpstashRestToken', 'upstashRestToken');
+  assignSensitiveConfigFieldFromInput(accountStore, 'accountStoreEncryptionKey', 'encryptionKey');
+  return accountStore;
 }
 
 function readServerConfigForm() {
@@ -857,7 +1351,7 @@ function readServerConfigForm() {
     ...current,
     providerDefaults: {
       ...(current.providerDefaults || {}),
-      apiUrl: ($('#serverDefaultApiUrl')?.value || '').trim(),
+      apiUrl: current.providerDefaults?.apiUrl || getProviderDefaults().apiUrl,
       imageModel: ($('#serverDefaultImageModel')?.value || '').trim() || DEFAULT_IMAGE_MODEL,
       responsesModel: ($('#serverDefaultResponsesModel')?.value || '').trim() || DEFAULT_RESPONSES_MODEL,
       streamMode: !!$('#serverDefaultStreamMode')?.checked,
@@ -876,6 +1370,7 @@ function readServerConfigForm() {
     promptEnhancement: readPromptEnhancementForm(),
     watermark: readWatermarkForm(),
     storage: { enabled: !!$('#storageEnabled')?.checked },
+    accountStore: readAccountStoreConfigForm(),
     deploy,
   };
 }
@@ -931,22 +1426,33 @@ async function saveSettingsFromForm() {
   const nextServerConfig = readServerConfigForm();
   try {
     let saved = null;
-    try {
-      saved = await saveServerRuntimeConfig(nextServerConfig);
-    } catch (e) {
-      if (!isConfigSaveUnavailableError(e)) throw e;
-      console.warn(e?.message || e);
+    const serverSaveSkippedBecauseAdminLocked = !hasValidAdminSession();
+    if (!serverSaveSkippedBecauseAdminLocked) {
+      try {
+        saved = await saveServerRuntimeConfig(nextServerConfig);
+      } catch (e) {
+        if (!isConfigSaveUnavailableError(e)) throw e;
+        console.warn(e?.message || e);
+      }
+    } else {
+      console.warn('管理员未解锁，本次仅保存浏览器本地设置。');
     }
     state.appSettings = nextAppSettings;
     saveAppSettings();
     if (saved?.runtime) {
       state.serverConfig = saved.runtime;
       loadAppSettings();
+      await fetchAccountStoreCapabilities();
+      await loadServerAccountsIntoLocal({ silent: true });
     }
     applyGenerationDefaultsToControls();
     syncPromptEnhancementUi();
     closeDialog($('#settingsOverlay'));
-    notifyAction(saved?.runtime ? '设置已保存' : '本地设置已保存；当前部署不支持服务端配置保存');
+    notifyAction(saved?.runtime
+      ? '设置已保存'
+      : serverSaveSkippedBecauseAdminLocked
+        ? '本地设置已保存；如需写入服务端配置，请先解锁管理员'
+        : '本地设置已保存；当前部署不支持服务端配置保存');
   } catch (e) {
     showError({ ...(typeof e === 'object' && e ? e : {}), message: e?.message || e, context: 'settings' });
   }
@@ -1095,9 +1601,8 @@ async function clearStorageData(scope) {
     await loadStorageStats();
     return { ok: true, scope, localOnly: true };
   }
-  const resp = await fetch('/api/storage/clear', {
+  const resp = await adminFetch('/api/storage/clear', {
     method: 'POST',
-    headers: getConfigRequestHeaders(),
     body: JSON.stringify({ scope }),
   });
   const data = await resp.json().catch(() => ({}));
@@ -1146,24 +1651,34 @@ function setActiveAccount(id) {
   renderSwitcher();
 }
 
-function addAccount(acc) {
-  state.data.accounts.push(acc);
-  if (!state.data.activeId) state.data.activeId = acc.id;
+function addAccount(acc, options = {}) {
+  const account = acc || {};
+  state.data.accounts.push(account);
+  if (!state.data.activeId) state.data.activeId = account.id;
   saveData();
+  if (options.syncServer === false) return;
+  void createServerAccount(account, { activeId: state.data.activeId })
+    .catch((error) => accountStoreSyncWarning('create', error));
 }
 
-function updateAccount(id, fields) {
+function updateAccount(id, fields, options = {}) {
   const acc = state.data.accounts.find((a) => a.id === id);
   if (acc) Object.assign(acc, fields);
   saveData();
+  if (!acc || options.syncServer === false) return;
+  void patchServerAccount(id, fields)
+    .catch((error) => accountStoreSyncWarning('update', error));
 }
 
-function deleteAccount(id) {
+function deleteAccount(id, options = {}) {
   state.data.accounts = state.data.accounts.filter((a) => a.id !== id);
   if (state.data.activeId === id) {
     state.data.activeId = state.data.accounts.length ? state.data.accounts[0].id : null;
   }
   saveData();
+  if (options.syncServer === false) return;
+  void deleteServerAccountOnServer(id)
+    .catch((error) => accountStoreSyncWarning('delete', error));
 }
 
 // --- Effective Config ---
@@ -1614,9 +2129,8 @@ function updateStoredImageCards(image = {}) {
 }
 
 async function patchStoredImageMeta(id, meta) {
-  const resp = await fetch(`/api/images/${encodeURIComponent(id)}/meta`, {
+  const resp = await adminFetch(`/api/images/${encodeURIComponent(id)}/meta`, {
     method: 'PATCH',
-    headers: getConfigRequestHeaders(),
     body: JSON.stringify(meta),
   });
   const data = await resp.json().catch(() => ({}));
@@ -1625,9 +2139,8 @@ async function patchStoredImageMeta(id, meta) {
 }
 
 async function deleteStoredImage(id) {
-  const resp = await fetch(`/api/images/${encodeURIComponent(id)}`, {
+  const resp = await adminFetch(`/api/images/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: getConfigRequestHeaders(),
     body: JSON.stringify({}),
   });
   const data = await resp.json().catch(() => ({}));
@@ -1814,7 +2327,7 @@ function renderSwitcher() {
   const dot = $('#switcherDot');
   const name = $('#switcherName');
   if (!acc) {
-    name.textContent = '未配置';
+    name.textContent = '未配置账号';
     dot.className = 'switcher-dot inactive';
     syncAccountModeUi();
     return;
@@ -1952,6 +2465,72 @@ function setAccountTab(tab) {
   }
 }
 
+function setSettingsPanel(panel) {
+  const selected = ['quick', 'admin', 'accounts', 'generation', 'connection', 'storage', 'deploy', 'appearance', 'backup'].includes(panel)
+    ? panel
+    : 'quick';
+  const map = {
+    quick: ['settingsNavQuick', 'settingsPanelQuick'],
+    admin: ['settingsNavAdmin', 'settingsPanelAdmin'],
+    accounts: ['settingsNavAccounts', 'settingsPanelAccounts'],
+    generation: ['settingsNavGeneration', 'settingsPanelGeneration'],
+    connection: ['settingsNavConnection', 'settingsPanelConnection'],
+    storage: ['settingsNavStorage', 'settingsPanelStorage'],
+    deploy: ['settingsNavDeploy', 'settingsPanelDeploy'],
+    appearance: ['settingsNavAppearance', 'settingsPanelAppearance'],
+    backup: ['settingsNavBackup', 'settingsPanelBackup'],
+  };
+  for (const [key, [tabId, panelId]] of Object.entries(map)) {
+    const isActive = key === selected;
+    const tabEl = $(`#${tabId}`);
+    const panelEl = $(`#${panelId}`);
+    tabEl?.classList.toggle('active', isActive);
+    tabEl?.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    panelEl?.classList.toggle('active', isActive);
+    panelEl?.classList.toggle('hidden', !isActive);
+  }
+}
+
+function syncSettingsCenterSummary() {
+  const hasAccounts = state.data.accounts.length > 0;
+  const active = getActiveAccount();
+  const quickTitle = $('#settingsPanelQuick .settings-hero h3');
+  const quickCopy = $('#settingsPanelQuick .settings-hero p');
+  if (quickTitle) quickTitle.textContent = hasAccounts ? '已配置账号' : '未配置账号';
+  if (quickCopy) {
+    quickCopy.textContent = hasAccounts
+      ? `当前账号：${active?.name || active?.email || active?.apiUrl || '未命名'}。你可以继续测试连接，或按需解锁管理员保存服务端配置。`
+      : '添加 API Key 或登录 ChatGPT 后才能生成图片。需要写入服务端配置时，先解锁管理员。';
+  }
+  document.querySelectorAll('.settings-status-pill').forEach((el) => {
+    if (el.textContent?.startsWith('当前账号：')) {
+      el.textContent = `当前账号：${active ? (active.name || active.email || active.apiUrl || '未命名') : '未配置账号'}`;
+    }
+  });
+}
+
+async function openSettingsCenter(initialPanel = 'quick', options = {}) {
+  try { await fetchServerRuntimeConfig(); } catch (e) { console.warn('Failed to refresh runtime config:', e?.message || e); }
+  await fetchAccountStoreCapabilities();
+  if (hasValidAdminSession()) {
+    try { await fetchEditableRuntimeConfig(); } catch (e) { console.warn('Failed to load editable runtime config:', e?.message || e); }
+    await loadServerAccountsIntoLocal({ silent: true });
+  }
+  loadAppSettings();
+  fillSettingsForm();
+  renderAccountList();
+  const proxy = $('#useProxy');
+  if (proxy) proxy.checked = state.data.useProxy;
+  syncSettingsCenterSummary();
+  loadStorageStats();
+  setSettingsPanel(initialPanel);
+  if (initialPanel === 'accounts') setAccountTab(options.accountTab || 'api');
+  openDialog($('#settingsOverlay'), {
+    focusSelector: options.focusSelector || `#settingsNav${initialPanel[0].toUpperCase()}${initialPanel.slice(1)}`,
+    restoreFocus: options.restoreFocus || '#openSettings',
+  });
+}
+
 function renderAccountCards(list, accounts, emptyText) {
   if (!list) return;
   list.setAttribute('role', 'radiogroup');
@@ -2026,6 +2605,8 @@ function renderAccountList() {
   const oauthAccounts = state.data.accounts.filter((acc) => acc.type === 'oauth');
   renderAccountCards($('#accountList'), manualAccounts, '还没有 API Key 账号，点击上方按钮添加');
   renderAccountCards($('#oauthAccountList'), oauthAccounts, '还没有 ChatGPT 登录账号，点击“登录 ChatGPT”开始添加');
+  syncAccountMigrationUi();
+  syncSettingsCenterSummary();
 }
 
 // --- Edit Modal ---
@@ -2319,16 +2900,26 @@ async function finishOAuthWithCode() {
 
 // --- Test Connection ---
 
+function getConnectionTestResultElements() {
+  return ['testResult', 'accountTestResult']
+    .map((id) => $(`#${id}`))
+    .filter(Boolean);
+}
+
+function setConnectionTestResult(className = 'toast', text = '', hidden = false) {
+  for (const el of getConnectionTestResultElements()) {
+    el.className = className;
+    el.textContent = text;
+    el.classList.toggle('hidden', hidden);
+  }
+}
+
 async function testConnection() {
-  const el = $('#testResult');
-  el.className = 'toast';
-  el.textContent = '测试中...';
-  el.classList.remove('hidden');
+  setConnectionTestResult('toast', '测试中...', false);
 
   let cfg = getEffective();
   if (!cfg.apiUrl || !cfg.apiKey) {
-    el.className = 'toast error';
-    el.textContent = '请先添加账号并配置 API 地址和 Key';
+    setConnectionTestResult('toast error', '请先添加账号并配置 API 地址和 Key', false);
     return;
   }
 
@@ -2348,11 +2939,9 @@ async function testConnection() {
       });
       const data = await resp.json().catch(() => ({}));
       if (resp.ok || data.ok) {
-        el.className = 'toast success';
-        el.textContent = '连接成功 — OAuth ChatGPT 后端可用';
+        setConnectionTestResult('toast success', '连接成功 — OAuth ChatGPT 后端可用', false);
       } else {
-        el.className = 'toast error';
-        el.textContent = `失败 (${resp.status}): ${data.error || data.message || ''}`;
+        setConnectionTestResult('toast error', `失败 (${resp.status}): ${data.error || data.message || ''}`, false);
       }
     } else {
       const resp = await smartFetch(`${cfg.apiUrl}/v1/models`, {
@@ -2362,17 +2951,14 @@ async function testConnection() {
       if (resp.ok) {
         const data = await resp.json();
         const models = data.data ? data.data.map((m) => m.id).slice(0, 6).join(', ') : '(无列表)';
-        el.className = 'toast success';
-        el.textContent = `连接成功 — ${models} ...`;
+        setConnectionTestResult('toast success', `连接成功 — ${models} ...`, false);
       } else {
         const data = await resp.json().catch(() => ({}));
-        el.className = 'toast error';
-        el.textContent = `失败 (${resp.status}): ${data.error?.message || data.message || ''}`;
+        setConnectionTestResult('toast error', `失败 (${resp.status}): ${data.error?.message || data.message || ''}`, false);
       }
     }
   } catch (e) {
-    el.className = 'toast error';
-    el.textContent = e.message;
+    setConnectionTestResult('toast error', e.message, false);
   }
 }
 
@@ -2613,7 +3199,8 @@ async function pollBackgroundJob(jobId, format, isOAuth, resultMeta = {}) {
         clearActiveJob();
         stopWaitingStatusSequence();
         hideActiveJobBanner();
-        const err = new Error(normalizeGenerationError(job.error || '后台生成失败'));
+        const err = new Error(normalizeGenerationError(job.errorInfo?.message || job.error || '后台生成失败'));
+        err.isBackgroundJobTerminalFailure = true;
         if (job.errorInfo) Object.assign(err, job.errorInfo, { errorInfo: job.errorInfo });
         throw err;
       }
@@ -2648,6 +3235,7 @@ function isBackgroundJobsUnavailableError(error) {
 }
 
 function isRetryableBackgroundJobError(error) {
+  if (error?.isBackgroundJobTerminalFailure) return false;
   const message = normalizeGenerationError(error?.message || error || '');
   return !!error?.isTimeout
     || error?.status === 429
@@ -3285,6 +3873,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (e) {
     console.warn('Failed to load server runtime config:', e?.message || e);
   }
+  await fetchAccountStoreCapabilities();
   loadAppSettings();
   loadPromptHistory();
   renderPromptHistory();
@@ -3298,34 +3887,46 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (state.dropdownOpen && !$('#accountSwitcher').contains(e.target)) toggleDropdown(false);
   });
 
-  // Account management overlay
+  // Account management now opens the unified settings center on the account panel.
   $('#dropdownManage').onclick = () => {
     toggleDropdown(false);
-    renderAccountList();
-    $('#useProxy').checked = state.data.useProxy;
-    setAccountTab('api');
-    openDialog($('#accountOverlay'), { focusSelector: '#addManualBtn', restoreFocus: '#switcherBtn' });
+    void openSettingsCenter('accounts', { focusSelector: '#addManualBtn', restoreFocus: '#switcherBtn' });
   };
   $('#accountTabApi')?.addEventListener('click', () => setAccountTab('api'));
   $('#accountTabOauth')?.addEventListener('click', () => setAccountTab('oauth'));
   $('#accountTabAdvanced')?.addEventListener('click', () => setAccountTab('advanced'));
-  $('#closeAccount').onclick = () => closeDialog($('#accountOverlay'));
-  $('#accountOverlay').onclick = (e) => { if (e.target === $('#accountOverlay')) closeDialog($('#accountOverlay')); };
 
-  // Settings overlay
-  $('#openSettings').onclick = async () => {
-    try { await fetchServerRuntimeConfig(); } catch (e) { console.warn('Failed to refresh runtime config:', e?.message || e); }
-    if (loadConfigAdminToken()) {
-      try { await fetchEditableRuntimeConfig(); } catch (e) { console.warn('Failed to load editable runtime config:', e?.message || e); }
-    }
-    loadAppSettings();
-    fillSettingsForm();
-    loadStorageStats();
-    openDialog($('#settingsOverlay'), { focusSelector: '#settingsDefaultSize', restoreFocus: '#openSettings' });
-  };
+  // Settings center overlay
+  $('#openSettings').onclick = () => { void openSettingsCenter('quick', { restoreFocus: '#openSettings' }); };
+  document.querySelectorAll('#settingsCenterNav [data-panel]').forEach((btn) => {
+    btn.addEventListener('click', () => setSettingsPanel(btn.dataset.panel));
+  });
+  $('#quickAdminBtn')?.addEventListener('click', () => {
+    setSettingsPanel('admin');
+    $('#adminTokenInput')?.focus();
+  });
+  $('#quickAddManualBtn')?.addEventListener('click', () => {
+    setSettingsPanel('accounts');
+    setAccountTab('api');
+    openEditModal(null);
+  });
+  $('#quickOauthLoginBtn')?.addEventListener('click', () => {
+    setSettingsPanel('accounts');
+    setAccountTab('oauth');
+    void startOAuth();
+  });
+  $('#quickTestConnection')?.addEventListener('click', testConnection);
   $('#closeSettings').onclick = () => closeDialog($('#settingsOverlay'));
   $('#cancelSettings').onclick = () => closeDialog($('#settingsOverlay'));
   $('#saveSettings').onclick = saveSettingsFromForm;
+  $('#adminLoginBtn')?.addEventListener('click', loginAdminFromForm);
+  $('#adminLogoutBtn')?.addEventListener('click', logoutAdminSession);
+  $('#adminTokenInput')?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void loginAdminFromForm();
+    }
+  });
   $('#settingsOverlay').onclick = (e) => { if (e.target === $('#settingsOverlay')) closeDialog($('#settingsOverlay')); };
   ['watermarkEnabled', 'watermarkTemporaryMode', 'watermarkMode', 'watermarkText', 'watermarkTimeFormat', 'watermarkPosition', 'watermarkOpacity', 'watermarkFontSize', 'watermarkColor', 'watermarkShadow', 'watermarkBackground'].forEach((id) => {
     const el = $(`#${id}`);
@@ -3370,6 +3971,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Add manual account
   $('#addManualBtn').onclick = () => openEditModal(null);
+  $('#migrateBrowserAccountsBtn')?.addEventListener('click', () => { void migrateBrowserAccountsToServer(); });
 
   // OAuth login
   $('#oauthLoginBtn').onclick = startOAuth;
@@ -3422,6 +4024,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       showError(e?.message || e, { context: 'platform' });
     }
   });
+  $('#testAccountStoreConfig')?.addEventListener('click', () => { void testAccountStoreConfigFromForm(); });
   $('#testConnection').onclick = testConnection;
 
   // Generate

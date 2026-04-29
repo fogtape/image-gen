@@ -14,26 +14,35 @@ test('服务端已接入统一配置中心与平台配置 API', () => {
   assert.match(server, /\/api\/config\/platform\/check/);
   assert.match(server, /\/api\/config\/platform\/sync/);
   assert.match(server, /\/api\/config\/platform\/deploy/);
+  assert.match(server, /\/api\/admin\/session/);
+  assert.match(server, /\/api\/admin\/security/);
+  assert.match(server, /Authorization/);
   assert.match(server, /x-image-gen-admin-token/i);
 });
 
-test('前端设置页新增服务端默认配置与部署平台区块', () => {
+test('前端设置中心提供管理员解锁、服务端默认配置与部署同步区块', () => {
   const html = read('index.html');
+  assert.match(html, /管理员解锁/);
+  assert.match(html, /id="adminTokenInput"/);
+  assert.match(html, /id="adminLoginBtn"/);
+  assert.match(html, /id="adminLogoutBtn"/);
+  assert.match(html, /id="adminSessionStatus"/);
   assert.match(html, /服务端默认配置/);
-  assert.match(html, /部署平台配置/);
-  assert.match(html, /id="serverDefaultApiUrl"/);
+  assert.match(html, /部署同步/);
+  assert.doesNotMatch(html, /id="serverDefaultApiUrl"/);
   assert.match(html, /id="serverDefaultImageModel"/);
   assert.match(html, /id="serverDefaultResponsesModel"/);
   assert.match(html, /id="deployPlatform"/);
   assert.match(html, /id="deployAccountId"/);
   assert.match(html, /id="deployProjectId"/);
   assert.match(html, /id="deployApiToken"/);
-  assert.match(html, /id="configAdminToken"/);
+  assert.doesNotMatch(html, /id="configAdminToken"/);
 });
 
 test('前端已支持读取/保存服务端 runtime config 并驱动默认账号值', () => {
   const app = read('app.js');
-  assert.match(app, /CONFIG_ADMIN_TOKEN_KEY/);
+  assert.match(app, /adminFetch/);
+  assert.match(app, /hasValidAdminSession/);
   assert.match(app, /async function fetchServerRuntimeConfig/);
   assert.match(app, /async function fetchEditableRuntimeConfig/);
   assert.match(app, /async function saveServerRuntimeConfig/);

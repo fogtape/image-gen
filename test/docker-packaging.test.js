@@ -7,6 +7,7 @@ import test from 'node:test';
 
 const dockerfile = fs.readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8');
 const dockerignore = fs.readFileSync(new URL('../.dockerignore', import.meta.url), 'utf8');
+const gitignore = fs.readFileSync(new URL('../.gitignore', import.meta.url), 'utf8');
 const readme = fs.readFileSync(new URL('../README.md', import.meta.url), 'utf8');
 const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const dockerPublishWorkflow = fs.readFileSync(new URL('../.github/workflows/docker-publish.yml', import.meta.url), 'utf8');
@@ -23,6 +24,10 @@ test('Docker 镜像安装 sharp 依赖并复制水印、存储和提示词增强
   assert.match(dockerfile, /proxy-policy\.js/);
   assert.match(dockerfile, /proxy-executor\.js/);
   assert.match(dockerfile, /request-limits\.js/);
+  assert.match(dockerfile, /account-store\.js/);
+  assert.match(dockerfile, /account-store-file\.js/);
+  assert.match(dockerfile, /account-store-upstash\.js/);
+  assert.match(dockerfile, /account-store-capabilities\.js/);
 });
 
 test('Docker 构建只复制配置模板，不把本地运行态配置和数据打进镜像', () => {
@@ -31,6 +36,7 @@ test('Docker 构建只复制配置模板，不把本地运行态配置和数据�
 
   for (const pattern of [
     'config/.env',
+    'config/.account-store-key',
     'config/*.local',
     'config/*.secret',
     '!config/.env.example',
@@ -49,6 +55,12 @@ test('Docker 构建只复制配置模板，不把本地运行态配置和数据�
   assert.match(readme, /清理页面对话/);
   assert.match(readme, /清理服务端图片/);
   assert.match(readme, /不会删除账号配置、`config\/\.env`、OAuth 会话文件或项目外文件/);
+});
+
+test('账号存储本地加密 key 不会被提交或打进 Docker 构建上下文', () => {
+  for (const ignoreText of [gitignore, dockerignore]) {
+    assert.match(ignoreText, /(^|\n)config\/\.account-store-key(\n|$)/);
+  }
 });
 
 function copyPathFromRoot(source, destination, tempDir) {

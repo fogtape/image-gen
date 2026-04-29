@@ -7,6 +7,7 @@ dist
 data
 
 config/.env
+config/.account-store-key
 
 # Local runtime/test artifacts
 .tmp*
