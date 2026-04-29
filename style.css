@@ -573,7 +573,7 @@ textarea { resize: vertical; }
 .btn-send {
   width: 82px;
   min-width: 82px;
-  height: 38px;
+  height: 36px;
   padding: 0 18px;
   border-radius: 980px;
   font-size: 0.88rem;
@@ -790,6 +790,7 @@ textarea { resize: vertical; }
   box-shadow: var(--shadow-xs);
 }
 
+.history-search,
 .history-toolbar input[type="search"] {
   flex: 1 1 160px;
   min-width: 120px;
@@ -1621,7 +1622,8 @@ input[type="color"]:hover { border-color: var(--primary); }
 .modal-settings .modal-footer {
   position: sticky;
   bottom: 0;
-  padding: 14px 24px;
+  padding: 14px 20px calc(14px + env(safe-area-inset-bottom));
+  margin: 0 -20px -20px;
   background: var(--surface);
   border-top: 1px solid var(--border-light);
   display: flex;
