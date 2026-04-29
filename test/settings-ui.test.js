@@ -130,6 +130,32 @@ test('设置保存失败会标记为设置错误，不再显示成图片生成�
   assert.match(app, /if \(resp\.status === 404\) throw markConfigApiUnavailable\(resp\.status\)/);
 });
 
+test('账号管理弹窗按 API Key、ChatGPT 登录和高级设置三段分流', () => {
+  assert.match(html, /class="account-tabs"[^>]*role="tablist"/);
+  assert.match(html, /id="accountTabApi"[^>]*role="tab"[^>]*aria-controls="accountPanelApi"/);
+  assert.match(html, /id="accountTabOauth"[^>]*role="tab"[^>]*aria-controls="accountPanelOauth"/);
+  assert.match(html, /id="accountTabAdvanced"[^>]*role="tab"[^>]*aria-controls="accountPanelAdvanced"/);
+  assert.match(html, /id="accountPanelApi"[^>]*role="tabpanel"/);
+  assert.match(html, /id="accountPanelOauth"[^>]*role="tabpanel"/);
+  assert.match(html, /id="accountPanelAdvanced"[^>]*role="tabpanel"/);
+  assert.match(html, /id="oauthLoginStateText"[^>]*>未登录</);
+  assert.match(html, /id="oauthAccountList"[^>]*class="[^"]*oauth-account-list/);
+  assert.doesNotMatch(html, /id="oauthStatusText">等待登录/);
+  assert.match(app, /function setAccountTab\(tab\)/);
+  assert.match(app, /state\.data\.accounts\.filter\(\(acc\) => acc\.type !== 'oauth'\)/);
+  assert.match(app, /state\.data\.accounts\.filter\(\(acc\) => acc\.type === 'oauth'\)/);
+  assert.match(app, /\$\('#accountTabOauth'\)\?\.addEventListener\('click', \(\) => setAccountTab\('oauth'\)\)/);
+});
+
+test('水印预览使用高对比背景并默认把自定义文字和时间分两行显示', () => {
+  assert.match(css, /\.watermark-preview\s*\{[\s\S]*?flex-direction:\s*column/);
+  assert.match(css, /\.watermark-preview\s*\{[\s\S]*?linear-gradient\(135deg/);
+  assert.match(css, /\.watermark-preview \.wm-line\s*\{[\s\S]*?text-shadow:/);
+  assert.match(css, /\.watermark-preview \.wm-line\.small\s*\{[\s\S]*?margin-top:/);
+  assert.match(app, /lines\.push\(wm\.text \|\| 'AI Image Studio', time\)/);
+  assert.match(app, /class="wm-line\$\{i \? ' small' : ''\}\$\{wm\.background \? ' with-bg' : ''\}\$\{wm\.shadow \? ' with-shadow' : ''\}"/);
+});
+
 test('设置界面样式保持简洁并适配移动端', () => {
   assert.match(css, /\.settings-grid/);
   assert.match(css, /\.watermark-preview/);

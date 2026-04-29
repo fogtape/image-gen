@@ -239,8 +239,8 @@
               </div>
             </div>
             <div class="settings-inline">
-              <label><input type="checkbox" id="watermarkShadow"> 阴影</label>
-              <label><input type="checkbox" id="watermarkBackground"> 半透明背景条</label>
+              <label><input type="checkbox" id="watermarkShadow" checked> 阴影</label>
+              <label><input type="checkbox" id="watermarkBackground" checked> 半透明背景条</label>
             </div>
             <div id="watermarkPreview" class="watermark-preview">
               <span class="wm-line">AI Image Studio</span>
@@ -312,105 +312,128 @@
           <h2 id="accountTitle">账号管理</h2>
           <button id="closeAccount" class="close-btn" type="button" aria-label="关闭账号管理">&times;</button>
         </div>
-        <div class="modal-body">
-          <!-- Action buttons -->
-          <div class="account-actions">
-            <button id="addManualBtn" class="btn btn-outline">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              手动添加
-            </button>
-            <button id="oauthLoginBtn" class="btn btn-oauth">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-              OpenAI 登录
-            </button>
+        <div class="modal-body account-manager-body">
+          <div class="account-tabs" role="tablist" aria-label="账号管理分类">
+            <button id="accountTabApi" class="account-tab active" type="button" role="tab" aria-selected="true" aria-controls="accountPanelApi">API Key 账号</button>
+            <button id="accountTabOauth" class="account-tab" type="button" role="tab" aria-selected="false" aria-controls="accountPanelOauth">ChatGPT 登录</button>
+            <button id="accountTabAdvanced" class="account-tab" type="button" role="tab" aria-selected="false" aria-controls="accountPanelAdvanced">高级设置</button>
           </div>
 
-          <!-- OAuth status -->
-          <div id="oauthStatus" class="oauth-status hidden">
-            <span class="spinner"></span>
-            <span id="oauthStatusText">等待登录...</span>
-          </div>
-          <div id="oauthManual" class="oauth-manual hidden">
-            <div class="oauth-manual-title">完成 OpenAI 登录</div>
-            <div class="oauth-manual-desc">第一步：复制或打开下面的授权链接完成登录。不要依赖弹窗自动跳转，手机浏览器/内置浏览器可能会拦截。</div>
-            <textarea id="oauthAuthUrl" rows="3" readonly placeholder="授权链接会显示在这里"></textarea>
-            <div class="oauth-manual-actions">
-              <button id="oauthOpenBtn" class="btn btn-primary" type="button">打开授权页面</button>
-              <button id="oauthCopyBtn" class="btn btn-outline" type="button">复制授权链接</button>
+          <section id="accountPanelApi" class="account-panel active" role="tabpanel" aria-labelledby="accountTabApi">
+            <div class="account-panel-head">
+              <div>
+                <h3>API Key 账号</h3>
+                <p>管理 OpenAI 兼容接口账号，点击账号卡片即可设为当前使用。</p>
+              </div>
+              <button id="addManualBtn" class="btn btn-primary" type="button">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                添加 API Key
+              </button>
             </div>
-            <div class="oauth-manual-desc oauth-manual-step2">第二步：登录完成后，如果页面显示授权码，复制授权码；如果地址栏出现 localhost 回调链接，复制完整地址。然后粘贴到下面。</div>
-            <textarea id="oauthCallbackInput" rows="3" placeholder="粘贴授权码，或 http://localhost:1455/auth/callback?code=...&state=..."></textarea>
-            <div class="oauth-manual-actions">
-              <button id="oauthExchangeBtn" class="btn btn-primary" type="button">完成登录</button>
-              <button id="oauthCancelBtn" class="btn btn-ghost" type="button">取消</button>
-            </div>
-          </div>
+            <div id="accountList" class="account-list"></div>
+          </section>
 
-          <!-- Account list -->
-          <div id="accountList" class="account-list"></div>
+          <section id="accountPanelOauth" class="account-panel hidden" role="tabpanel" aria-labelledby="accountTabOauth">
+            <div class="oauth-login-card">
+              <div class="oauth-login-copy">
+                <div class="oauth-login-kicker">ChatGPT OAuth</div>
+                <h3>登录 ChatGPT 账号</h3>
+                <p>登录后会保存到当前浏览器，用于 ChatGPT 后端图片流程。未开始登录时不会显示“等待登录”。</p>
+                <div class="oauth-login-state"><span class="oauth-state-dot"></span><span id="oauthLoginStateText">未登录</span></div>
+              </div>
+              <button id="oauthLoginBtn" class="btn btn-oauth" type="button">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                登录 ChatGPT
+              </button>
+            </div>
 
-          <!-- Global settings -->
-          <div class="global-settings">
-            <h3>全局设置</h3>
-            <label class="switch-label">
-              <span>强制代理</span>
-              <input type="checkbox" id="useProxy">
-              <span class="switch"></span>
-            </label>
-            <small class="section-hint">CORS 失败时会自动回退代理，通常无需手动开启</small>
-          </div>
-
-<section class="settings-section">
-            <h3>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M9 9h6v6H9z"/></svg>
-              <span>部署平台配置</span>
-            </h3>
-            <small class="section-hint">支持本地 Node / Docker 的 `config/.env` 持久化，也支持把白名单配置同步到云平台环境变量并触发重新部署。</small>
-            <div class="settings-grid">
-              <div class="form-group">
-                <label for="deployPlatform">平台</label>
-                <select id="deployPlatform">
-                  <option value="node">node / docker</option>
-                  <option value="vercel">vercel</option>
-                  <option value="netlify">netlify</option>
-                  <option value="cloudflare">cloudflare</option>
-                  <option value="edgeone">edgeone</option>
-                </select>
+            <div id="oauthStatus" class="oauth-status hidden">
+              <span class="spinner"></span>
+              <span id="oauthStatusText">未登录</span>
+            </div>
+            <div id="oauthManual" class="oauth-manual hidden">
+              <div class="oauth-manual-title">完成 ChatGPT 登录</div>
+              <div class="oauth-manual-desc">第一步：复制或打开下面的授权链接完成登录。不要依赖弹窗自动跳转，手机浏览器/内置浏览器可能会拦截。</div>
+              <textarea id="oauthAuthUrl" rows="3" readonly placeholder="授权链接会显示在这里"></textarea>
+              <div class="oauth-manual-actions">
+                <button id="oauthOpenBtn" class="btn btn-primary" type="button">打开授权页面</button>
+                <button id="oauthCopyBtn" class="btn btn-outline" type="button">复制授权链接</button>
               </div>
-              <div class="form-group">
-                <label for="deployAccountId">Account ID</label>
-                <input type="text" id="deployAccountId" placeholder="可选 / 按平台填写">
-              </div>
-              <div class="form-group">
-                <label for="deployProjectId">Project ID</label>
-                <input type="text" id="deployProjectId" placeholder="项目 ID / Site ID / Script 名称">
-              </div>
-              <div class="form-group wide">
-                <label for="deployApiToken">平台 API Token</label>
-                <input type="password" id="deployApiToken" placeholder="仅保存到服务端 config/.env，不会显示到仓库">
-              </div>
-              <div class="form-group wide">
-                <label for="configAdminToken">配置管理口令</label>
-                <input type="password" id="configAdminToken" placeholder="仅保存在当前浏览器，用于调用服务端配置写接口">
+              <div class="oauth-manual-desc oauth-manual-step2">第二步：登录完成后，如果页面显示授权码，复制授权码；如果地址栏出现 localhost 回调链接，复制完整地址。然后粘贴到下面。</div>
+              <textarea id="oauthCallbackInput" rows="3" placeholder="粘贴授权码，或 http://localhost:1455/auth/callback?code=***&state=..."></textarea>
+              <div class="oauth-manual-actions">
+                <button id="oauthExchangeBtn" class="btn btn-primary" type="button">完成登录</button>
+                <button id="oauthCancelBtn" class="btn btn-ghost" type="button">取消</button>
               </div>
             </div>
-            <div class="settings-inline">
-              <label><input type="checkbox" id="deployAutoSync"> 保存时自动同步云平台环境变量</label>
-              <label><input type="checkbox" id="deployAutoRedeploy"> 保存时自动触发重新部署</label>
-            </div>
-            <div class="danger-zone">
-              <button id="configPlatformCheck" class="btn btn-outline" type="button">校验平台配置</button>
-              <button id="configPlatformSync" class="btn btn-outline" type="button">同步环境变量</button>
-              <button id="configPlatformDeploy" class="btn btn-outline danger" type="button">触发重新部署</button>
+
+            <div class="oauth-account-section">
+              <div class="account-subhead">已登录 ChatGPT 账号</div>
+              <div id="oauthAccountList" class="account-list oauth-account-list"></div>
             </div>
           </section>
 
-
-                    <div class="modal-footer">
-              <button id="testConnection" class="btn btn-outline">测试连接</button>
+          <section id="accountPanelAdvanced" class="account-panel hidden" role="tabpanel" aria-labelledby="accountTabAdvanced">
+            <div class="advanced-account-section">
+              <h3>全局代理</h3>
+              <label class="switch-label">
+                <span>强制代理</span>
+                <input type="checkbox" id="useProxy">
+                <span class="switch"></span>
+              </label>
+              <small class="section-hint">CORS 失败时会自动回退代理，通常无需手动开启。</small>
             </div>
-            <div id="testResult" class="toast hidden"></div>
-          </div>
+
+            <section class="settings-section account-deploy-section">
+              <h3>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M9 9h6v6H9z"/></svg>
+                <span>部署平台配置</span>
+              </h3>
+              <small class="section-hint">支持本地 Node / Docker 的 `config/.env` 持久化，也支持把白名单配置同步到云平台环境变量并触发重新部署。</small>
+              <div class="settings-grid">
+                <div class="form-group">
+                  <label for="deployPlatform">平台</label>
+                  <select id="deployPlatform">
+                    <option value="node">node / docker</option>
+                    <option value="vercel">vercel</option>
+                    <option value="netlify">netlify</option>
+                    <option value="cloudflare">cloudflare</option>
+                    <option value="edgeone">edgeone</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="deployAccountId">Account ID</label>
+                  <input type="text" id="deployAccountId" placeholder="可选 / 按平台填写">
+                </div>
+                <div class="form-group">
+                  <label for="deployProjectId">Project ID</label>
+                  <input type="text" id="deployProjectId" placeholder="项目 ID / Site ID / Script 名称">
+                </div>
+                <div class="form-group wide">
+                  <label for="deployApiToken">平台 API Token</label>
+                  <input type="password" id="deployApiToken" placeholder="仅保存到服务端 config/.env，不会显示到仓库">
+                </div>
+                <div class="form-group wide">
+                  <label for="configAdminToken">配置管理口令</label>
+                  <input type="password" id="configAdminToken" placeholder="仅保存在当前浏览器，用于调用服务端配置写接口">
+                </div>
+              </div>
+              <div class="settings-inline account-advanced-checks">
+                <label><input type="checkbox" id="deployAutoSync"> 保存时自动同步云平台环境变量</label>
+                <label><input type="checkbox" id="deployAutoRedeploy"> 保存时自动触发重新部署</label>
+              </div>
+              <div class="danger-zone">
+                <button id="configPlatformCheck" class="btn btn-outline" type="button">校验平台配置</button>
+                <button id="configPlatformSync" class="btn btn-outline" type="button">同步环境变量</button>
+                <button id="configPlatformDeploy" class="btn btn-outline danger" type="button">触发重新部署</button>
+              </div>
+            </section>
+
+            <div class="account-test-footer">
+              <button id="testConnection" class="btn btn-outline">测试当前账号连接</button>
+              <div id="testResult" class="toast hidden"></div>
+            </div>
+          </section>
         </div>
       </div>
     </div>

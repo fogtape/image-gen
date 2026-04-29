@@ -746,7 +746,7 @@ function renderWatermarkPreview() {
   else lines.push(wm.text || 'AI Image Studio');
   preview.style.alignItems = wm.position.includes('left') ? 'flex-start' : wm.position.includes('right') ? 'flex-end' : 'center';
   preview.style.justifyContent = wm.position.startsWith('top') ? 'flex-start' : wm.position === 'center' ? 'center' : 'flex-end';
-  preview.innerHTML = lines.map((line, i) => `<span class="wm-line${i ? ' small' : ''}" style="color:${wm.color};opacity:${wm.opacity};font-size:${i ? Math.max(11, wm.fontSize * 0.75) : wm.fontSize}px;${wm.background ? '' : 'background:transparent;'}${wm.shadow ? '' : 'text-shadow:none;'}">${line.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</span>`).join('');
+  preview.innerHTML = lines.map((line, i) => `<span class="wm-line${i ? ' small' : ''}${wm.background ? ' with-bg' : ''}${wm.shadow ? ' with-shadow' : ''}" style="color:${wm.color};opacity:${wm.opacity};font-size:${i ? Math.max(11, wm.fontSize * 0.75) : wm.fontSize}px;">${line.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</span>`).join('');
 }
 
 function getPromptEnhancementRuntime(source = 'state') {
@@ -1933,16 +1933,34 @@ function handleDropdownKeydown(event) {
   else if (currentIndex >= 0) items[currentIndex].click();
 }
 
-function renderAccountList() {
-  const list = $('#accountList');
+function setAccountTab(tab) {
+  const selected = ['api', 'oauth', 'advanced'].includes(tab) ? tab : 'api';
+  const map = {
+    api: ['accountTabApi', 'accountPanelApi'],
+    oauth: ['accountTabOauth', 'accountPanelOauth'],
+    advanced: ['accountTabAdvanced', 'accountPanelAdvanced'],
+  };
+  for (const [key, [tabId, panelId]] of Object.entries(map)) {
+    const isActive = key === selected;
+    const tabEl = $(`#${tabId}`);
+    const panelEl = $(`#${panelId}`);
+    tabEl?.classList.toggle('active', isActive);
+    tabEl?.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    panelEl?.classList.toggle('active', isActive);
+    panelEl?.classList.toggle('hidden', !isActive);
+  }
+}
+
+function renderAccountCards(list, accounts, emptyText) {
+  if (!list) return;
   list.setAttribute('role', 'radiogroup');
   list.setAttribute('aria-label', '账号列表');
   list.innerHTML = '';
-  if (!state.data.accounts.length) {
-    list.innerHTML = '<div class="account-empty">还没有账号，点击上方按钮添加</div>';
+  if (!accounts.length) {
+    list.innerHTML = `<div class="account-empty">${emptyText}</div>`;
     return;
   }
-  for (const acc of state.data.accounts) {
+  for (const acc of accounts) {
     const card = document.createElement('div');
     card.className = 'account-card' + (acc.id === state.data.activeId ? ' active' : '');
     card.setAttribute('role', 'radio');
@@ -1967,7 +1985,7 @@ function renderAccountList() {
     nameRow.textContent = acc.name || acc.email || '未命名';
     const badge = document.createElement('span');
     badge.className = 'badge ' + (acc.type === 'oauth' ? 'badge-oauth' : 'badge-manual');
-    badge.textContent = acc.type === 'oauth' ? 'OAuth' : '手动';
+    badge.textContent = acc.type === 'oauth' ? 'ChatGPT' : 'API Key';
     if (acc.type === 'oauth' && acc.tokenExpiresAt && Date.now() > acc.tokenExpiresAt) {
       badge.className = 'badge badge-expired';
       badge.textContent = '已过期';
@@ -1975,7 +1993,7 @@ function renderAccountList() {
     nameRow.appendChild(badge);
     const detail = document.createElement('div');
     detail.className = 'account-detail';
-    detail.textContent = acc.type === 'oauth' ? (acc.email || '') : (acc.apiUrl || '');
+    detail.textContent = acc.type === 'oauth' ? (acc.email || acc.accountId || 'ChatGPT OAuth') : (acc.apiUrl || '');
     info.appendChild(nameRow);
     info.appendChild(detail);
 
@@ -2000,6 +2018,13 @@ function renderAccountList() {
     card.appendChild(actions);
     list.appendChild(card);
   }
+}
+
+function renderAccountList() {
+  const manualAccounts = state.data.accounts.filter((acc) => acc.type !== 'oauth');
+  const oauthAccounts = state.data.accounts.filter((acc) => acc.type === 'oauth');
+  renderAccountCards($('#accountList'), manualAccounts, '还没有 API Key 账号，点击上方按钮添加');
+  renderAccountCards($('#oauthAccountList'), oauthAccounts, '还没有 ChatGPT 登录账号，点击“登录 ChatGPT”开始添加');
 }
 
 // --- Edit Modal ---
@@ -2090,9 +2115,17 @@ function addOAuthAccountFromResult(r) {
   return true;
 }
 
+function setOAuthLoginState(text, stateClass = '') {
+  const stateEl = $('#oauthLoginStateText');
+  const cardEl = stateEl?.closest('.oauth-login-state');
+  if (stateEl) stateEl.textContent = text || '未登录';
+  if (cardEl) cardEl.className = `oauth-login-state${stateClass ? ` ${stateClass}` : ''}`;
+}
+
 function setOAuthLoginBusy(isBusy) {
   state.oauthLoginInProgress = !!isBusy;
   const btn = $('#oauthLoginBtn');
+  setOAuthLoginState(isBusy ? '登录中' : '未登录', isBusy ? 'busy' : '');
   if (!btn) return;
   btn.disabled = !!isBusy;
   btn.setAttribute('aria-busy', isBusy ? 'true' : 'false');
@@ -2224,6 +2257,7 @@ async function pollOAuthStatus(oauthState, generation = beginOAuthPolling(oauthS
         const r = data.result;
         addOAuthAccountFromResult(r);
         resetOAuthManual();
+        setOAuthLoginState('已登录', 'success');
         textEl.textContent = '登录成功: ' + (r.email || r.name || '');
         setTimeout(() => statusEl.classList.add('hidden'), 2000);
         return;
@@ -2272,6 +2306,7 @@ async function finishOAuthWithCode() {
     const r = data.result;
     addOAuthAccountFromResult(r);
     resetOAuthManual();
+    setOAuthLoginState('已登录', 'success');
     textEl.textContent = '登录成功: ' + (r.email || r.name || '');
     setTimeout(() => statusEl.classList.add('hidden'), 2000);
   } catch (e) {
@@ -3251,8 +3286,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     toggleDropdown(false);
     renderAccountList();
     $('#useProxy').checked = state.data.useProxy;
+    setAccountTab('api');
     openDialog($('#accountOverlay'), { focusSelector: '#addManualBtn', restoreFocus: '#switcherBtn' });
   };
+  $('#accountTabApi')?.addEventListener('click', () => setAccountTab('api'));
+  $('#accountTabOauth')?.addEventListener('click', () => setAccountTab('oauth'));
+  $('#accountTabAdvanced')?.addEventListener('click', () => setAccountTab('advanced'));
   $('#closeAccount').onclick = () => closeDialog($('#accountOverlay'));
   $('#accountOverlay').onclick = (e) => { if (e.target === $('#accountOverlay')) closeDialog($('#accountOverlay')); };
 
