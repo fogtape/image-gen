@@ -1,50 +1,64 @@
-# AI Image Generator
+# AI Image Studio
 
-支持 OpenAI 兼容 API 与 ChatGPT OAuth 的图片生成工具。
+一个轻量的 OpenAI 系图片生成 Web UI，支持文生图、图生图、参考图、历史保存、水印、提示词润色、后台任务和 ChatGPT OAuth 登录。
+
+> 当前项目定位很明确：**目前只支持 OpenAI 系中转或 ChatGPT OAuth 登录**。也就是 OpenAI 兼容接口（`/v1/images/*`、`/v1/responses`）或 ChatGPT OAuth 账号。它不是通用绘图平台，不支持 Midjourney，不支持 Stable Diffusion，不支持 ComfyUI，也不支持非 OpenAI 协议的模型服务。
 
 Docker 镜像：`fogtape/image-gen:latest`
 
-## 功能
+## 适合谁用
 
-- 支持 OpenAI 兼容 Images API：`/v1/images/generations`、`/v1/images/edits`
-- 支持 Responses API 流式生图：`/v1/responses + image_generation`
-- 支持文生图、图生图、参考图上传
-- 支持手动 API Key 账号与 ChatGPT OAuth 账号
-- 支持账号级流式开关、图生图兼容开关、流式失败自动回退
-- 支持服务端默认配置中心
-- 支持 `config/.env` 持久化与热更新
-- 支持前端设置页直接保存服务端配置
-- 支持同步云平台环境变量并触发重新部署
-- 支持 Docker / Node / Vercel / Netlify / Cloudflare / EdgeOne 部署
+- 有 OpenAI 官方 Key 或 OpenAI 兼容中转站的人。
+- 想自托管一个简洁图片生成页面的人。
+- 想用 ChatGPT OAuth 账号尝试图片生成的人。
+- 需要把生成图保存到服务器，并带水印、历史记录、参考图继续生成的人。
 
----
+## 功能概览
 
-## 目录
+- OpenAI 兼容 Images API：`/v1/images/generations`、`/v1/images/edits`
+- OpenAI Responses API 流式生图：`/v1/responses + image_generation`
+- ChatGPT OAuth 图片生成流程
+- 文生图、图生图、最多 3 张参考图
+- 后台生成任务：浏览器切后台后，Node / Docker 后端继续生成
+- 图片历史：保存生成结果、收藏、搜索、删除、继续作为参考图
+- 水印：自定义文字、时间、相机时间、阴影、半透明底板、位置和字号
+- 提示词润色：手动润色或生成前自动润色
+- 服务端配置中心：默认 API 地址、模型、尺寸、质量、格式、水印、存储等
+- 安全导入 / 导出：安全导出不包含 API key、OAuth token、Cookie、session；完整导出必须加密
+- Docker / Node / Vercel / Netlify / Cloudflare Pages / EdgeOne Pages 部署
 
-- [快速开始](#快速开始)
-- [自动化测试与手工连通性测试](#自动化测试)
-- [配置优先级与保存位置](#配置优先级与保存位置)
-- [前端可保存哪些配置](#前端可保存哪些配置)
-- [本地 Node 部署](#本地-node-部署)
-- [Docker 部署](#docker-部署)
-- [云平台部署总览](#云平台部署总览)
-- [平台能力矩阵](#平台能力矩阵)
-- [各云平台参数怎么填](#各云平台参数怎么填)
-  - [Vercel](#vercel)
-  - [Netlify](#netlify)
-  - [Cloudflare Pages](#cloudflare-pages)
-  - [EdgeOne Pages](#edgeone-pages)
-- [环境变量清单](#环境变量清单)
-- [前端保存 + 云端同步 + 重新部署的工作流](#前端保存--云端同步--重新部署的工作流)
-- [常见问题](#常见问题)
+## 重要限制先看
 
----
+### 只支持 OpenAI 系
+
+支持的接入方式只有两类：
+
+1. **OpenAI 兼容 API Key**
+   - API 地址示例：`https://api.openai.com`、`https://your-relay.example`
+   - 需要兼容 OpenAI 的 `/v1/images/generations`、`/v1/images/edits` 或 `/v1/responses`
+   - 常见模型：`gpt-image-2`、支持 `image_generation` 工具的 Responses 模型
+
+2. **ChatGPT OAuth 登录**
+   - 通过浏览器授权 ChatGPT 账号
+   - 后端保存必要的 OAuth 账号信息
+   - 之后用 ChatGPT 后端图片流程生成
+
+不支持：Midjourney、Stable Diffusion WebUI、ComfyUI、Flux 原生 API、NovelAI、SD API、自定义非 OpenAI 协议接口。
+
+### 云平台后台生图不太好用
+
+云平台可以部署，但后台生图不太好用，原因是 serverless / 静态 Pages 对长任务不友好：
+
+- **Node / Docker**：后台任务体验最好，后端进程持续运行，适合长时间生成。
+- **Vercel**：有 Node API，但 serverless 实例不适合跨实例长轮询；项目会尽量在一次请求内同步完成并直接返回结果。
+- **Netlify**：只提供部分函数能力，没有完整后台任务。
+- **Cloudflare Pages / EdgeOne Pages**：默认是纯静态页面，没有本项目的 Node 后台任务能力，只能浏览器直连；目标 API 还必须支持 CORS。
+
+如果你要稳定使用后台生成、OAuth 后端、图片历史和服务端配置，推荐 **Node / Docker**。如果只是展示页面或轻量使用，云平台可以；如果要长时间后台生图，后台任务不适合长期依赖云平台 serverless。
 
 ## 快速开始
 
-### 本地运行
-
-要求 Node.js 22 或更高版本；仓库包含 `package-lock.json`，推荐使用 `npm ci` 复现依赖。
+要求 Node.js 22 或更高版本。仓库包含 `package-lock.json`，推荐使用 `npm ci` 复现依赖。
 
 ```bash
 npm ci
@@ -52,201 +66,73 @@ npm run build
 npm run dev
 ```
 
-Node 服务默认只从 `dist/` 提供前端静态文件；修改前端资源后需要重新执行 `npm run build`，或显式设置 `IMAGE_GEN_STATIC_DIR` 指向你要服务的静态目录。
-
-默认启动后访问：
+访问：
 
 ```text
 http://localhost:3000
 ```
 
-### 只构建前端静态文件
+Node 服务默认从 `dist/` 提供前端静态文件。修改 `index.html`、`app.js`、`style.css` 后，重新运行：
 
 ```bash
 npm run build
-npx serve dist -p 3000
 ```
-
-> 仅静态托管时，服务端配置中心、OAuth 后端、后台任务、云平台环境变量同步等功能不会生效。
-
-### 自动化测试
-
-```bash
-npm test
-```
-
-`npm test` 只运行正式自动化测试目录（`test/*.js` 与 `api/oauth/test.js`），不会执行需要临时凭据的手工连通性脚本。
-
-发布镜像前可运行完整门禁：
-
-```bash
-npm run ci:release-gate
-```
-
-它会依次执行单元测试、静态构建和 Docker smoke。普通本地环境没有 Docker 时，`npm run smoke:docker` 会跳过；CI 或设置 `REQUIRE_DOCKER_SMOKE=1` 时 Docker 不可用会失败。
-
-### 手工连通性测试
-
-手工脚本放在 `scripts/manual/`，用于你明确需要连真实兼容 API 地址排查时运行。它们依赖本地临时文件：
-
-```text
-.tmp_test_base_url
-.tmp_test_api_key
-```
-
-示例：
-
-```bash
-node scripts/manual/auth-check.mjs
-node scripts/manual/generate-image.mjs
-node scripts/manual/image-routes.mjs
-```
-
-不要提交这些 `.tmp_*` 临时文件，也不要把 API Key、token 或完整响应中的敏感内容粘贴到公开日志。
-
----
-
-## 零配置 Fork 导入部署
-
-如果你只是想快速上线静态前端，可直接走 **Fork → 导入平台** 的方式：
-
-- **Vercel**：Fork 本仓库后，直接 Import Git Repository
-- **Cloudflare Pages**：Fork 本仓库后，直接 Connect to Git 导入
-- **EdgeOne Pages**：Fork 本仓库后，直接从 Git 仓库导入
-
-这三种方式都可以先完成基础页面部署，初始阶段通常无需配置环境变量；后续若要用服务端配置中心、后台任务、OAuth 后端、环境变量同步与重部署，再按本文后面的平台配置章节补齐。
-
----
-
-## 配置优先级与保存位置
-
-当前项目的运行时配置优先级是：
-
-1. **系统环境变量**（最高优先级）
-2. **`config/.env` 文件**
-3. **代码内默认值**
-
-### 浏览器本地保存的内容
-以下内容**仍保存在浏览器 localStorage**，不会写进服务端 `.env`：
-
-- 手动添加的账号列表
-- API 地址 / API Key / OAuth 账号信息
-- 当前激活账号
-- 本地 UI 偏好
-
-### 服务端保存的内容
-以下内容会通过前端“服务端配置”写入：
-
-- 服务端默认 API 地址
-- 默认图片模型 / 默认流式模型
-- 默认尺寸 / 质量 / 输出格式 / 背景
-- 默认流式开关
-- 默认流式失败自动回退
-- 默认图生图兼容开关
-- 水印配置
-- 存储配置
-- 提示词增强配置
-- 部署平台配置
-
-### 热更新说明
-- **Node / Docker（挂载 `config/`）**：修改 `config/.env` 后会自动热更新，无需重启进程。
-- **Vercel / Netlify / EdgeOne / Cloudflare**：平台环境变量更新后，通常需要重新部署或等待平台重新加载。
-
----
-
-## 前端可保存哪些配置
-
-前端设置页新增的是“**服务端默认配置**”，它的目标是：
-
-- 让多个浏览器访问同一实例时，先拿到同一套默认行为
-- 让 Docker / VPS / 云平台部署时，配置能持久化
-- 让你可以在前端直接修改，再同步到云平台变量
-
-### 适合放到服务端配置里的内容
-推荐放到服务端 `.env` / 云平台 env：
-
-- 默认 API 地址
-- 默认图片模型 `gpt-image-2`
-- 默认流式模型 `gpt-5.4`
-- 默认尺寸、质量、格式、背景
-- 是否默认启用流式
-- 是否默认启用图生图兼容模式
-- 是否默认开启流式失败自动回退
-- 水印、存储、提示词增强
-- 部署平台参数
-- 管理口令 `IMAGE_GEN_ADMIN_TOKEN`
-
-### 不建议放到服务端配置里的内容
-以下仍建议保留在浏览器本地：
-
-- 用户自己的 API Key
-- 用户自己的 OAuth access token / refresh token
-- 私人中转站 key
-- 个人账号列表
-
-这样更安全，也更符合当前项目结构。
-
----
-
-## 本地 Node 部署
-
-### 1）准备配置文件
-
-```bash
-mkdir -p config
-cp config/.env.example config/.env
-```
-
-### 2）启动
-
-```bash
-npm ci
-npm run dev
-```
-
-### 3）前端保存配置后会发生什么
-在设置页点击“保存服务端配置”后：
-
-- 服务端会写入 `config/.env`
-- Node 进程会自动检测变更
-- 新配置会热更新生效
-- 无需手动重启
-
-### 4）适合什么场景
-适合：
-
-- VPS 直接跑 Node
-- Termux / Debian / Proot 本地运行
-- 需要最简单热更新体验的场景
-
----
 
 ## Docker 部署
 
-### Dockerfile 本地构建
+### 使用 Docker Hub 镜像
+
+```bash
+mkdir -p image-gen/config image-gen/data
+cd image-gen
+
+cat > docker-compose.yml <<'YAML'
+services:
+  image-gen:
+    image: fogtape/image-gen:latest
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      IMAGE_GEN_DATA_DIR: /app/data
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+    restart: unless-stopped
+YAML
+
+docker compose up -d
+```
+
+打开：
+
+```text
+http://服务器IP:3000
+```
+
+### 本地构建镜像
 
 ```bash
 docker build -t image-gen:local .
 docker run --rm -p 3000:3000 image-gen:local
 ```
 
-### 推荐：Docker Compose
+### 推荐挂载目录
 
-```bash
-docker compose up -d
-```
-
-当前仓库里的 `docker-compose.yml` 已挂载：
+仓库内的 `docker-compose.yml` 已挂载：
 
 - `./config:/app/config`
 - `./data:/app/data`
 
-这意味着：
+这样可以保证：
 
-- 前端保存服务端配置时，会落到宿主机 `config/.env`
-- 服务端 watcher 会检测文件变化
-- 配置支持热更新
-- 历史图片等数据会持久化到 `data/`
+- 前端保存服务端配置时，写入宿主机 `config/.env`
+- 容器重建后配置还在
+- 图片历史保存到 `data/`
+- 容器更新不会丢历史图片
+
+Docker 镜像构建时只复制 `config/.env.example`，不会把本地 `config/.env`、`data/`、`.oauth-sessions.json` 或 `.tmp_*` 临时文件打进镜像。容器首次启动时如果没有挂载自己的 `config/.env`，服务端会按模板生成默认配置。
 
 存储清理 scope 的含义：
 
@@ -254,482 +140,355 @@ docker compose up -d
 - **清理服务端图片**：清理 `data/images/` 和图片索引。
 - **清理页面和图片**：清理页面本地状态，并清理服务端图片；不会删除账号配置、`config/.env`、OAuth 会话文件或项目外文件。
 
-### 重要说明
-Docker 镜像构建时只复制 `config/.env.example`，不会把本地 `config/.env`、`data/`、`.oauth-sessions.json` 或 `.tmp_*` 临时文件打进镜像。容器首次启动时如果没有挂载自己的 `config/.env`，服务端会按模板生成默认配置。
+## 添加账号
 
-如果你**没有挂载 `config/`**，那会有两个问题：
+打开页面后，点右上角账号管理。
 
-1. 容器重建后配置丢失
-2. 前端保存配置后即使容器内生效，也不便于长期维护
+### API Key 账号
 
-所以 Docker 场景下，**强烈建议使用 compose 或手动挂载 `config/`**。
+填写：
 
----
+- 账号名称
+- API 地址，例如 `https://api.openai.com` 或你的 OpenAI 兼容中转地址
+- API Key
+- 图片模型，通常是 `gpt-image-2`
+- 如果你的中转支持 Responses 生图，可以打开流式模式并填写 Responses 模型
 
-## 云平台部署总览
+账号信息保存在当前浏览器 localStorage，不会自动写入服务端配置或云平台环境变量。
 
-这个项目目前支持两类配置持久化模式：
+### ChatGPT OAuth 账号
 
-### 模式 A：Node / Docker 本地配置持久化
-- 通过 `config/.env` 持久化
-- 支持热更新
-- 前端保存后立刻落盘
+适合没有 API Key，但想用 ChatGPT 账号授权尝试图片生成的场景。
 
-### 模式 B：云平台环境变量持久化
-- 通过平台 API 改环境变量
-- 前端保存后可再点“同步平台变量”
-- 如平台需要，再点“重新部署”
-- 这要求当前部署方式本身提供配置管理 API；纯静态 Pages 只能作为前端页面运行，不能在页面内完成平台 env 同步。
+OAuth token 也保存在当前浏览器 / 后端会话相关流程中，不会被同步到云平台环境变量。
 
-### 当前支持的平台字段要求
+## ChatGPT OAuth 登录流程
 
-| 平台 | 需要的字段 |
-|---|---|
-| Node / Docker | 无额外平台字段 |
-| Vercel | `projectId`、`apiToken` |
-| Netlify | `accountId`、`projectId`、`apiToken` |
-| Cloudflare | `accountId`、`projectId`、`apiToken` |
-| EdgeOne Pages | `projectId`、`apiToken` |
+OAuth 登录大致流程：
 
----
+1. 在账号管理里切到 **ChatGPT 登录**。
+2. 点击登录按钮。
+3. 页面请求后端创建 OAuth 会话，后端返回 `授权链接`。
+4. 浏览器打开 OpenAI / ChatGPT 的授权页面。
+5. 登录并同意授权后，会回跳到一个 localhost 回调地址，例如：
+
+```text
+http://localhost:1455/auth/callback?code=...&state=...
+```
+
+如果你是在 VPS、Docker、Vercel 或其他远程站点里使用，看到 `localhost` 页面无法访问、打不开、显示无法连接，并不一定是项目出错。这个 localhost 指的是用户当前浏览器设备，不是服务器域名。
+
+遇到这种情况按下面处理：
+
+1. 不要关闭授权失败页。
+2. 复制浏览器地址栏里的完整回调链接，或者复制其中的授权码 `code`。
+3. 回到 AI Image Studio 的 ChatGPT 登录弹窗。
+4. 粘贴完整回调链接或授权码。
+5. 点击完成登录。
+
+这一步是为了避免用户误以为“授权链接跳转到无法访问页面就是失败”。只要拿到了 `code` 和 `state`，通常仍然可以回到页面手动完成交换。
+
+## 零配置 Fork 导入部署
+
+如果你只是想快速上线一个页面，可以直接走 **Fork → 导入平台**：
+
+- **Vercel**：Fork 本仓库后，直接 Import Git Repository
+- **Cloudflare Pages**：Fork 本仓库后，直接 Connect to Git 导入
+- **EdgeOne Pages**：Fork 本仓库后，直接从 Git 仓库导入
+- **Netlify**：Fork 本仓库后，直接导入 Git 仓库
+
+这些平台基础页面通常无需配置环境变量即可构建，构建命令是：
+
+```bash
+npm run build
+```
+
+输出目录：
+
+```text
+dist
+```
+
+但要注意：纯静态 Pages 只提供前端页面，后台任务、OAuth 后端、服务端代理、服务端配置保存、图片持久化都可能不可用或降级。
 
 ## 平台能力矩阵
 
 标记说明：
 
-- ✅：当前实现可用。
-- ⚠️：可用但有明显降级、前提或生命周期限制。
-- ❌：该部署形态下当前不可用。
+- ✅：当前实现可用
+- ⚠️：可用但有明显降级、前提或生命周期限制
+- ❌：该部署形态下当前不可用
 
 | 部署方式 | 静态页面 | 浏览器直连生图 | 服务端代理 `/api/proxy` | OAuth 后端 | 后台任务 | 图片持久化 | 服务端配置保存 | 平台同步/重部署 | 说明 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| Node / VPS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ 本地无需远程重部署 | 最完整形态；`config/.env` 和 `data/` 可长期保留。 |
-| Docker / Compose | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ 需挂载 `./data` | ✅ 需挂载 `./config` | ⚠️ 本地无需远程重部署 | 推荐使用 compose，避免容器重建后配置和历史丢失。 |
-| Vercel | ✅ | ✅ | ✅ | ✅ | ⚠️ serverless 中同步执行并直接返回结果 | ⚠️ serverless 本地文件不可当长期存储 | ⚠️ 当前实例运行态可保存，持久化需同步平台 env 后重部署 | ✅ | 当前最完整的云端 serverless 形态；后台任务不做跨实例长轮询。 |
+| Node / VPS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ 本地无需远程重部署 | 最完整形态；适合正式自用和长期后台生图。 |
+| Docker / Compose | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ 需挂载 `./data` | ✅ 需挂载 `./config` | ⚠️ 本地无需远程重部署 | 推荐部署方式；配置和图片历史可持久化。 |
+| Vercel | ✅ | ✅ | ✅ | ✅ | ⚠️ serverless 中同步执行并直接返回结果 | ⚠️ serverless 本地文件不可当长期存储 | ⚠️ 当前实例运行态可保存，持久化需同步平台 env 后重部署 | ✅ | 云端形态里最完整，但后台任务不做跨实例长轮询。 |
 | Netlify | ✅ | ✅ | ✅ | ⚠️ 仅 `/api/oauth/images`，缺 `start/exchange/status/stream` | ❌ | ❌ | ❌ | ❌ | 当前只提供 `proxy` 和部分 OAuth 生图函数；配置中心和后台任务需 Node/Vercel 形态。 |
 | Cloudflare Pages | ✅ | ✅ 需要目标 API 支持 CORS | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 当前仓库提供纯静态 Pages 构建；Cloudflare handler 只是在 Node/Vercel 配置中心里管理外部 Worker/Script env。 |
 | EdgeOne Pages | ✅ | ✅ 需要目标 API 支持 CORS | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 当前仓库提供纯静态 Pages 构建；EdgeOne handler 只是在 Node/Vercel 配置中心里调用 Pages API。 |
 
-### 关键结论
+关键结论：
 
-- 想要完整的配置中心、后台任务、OAuth 后端和图片历史：优先选 **Node / Docker**。
-- 想要云端免服务器且功能尽量完整：优先选 **Vercel**。
-- 只想快速上线前端页面：**Netlify / Cloudflare Pages / EdgeOne Pages** 可以零配置导入，但要接受后端能力降级。
-- 浏览器直连生图依赖目标 API 的 CORS；如果目标 API 不允许跨域，就需要 Node / Docker / Vercel / Netlify 的 `/api/proxy`。
+- 要完整体验：选 **Node / VPS** 或 **Docker / Compose**。
+- 要免服务器且能接受 serverless 限制：选 **Vercel**。
+- 只是展示页面或临时使用：选 **Cloudflare Pages / EdgeOne Pages / Netlify**。
+- 云平台后台生图不太好用，不建议把长任务体验寄托在纯静态 Pages 或短生命周期 serverless 上。
 
----
+## 云平台说明
 
-## 各云平台参数怎么填
+### Vercel
 
-下面重点讲三件事：
+仓库已包含 `vercel.json`：
 
-1. **前端里要填哪个字段**
-2. **这些字段值去哪里找**
-3. **前端保存 / 同步 / 重部署是怎么工作的**
-
----
-
-## Vercel
-
-### 前端需要填写
-部署平台选择 `vercel` 后，需要填：
-
-- `Project ID`
-- `API Token`
-
-### `Project ID` 去哪里找
-在 Vercel 控制台：
-
-1. 打开你的项目
-2. 进入 **Settings**
-3. 在 **General** 页面找到 **Project ID**
-
-通常是一个形如：
-
-```text
-prj_xxxxxxxxxxxxx
+```json
+{
+  "framework": null,
+  "installCommand": "npm install",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist"
+}
 ```
 
-### `API Token` 去哪里找
-在 Vercel 控制台：
+Vercel 还包含显式 API 路由，用于 `/api/proxy`、OAuth 登录、OAuth 状态查询和 OAuth 图片生成。它是云平台里最接近完整后端体验的形态。
 
-1. 点击右上角头像
-2. 进入 **Settings**
-3. 进入 **Tokens**
-4. 创建一个新的 Token
+后台任务在 Vercel 上不会像常驻 Node 一样跨实例长轮询。serverless 场景下会尽量在请求内同步执行并返回结果，避免刷新或切后台后轮询到另一个实例导致任务丢失。
 
-建议给这个 Token 起名，例如：
+### Netlify
+
+仓库已包含 `netlify.toml`，基础静态页面可以直接部署。
+
+当前 Netlify 只提供：
+
+- `/api/proxy` 的 Netlify Functions 代理
+- 部分 OAuth 图片函数
+
+不提供完整配置中心、完整 OAuth 登录 start/exchange/status/stream、后台任务和图片持久化。
+
+### Cloudflare Pages
+
+仓库已包含 `wrangler.toml`，指向 `dist`。
+
+Cloudflare Pages 纯静态部署可以展示页面，但没有 Node 后端 API。浏览器直连生图要求目标 OpenAI 兼容 API 支持 CORS。
+
+README 里提到的 Cloudflare 平台配置同步，是 Node/Vercel 配置中心调用 Cloudflare API 管理外部 Worker/Script env，不等于纯 Cloudflare Pages 静态站自动拥有完整后端。
+
+### EdgeOne Pages
+
+仓库已包含 `edgeone.json`，可按 `npm run build` → `dist` 导入。
+
+EdgeOne Pages 纯静态部署同样没有本项目的 Node 后端。项目里的 EdgeOne handler 是 Node/Vercel 配置中心里调用 Pages API 做环境变量和重新部署管理。
+
+## 服务端配置
+
+配置优先级：
+
+1. 系统环境变量
+2. `config/.env`
+3. 代码默认值
+
+浏览器本地保存：
+
+- 账号列表
+- API 地址 / API Key
+- OAuth 账号信息
+- 当前激活账号
+- UI 偏好
+
+服务端配置保存：
+
+- 默认 API 地址
+- 默认图片模型 / Responses 模型
+- 默认尺寸、质量、格式、背景
+- 代理开关
+- 水印配置
+- 存储配置
+- 提示词润色配置
+- 部署平台配置
+
+在 Node / Docker 中，保存服务端配置会写入 `config/.env` 并热更新。云平台环境变量需要同步后重新部署。
+
+保存服务端配置时会自动执行平台变量同步和重新部署的前提是你开启：
 
 ```text
-image-gen-config-sync
+IMAGE_GEN_DEPLOY_AUTO_SYNC=true
+IMAGE_GEN_DEPLOY_AUTO_REDEPLOY=true
 ```
 
-### 需要什么权限
-至少要能：
+接口响应的 `operations` 会返回每一步同步 / 重新部署结果。
 
-- 读取项目环境变量
-- 写入项目环境变量
-- 触发项目重新部署
+## 常用环境变量
 
-### 前端保存后的行为
-在前端设置页里：
-
-1. 先保存服务端配置
-2. 点击“平台校验”
-3. 点击“同步平台变量”
-4. 点击“重新部署”
-
-项目当前实现会：
-
-- 调用 Vercel API 更新白名单环境变量
-- 复用最近一次部署触发一个新的 production 部署
-
-### 适用说明
-Vercel 是当前最完整的云端闭环之一，适合：
-
-- 你希望前端改默认配置
-- 再同步到 Vercel
-- 再从前端一键触发重部署
-
----
-
-## Netlify
-
-### 前端需要填写
-部署平台选择 `netlify` 后，需要填：
-
-- `Account ID`
-- `Project ID`
-- `API Token`
-
-### `Account ID` 去哪里找
-常见方式：
-
-1. 打开 Netlify 控制台
-2. 进入团队 / 组织设置
-3. 在 URL、API 返回或团队信息里查看 account / team id
-
-如果不方便在 UI 找，也可以通过 Netlify API / CLI 查。
-
-### `Project ID` 去哪里找
-`Project ID` 在 Netlify 对应的是 **Site ID**。
-
-获取方式：
-
-1. 打开 Netlify 站点
-2. 进入 **Site configuration**
-3. 找到 **Site information**
-4. 查看 **API ID / Site ID**
-
-### `API Token` 去哪里找
-在 Netlify 控制台：
-
-1. 右上角头像
-2. **User settings**
-3. **Applications**
-4. **Personal access tokens**
-5. 创建新 token
-
-### 前端保存后的行为
-当前实现会：
-
-- 通过 Netlify API 更新站点环境变量
-- 调用站点 build 接口触发重新部署
-
-### 说明
-Netlify 的 `projectId` 实际填的是站点 ID，不是仓库名。
-
----
-
-## Cloudflare Pages
-
-### 前端需要填写
-部署平台选择 `cloudflare` 后，需要填：
-
-- `Account ID`
-- `Project ID`
-- `API Token`
-
-### `Account ID` 去哪里找
-在 Cloudflare Dashboard：
-
-1. 进入任意站点或账户主页
-2. 右侧 / 概览页通常可以看到 **Account ID**
-
-### `Project ID` 填什么
-当前实现对 Cloudflare 走的是：
-
-- `workers/scripts/{projectId}/settings`
-
-所以这里的 `projectId` 应理解为：
-
-- **对应 Worker / Script 名称**
-
-如果你未来把它完全切到 Pages 专属 API，再按 Pages 项目 ID / 名称适配。
-
-### `API Token` 去哪里找
-在 Cloudflare Dashboard：
-
-1. 右上角头像
-2. **My Profile**
-3. **API Tokens**
-4. 创建 Token
-
-建议至少授予与 Workers 配置相关的权限。
-
-### 当前实现说明
-当前项目里 Cloudflare handler 会：
-
-- 读取 Worker settings
-- 更新 `plain_text` bindings
-- 返回“通常自动生效，无需额外手动部署”
-
-也就是说当前逻辑更偏 **Workers 配置模式**，不是纯 Pages 静态项目模式。
-
-### 适用建议
-如果你现在跑的是：
-
-- Cloudflare Workers / Pages Functions / Worker 脚本型部署
-
-这套逻辑是有意义的。  
-如果你跑的是**纯 Pages 静态站点**，那它不会像 Node 服务那样具备完整后端能力，这点要区分清楚。
-
----
-
-## EdgeOne Pages
-
-### 前端需要填写
-部署平台选择 `edgeone` 后，需要填：
-
-- `Project ID`
-- `API Token`
-
-### `Project ID` 去哪里找
-在 EdgeOne Pages 控制台里打开你的项目，通常可以在：
-
-- 项目详情页
-- 控制台 URL
-- API 返回
-
-找到项目 ID。
-
-### `API Token` 去哪里找
-在腾讯云 / EdgeOne 对应的 API 访问管理中创建可调用 Pages API 的 token。
-
-### 当前实现做了什么
-当前项目会调用：
-
-- `ModifyPagesProjectEnvs`
-- `CreatePagesDeployment`
-
-也就是说：
-
-1. 可同步环境变量
-2. 可触发重新部署
-
-### 说明
-如果你是中国大陆用户，EdgeOne Pages 往往更适合需要国内访问体验的场景；但前提仍是你的 token 权限要足够。
-
----
-
-## 环境变量清单
-
-下面是当前配置中心会管理的主要环境变量。
-
-### 服务端默认配置
+### 基础配置
 
 | 变量名 | 说明 |
 |---|---|
-| `IMAGE_GEN_ADMIN_TOKEN` | 管理口令。前端调用服务端配置保存/同步/部署接口时使用。建议设置。 |
-| `IMAGE_GEN_DEFAULT_API_URL` | 默认 API 地址 |
+| `PORT` | Node / Docker HTTP 监听端口，默认 `3000` |
+| `IMAGE_GEN_ADMIN_TOKEN` | 管理口令。保存服务端配置、清理服务端图片、同步云平台变量时建议设置 |
+| `IMAGE_GEN_CONFIG_DIR` | 配置目录，默认 `config/` |
+| `IMAGE_GEN_ENV_FILE` | 配置文件路径，默认 `IMAGE_GEN_CONFIG_DIR/.env` |
+| `IMAGE_GEN_DATA_DIR` | 图片历史目录，Docker 推荐 `/app/data` 并挂载宿主机目录 |
+| `IMAGE_GEN_STATIC_DIR` | 静态文件目录，默认 `dist/` |
+
+### 默认生成配置
+
+| 变量名 | 说明 |
+|---|---|
+| `IMAGE_GEN_DEFAULT_API_URL` | 默认 OpenAI 兼容 API 地址 |
 | `IMAGE_GEN_DEFAULT_IMAGE_MODEL` | 默认图片模型，通常是 `gpt-image-2` |
-| `IMAGE_GEN_DEFAULT_RESPONSES_MODEL` | 默认流式模型，通常是 `gpt-5.4` |
-| `IMAGE_GEN_DEFAULT_STREAM_MODE` | 是否默认启用流式 |
-| `IMAGE_GEN_DEFAULT_RESPONSES_AUTO_FALLBACK` | 流式失败时是否自动回退到 Images API |
-| `IMAGE_GEN_DEFAULT_IMAGE_EDITS_COMPAT_MODE` | 是否默认启用图生图兼容模式 |
-| `IMAGE_GEN_FORCE_PROXY` | 是否强制通过服务端代理 |
-| `IMAGE_GEN_DEFAULT_SIZE` | 默认尺寸 |
+| `IMAGE_GEN_DEFAULT_RESPONSES_MODEL` | 默认 Responses 模型 |
+| `IMAGE_GEN_DEFAULT_STREAM_MODE` | 是否默认启用 Responses 流式生图 |
+| `IMAGE_GEN_DEFAULT_RESPONSES_AUTO_FALLBACK` | Responses 失败后是否自动回退 Images API |
+| `IMAGE_GEN_DEFAULT_IMAGE_EDITS_COMPAT_MODE` | 是否启用旧版 multipart 图生图兼容模式 |
+| `IMAGE_GEN_FORCE_PROXY` | 是否强制走服务端代理 |
+| `IMAGE_GEN_DEFAULT_SIZE` | 默认尺寸，默认 `auto` |
 | `IMAGE_GEN_DEFAULT_QUALITY` | 默认质量 |
 | `IMAGE_GEN_DEFAULT_FORMAT` | 默认输出格式 |
 | `IMAGE_GEN_DEFAULT_BACKGROUND` | 默认背景 |
 
-### 水印配置
+### 水印、存储、润色
 
 | 变量名 | 说明 |
 |---|---|
 | `IMAGE_GEN_WATERMARK_ENABLED` | 是否启用水印 |
-| `IMAGE_GEN_WATERMARK_TEMPORARY_MODE` | 水印临时覆盖策略 |
+| `IMAGE_GEN_WATERMARK_TEMPORARY_MODE` | 单次生成水印覆盖策略 |
 | `IMAGE_GEN_WATERMARK_MODE` | 水印模式 |
 | `IMAGE_GEN_WATERMARK_TEXT` | 水印文本 |
 | `IMAGE_GEN_WATERMARK_TIME_FORMAT` | 时间格式 |
-| `IMAGE_GEN_WATERMARK_POSITION` | 位置 |
+| `IMAGE_GEN_WATERMARK_POSITION` | 水印位置 |
 | `IMAGE_GEN_WATERMARK_OPACITY` | 透明度 |
 | `IMAGE_GEN_WATERMARK_FONT_SIZE` | 字号 |
 | `IMAGE_GEN_WATERMARK_COLOR` | 颜色 |
-| `IMAGE_GEN_WATERMARK_SHADOW` | 阴影 |
-| `IMAGE_GEN_WATERMARK_BACKGROUND` | 背景底板 |
-
-### 存储与提示词增强
-
-| 变量名 | 说明 |
-|---|---|
-| `IMAGE_GEN_STORAGE_ENABLED` | 是否启用图片存储 |
-| `IMAGE_GEN_PROMPT_ENHANCEMENT_ENABLED` | 是否启用提示词增强 |
-| `IMAGE_GEN_PROMPT_ENHANCEMENT_RUN_MODE` | 手动 / 自动 |
-| `IMAGE_GEN_PROMPT_ENHANCEMENT_MODEL` | 提示词增强模型 |
-| `IMAGE_GEN_PROMPT_ENHANCEMENT_MODE` | 优化模式 |
+| `IMAGE_GEN_WATERMARK_SHADOW` | 是否启用阴影 |
+| `IMAGE_GEN_WATERMARK_BACKGROUND` | 是否启用半透明底板 |
+| `IMAGE_GEN_STORAGE_ENABLED` | 是否保存生成图片 |
+| `IMAGE_GEN_PROMPT_ENHANCEMENT_ENABLED` | 是否启用提示词润色 |
+| `IMAGE_GEN_PROMPT_ENHANCEMENT_RUN_MODE` | `manual` 或 `auto` |
+| `IMAGE_GEN_PROMPT_ENHANCEMENT_MODEL` | 润色模型，空值则跟随账号模型 |
+| `IMAGE_GEN_PROMPT_ENHANCEMENT_MODE` | 润色风格 |
 | `IMAGE_GEN_PROMPT_ENHANCEMENT_LANGUAGE` | 语言偏好 |
 
-### 部署平台配置
+### 云平台配置
 
 | 变量名 | 说明 |
 |---|---|
 | `IMAGE_GEN_DEPLOY_PLATFORM` | `node` / `vercel` / `netlify` / `cloudflare` / `edgeone` |
-| `IMAGE_GEN_DEPLOY_ACCOUNT_ID` | 平台账号 ID（Netlify / Cloudflare 需要） |
+| `IMAGE_GEN_DEPLOY_ACCOUNT_ID` | 平台账号 ID，Netlify / Cloudflare 需要 |
 | `IMAGE_GEN_DEPLOY_PROJECT_ID` | 平台项目 ID |
-| `IMAGE_GEN_DEPLOY_API_TOKEN` | 平台 API Token |
-| `IMAGE_GEN_DEPLOY_AUTO_SYNC` | 保存后是否自动同步平台变量 |
-| `IMAGE_GEN_DEPLOY_AUTO_REDEPLOY` | 同步后是否自动触发重部署 |
+| `IMAGE_GEN_DEPLOY_API_TOKEN` | 平台 API Token，不要提交到仓库 |
+| `IMAGE_GEN_DEPLOY_AUTO_SYNC` | 保存配置后是否自动同步平台变量 |
+| `IMAGE_GEN_DEPLOY_AUTO_REDEPLOY` | 同步后是否自动触发重新部署 |
 
-### 高级 / 安全环境变量
+### 安全与代理
 
-这些变量通常不需要在前端设置页里频繁修改，适合自托管、Docker、Vercel 或安全加固场景直接通过环境变量配置。
-
-| 变量名 | 默认值 / 范围 | 说明 |
-|---|---|---|
-| `PORT` | `3000` | Node / Docker HTTP 监听端口。 |
-| `IMAGE_GEN_CONFIG_DIR` | `config/` | Node / Docker 配置目录；建议在 Docker 中挂载到宿主机。 |
-| `IMAGE_GEN_ENV_FILE` | `IMAGE_GEN_CONFIG_DIR/.env` | 本地配置文件路径。serverless 环境不会创建或依赖该文件。 |
-| `IMAGE_GEN_DATA_DIR` | `data/` | 图片历史和持久化文件目录；Docker 中建议挂载。 |
-| `IMAGE_GEN_STATIC_DIR` | `dist/` | Node 服务静态资源目录；修改前端后需重新 `npm run build`。 |
-| `IMAGE_GEN_ALLOWED_ORIGINS` | 空 | Node API CORS 额外允许来源，多个 origin 用逗号分隔；同源和本机开发来源会自动允许。 |
-| `IMAGE_GEN_ALLOW_INSECURE_LOCAL_ADMIN` | `false` | 仅本机开发调试用；未设置管理口令时是否允许本机管理请求。生产环境不要开启。 |
-| `IMAGE_GEN_PROXY_ALLOWED_HOSTS` | 兼容旧配置 | 旧版代理 host 白名单变量；当前版本默认允许公网 HTTPS OpenAI 兼容 API host，但仍拒绝本机/私网地址。 |
-| `IMAGE_GEN_PROXY_ALLOW_LOCAL_HTTP` | `false` | 仅本地开发用；是否允许代理访问本机 HTTP。生产环境不要开启。 |
-| `IMAGE_GEN_PROXY_TIMEOUT_MS` | 约 60 秒 | `/api/proxy` 上游请求超时。 |
-| `IMAGE_GEN_PROXY_MAX_RESPONSE_BYTES` | 约 50MB | `/api/proxy` 最大响应字节数，覆盖 JSON / 普通流 / SSE。 |
-| `IMAGE_GEN_JSON_BODY_LIMIT_BYTES` | 约 2MB | JSON 请求体上限。 |
-| `IMAGE_GEN_IMAGE_JOB_BODY_LIMIT_BYTES` | 约 25MB | 生图任务 JSON 请求体上限。 |
-| `IMAGE_GEN_REF_IMAGE_MAX_BYTES` | 约 10MB | 单张参考图最大字节数。 |
-| `IMAGE_GEN_REF_IMAGES_TOTAL_MAX_BYTES` | 约 25MB | 多参考图总大小上限。 |
-| `IMAGE_GEN_REMOTE_IMAGE_MAX_BYTES` | 约 20MB | 远程图片下载最大字节数。 |
-| `IMAGE_GEN_REMOTE_IMAGE_TIMEOUT_MS` | 约 15 秒 | 远程图片下载超时。 |
-| `IMAGE_GEN_REMOTE_IMAGE_MAX_REDIRECTS` | 3 | 远程图片下载最大重定向次数；每一跳都会重新校验协议和地址。 |
-| `IMAGE_GEN_OAUTH_SESSION_FILE` | `.oauth-sessions.json` | OAuth session 文件位置；仅保存非 token 状态，成功结果只保留在内存。 |
-| `IMAGE_GEN_OAUTH_SESSION_SECRET` | 自动/环境提供 | serverless stateless OAuth session 加密签名密钥；生产建议显式设置高强度随机值。 |
-| `IMAGE_GEN_PLATFORM_API_TIMEOUT_MS` | `15000`，限制 1000-120000 | Vercel / Netlify / Cloudflare / EdgeOne 平台 API 调用超时。 |
-| `IMAGE_GEN_DOCKER_SMOKE_TAG` | 自动生成 | Docker smoke 测试临时镜像 tag。 |
-| `REQUIRE_DOCKER_SMOKE` | `0` | 设为 `1` 时 Docker 不可用会让 `npm run smoke:docker` 失败；发布 CI 已强制开启。 |
-
-### Serverless 行为差异
-
-- **Node / Docker**：会读取并维护本地 `config/.env`，支持 watcher 热更新、后台任务轮询、图片持久化、完整 `/api/proxy` 和 OAuth 后端。
-- **Vercel**：初始化时只读取环境变量，不创建本地配置文件；后台任务在 serverless 中同步完成并直接返回结果，适合免服务器但仍需要后端 API 的场景。
-- **Netlify**：当前只提供 JSON proxy 和部分 OAuth 生图函数；没有完整配置中心、后台任务和图片持久化。
-- **Cloudflare Pages / EdgeOne Pages**：默认是静态站点导入；仓库内 handler 主要用于 Node/Vercel 配置中心里管理对应平台环境变量，不等于 Pages 静态站点天然具备完整后端。
-
----
-
-## 前端保存 + 云端同步 + 重新部署的工作流
-
-这是当前推荐工作流：
-
-### Node / Docker
-
-1. 前端修改服务端默认配置
-2. 点击保存
-3. 配置写入 `config/.env`
-4. watcher 自动热更新
-5. 无需重启
-
-### 云平台
-
-1. 前端修改服务端默认配置
-2. 点击保存（先写本地运行态配置）
-3. 点击“平台校验”确认 `accountId/projectId/token` 正确
-4. 点击“同步平台变量”
-5. 如平台需要，点击“重新部署”
-6. 新部署实例读取最新环境变量
-
-### 自动模式
-如果你打开：
-
-- `IMAGE_GEN_DEPLOY_AUTO_SYNC=true`
-- `IMAGE_GEN_DEPLOY_AUTO_REDEPLOY=true`
-
-那么保存服务端配置时会自动执行平台变量同步和重新部署，并在接口响应的 `operations` 里返回每一步结果。
-
-如果你刚开始配置平台 token，建议先关闭自动模式，手动点击“平台校验 / 同步平台变量 / 重新部署”确认成功后再打开。
-
----
-
-## 常见问题
-
-### 1）为什么前端保存了配置，但浏览器里的账号没变？
-因为账号列表和 token 仍保存在浏览器 localStorage，不属于服务端默认配置。
-
-### 2）为什么本地能热更新，云平台不能立刻生效？
-因为本地是直接改 `config/.env`，云平台则是改远端环境变量，通常需要平台重新加载或重新部署。
-
-### 3）为什么 Docker 里保存后重建容器配置丢了？
-因为你没有挂载 `config/`。请使用：
-
-- `./config:/app/config`
-- `./data:/app/data`
-
-### 4）前端改完后，哪些值会被同步到云平台？
-只有配置中心白名单里的服务端配置项会同步，不会把用户浏览器本地的账号 key、OAuth token 一起同步上去。
-
-### 5）Cloudflare 为什么说“通常自动生效，无需额外手动部署”？
-因为当前实现走的是 Worker settings 风格接口，不完全等同于传统静态站点二次构建流程。
-
-### 6）部署平台 token 应该怎么保管？
-建议：
-
-- 用单独 token
-- 只授予必要权限
-- 只保存在你自己的服务端配置里
-- 不要把 token 提交进 Git 仓库
-
----
+| 变量名 | 说明 |
+|---|---|
+| `IMAGE_GEN_ALLOWED_ORIGINS` | 额外允许的 CORS 来源，多个 origin 用逗号分隔 |
+| `IMAGE_GEN_ALLOW_INSECURE_LOCAL_ADMIN` | 仅本地开发调试用，生产不要开启 |
+| `IMAGE_GEN_PROXY_ALLOWED_HOSTS` | 兼容旧配置；当前默认允许公网 HTTPS OpenAI 兼容 API host，但仍拒绝本机 / 私网地址 |
+| `IMAGE_GEN_PROXY_ALLOW_LOCAL_HTTP` | 仅本地开发用，是否允许本机 HTTP 代理 |
+| `IMAGE_GEN_PROXY_TIMEOUT_MS` | 代理上游请求超时 |
+| `IMAGE_GEN_PROXY_MAX_RESPONSE_BYTES` | 代理最大响应字节数 |
+| `IMAGE_GEN_JSON_BODY_LIMIT_BYTES` | JSON 请求体上限 |
+| `IMAGE_GEN_IMAGE_JOB_BODY_LIMIT_BYTES` | 生图任务请求体上限 |
+| `IMAGE_GEN_REF_IMAGE_MAX_BYTES` | 单张参考图最大字节数 |
+| `IMAGE_GEN_REF_IMAGES_TOTAL_MAX_BYTES` | 多参考图总大小上限 |
+| `IMAGE_GEN_REMOTE_IMAGE_MAX_BYTES` | 远程图片下载最大字节数 |
+| `IMAGE_GEN_REMOTE_IMAGE_TIMEOUT_MS` | 远程图片下载超时 |
+| `IMAGE_GEN_REMOTE_IMAGE_MAX_REDIRECTS` | 远程图片最大重定向次数 |
+| `IMAGE_GEN_OAUTH_SESSION_FILE` | OAuth session 文件位置 |
+| `IMAGE_GEN_OAUTH_SESSION_SECRET` | serverless stateless OAuth session 加密签名密钥 |
+| `IMAGE_GEN_PLATFORM_API_TIMEOUT_MS` | 平台 API 调用超时 |
+| `REQUIRE_DOCKER_SMOKE` | 设为 `1` 时 Docker smoke 不可用会让发布门禁失败 |
 
 ## 代理说明
 
-如果 API 不支持 CORS（浏览器跨域），可在设置中开启“使用代理”。
+如果目标 OpenAI 兼容 API 不支持浏览器 CORS，可以在账号设置里开启代理。
 
 - **Node / Docker**：支持 JSON、SSE 和 multipart 图生图代理，功能最完整。
-- **Vercel**：支持 JSON 和 SSE 代理；不支持 multipart 图生图代理，开启“图生图兼容模式（旧版 multipart）”时请关闭代理或改用 Node / Docker。
+- **Vercel**：支持 JSON 和 SSE 代理；不支持 multipart 图生图代理，开启旧版 multipart 图生图兼容模式时请关闭代理或改用 Node / Docker。
 - **Netlify**：支持 JSON 代理；SSE 会退化为函数响应文本，multipart 图生图代理不支持。
-- **纯静态站点**：通常只能浏览器直连，要求目标 API 本身支持跨域
+- **纯静态站点**：通常只能浏览器直连，要求目标 API 本身支持跨域。
 
----
+安全限制：默认拒绝本机、私网、链路本地地址，防止把代理当 SSRF 通道使用。
 
-## 产品路线
+## 测试与发布门禁
 
-P0-P3 的稳定性、安全、可访问性和发布门禁修复记录见：
+运行测试：
 
-- `docs/audit-p0-p3-tracking-2026-04-28.md`
+```bash
+npm test
+```
 
-下一批产品增强 backlog 见：
+构建静态文件：
 
-- `docs/p4-product-roadmap.md`
+```bash
+npm run build
+```
 
----
+发布镜像前门禁：
+
+```bash
+npm run ci:release-gate
+```
+
+发布 workflow 会先执行 `npm ci` 和 `npm run ci:release-gate`，通过单元测试、静态构建和 Docker smoke 后才登录 Docker Hub 并推送多架构镜像。CI 中设置 `REQUIRE_DOCKER_SMOKE=1`，所以 Docker 构建或容器 HTTP 烟测失败时不会发布镜像。
 
 ## Docker Hub / 镜像发布
 
-推送到 `main` 后，GitHub Actions 会自动构建并推送 Docker Hub 镜像：
+推送到 `main` 后，GitHub Actions 会构建并推送：
 
 ```text
 fogtape/image-gen:latest
 fogtape/image-gen:sha-<commit>
 ```
 
-GitHub 仓库需配置 Secrets：
+GitHub 仓库需要配置：
 
 ```text
 DOCKERHUB_USERNAME
 DOCKERHUB_TOKEN
 ```
 
-发布 workflow 会先执行 `npm ci` 和 `npm run ci:release-gate`，通过单元测试、静态构建和 Docker smoke 后才登录 Docker Hub 并推送多架构镜像。CI 中已设置 `REQUIRE_DOCKER_SMOKE=1`，因此 Docker 构建或容器 HTTP 烟测失败时不会发布镜像。
+## 常见问题
+
+### 为什么提示只支持 OpenAI 系？
+
+因为当前前端、后端、代理、后台任务、OAuth 都围绕 OpenAI Images / Responses 设计。非 OpenAI 协议需要单独适配请求体、返回体、错误处理、历史保存和前端参数，不是填一个模型名就能兼容。
+
+### OAuth 授权后跳到 localhost 无法访问，是失败了吗？
+
+不一定。远程部署时看到 localhost 无法访问很常见。复制完整回调链接或授权码，回到 ChatGPT 登录弹窗里粘贴完成即可。
+
+### 为什么云平台后台任务体验不如 Docker？
+
+因为 Vercel / Netlify 这类 serverless 平台请求生命周期短，实例之间不共享内存；Cloudflare Pages / EdgeOne Pages 默认又是纯静态页面。长时间后台生图更适合 Node / Docker 常驻进程。
+
+### 为什么保存配置后，浏览器里的账号没变？
+
+账号列表、API Key、OAuth token 默认存在浏览器本地 localStorage，不属于服务端默认配置。
+
+### Docker 更新后配置或图片丢了怎么办？
+
+检查是否挂载了：
+
+```text
+./config:/app/config
+./data:/app/data
+```
+
+没有挂载时，配置和图片历史可能只在容器内部，重建容器会丢。
+
+### API Key 和 token 应该放哪里？
+
+个人 API Key、OAuth token、平台 token 都不要提交到 Git 仓库。服务端管理口令和平台 token 建议放在 `config/.env` 或平台环境变量里，并限制访问权限。
+
+## 产品路线与记录
+
+P0-P3 稳定性、安全、可访问性和发布门禁修复记录：
+
+- `docs/audit-p0-p3-tracking-2026-04-28.md`
+
+下一批产品增强 backlog：
+
+- `docs/p4-product-roadmap.md`
