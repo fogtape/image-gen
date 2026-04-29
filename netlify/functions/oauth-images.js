@@ -5,6 +5,19 @@ import {
   validateImagePayloadLimits,
 } from '../../request-limits.js';
 
+function verifyAdminToken(event) {
+  const adminToken = process.env.IMAGE_GEN_ADMIN_TOKEN || '';
+  if (!adminToken) return false; // No admin token configured = deny access (fail-closed)
+
+  const auth = String(event.headers?.authorization || '').trim();
+  const bearer = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  if (bearer) return bearer === adminToken;
+
+  const headerValue = event.headers?.['x-image-gen-admin-token']
+    || event.headers?.['x-image-gen-admin-token'.toLowerCase()];
+  return String(headerValue || '').trim() === adminToken;
+}
+
 export async function handler(event) {
   if (event.httpMethod === 'OPTIONS') {
     return {
@@ -12,12 +25,17 @@ export async function handler(event) {
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-image-gen-admin-token',
       },
       body: '',
     };
   }
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
+
+  // Admin authentication check
+  if (!verifyAdminToken(event)) {
+    return { statusCode: 401, body: JSON.stringify({ error: 'Admin authentication required' }) };
+  }
 
   let parsed;
   try {

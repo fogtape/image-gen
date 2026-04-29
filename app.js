@@ -2961,9 +2961,8 @@ async function testConnection() {
 
   try {
     if (cfg.isOAuth) {
-      const resp = await fetch('/api/oauth/test', {
+      const resp = await adminFetch('/api/oauth/test', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           apiKey: cfg.apiKey,
           accountId: cfg.accountId,

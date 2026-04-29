@@ -902,6 +902,7 @@ function assertEmbeddedDataImagesWithinLimits(value) {
 }
 
 async function handleOAuthTest(req, res) {
+  if (!requireConfigAdmin(req, res)) return;
   const parsed = await readJsonBody(req, res);
   if (!parsed) return;
   try {

@@ -27,12 +27,33 @@ export const MAX_REF_IMAGES = 3;
 export const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 /**
+ * Normalize MIME type aliases (e.g. image/jpg → image/jpeg).
+ */
+function normalizeMime(mime = '') {
+  const value = String(mime || '').trim().toLowerCase();
+  if (value === 'image/jpg') return 'image/jpeg';
+  return value;
+}
+
+/**
+ * Infer image MIME type from magic bytes. Returns '' if unrecognized.
+ */
+function sniffImageMime(bytes) {
+  if (!bytes || bytes.length < 4) return '';
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
+  if (bytes.slice(0, 4).toString('ascii') === 'RIFF' && bytes.length >= 12 && bytes.slice(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return 'image/gif';
+  return '';
+}
+
+/**
  * Parse a data URL or raw base64 string and extract MIME + decoded byte length.
  */
 function parseRefImageInput(data) {
   const value = String(data || '').trim();
   const match = value.match(/^data:(image\/[^;]+);base64,(.*)$/is);
-  if (match) return { mime: match[1].toLowerCase(), base64: match[2] };
+  if (match) return { mime: normalizeMime(match[1]), base64: match[2] };
   return { mime: '', base64: value };
 }
 
@@ -86,8 +107,17 @@ export function validateOAuthImageRequest(parsed, { maxBodyBytes } = {}) {
     const { mime, base64 } = parseRefImageInput(raw);
     const bytes = decodedBase64Bytes(base64);
 
-    // MIME type check: only validate if data URL declares a MIME
-    if (mime && !ALLOWED_MIME.has(mime)) {
+    // MIME type check: use declared MIME or sniff from magic bytes
+    let effectiveMime = mime;
+    if (!effectiveMime && bytes > 0) {
+      // For raw base64 without data URL, try to sniff magic bytes
+      try {
+        const buf = Buffer.from(String(base64 || '').replace(/\s/g, ''), 'base64');
+        effectiveMime = sniffImageMime(buf);
+      } catch { /* ignore decode errors */ }
+    }
+
+    if (effectiveMime && !ALLOWED_MIME.has(effectiveMime)) {
       const err = new Error('参考图格式不支持，请上传 PNG、JPEG 或 WebP 图片');
       err.status = 400;
       throw err;

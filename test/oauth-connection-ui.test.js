@@ -16,7 +16,7 @@ function oauthBranchSource() {
 
 test('OAuth 连接测试走 ChatGPT backend 探活，不调用需要 api.responses.write scope 的 /v1/responses', () => {
   const branch = oauthBranchSource();
-  assert.match(branch, /fetch\('\/api\/oauth\/test'/);
+  assert.match(branch, /adminFetch\('\/api\/oauth\/test'/);
   assert.doesNotMatch(branch, /\/v1\/responses/);
   assert.doesNotMatch(branch, /api\.responses\.write/);
 });

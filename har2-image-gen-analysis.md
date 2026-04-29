@@ -164,7 +164,7 @@ data: "v1"
 
 #### ② resume_conversation_token
 ```json
-{"type": "resume_conversation_token", "kind": "topic", "token": "...", "conversation_id": "69f21cdb-24dc-839e-8046-f39030113527"}
+{"type": "resume_conversation_token", "kind": "topic", "token": "***", "conversation_id": "conv_***"}
 ```
 
 #### ③ 模型可编辑上下文 (c: 0)
@@ -173,17 +173,17 @@ data: "v1"
   "p": "", "o": "add",
   "v": {
     "message": {
-      "id": "a9f71025-e8df-45d5-baf7-a38df6337897",
+      "id": "msg_***",
       "author": {"role": "assistant"},
       "content": {"content_type": "model_editable_context", "model_set_context": ""},
       "status": "finished_successfully",
       "metadata": {
-        "parent_id": "1afec706-52ab-4e3d-aed7-aead10ba9d51",
-        "request_id": "e22b62f2-6720-42c8-a4fa-439c88045b86",
+        "parent_id": "msg_parent_***",
+        "request_id": "req_***",
         "model_slug": "gpt-5-3"
       }
     },
-    "conversation_id": "69f21cdb-..."
+    "conversation_id": "conv_***"
   },
   "c": 0
 }
@@ -194,7 +194,7 @@ data: "v1"
 {
   "v": {
     "message": {
-      "id": "e9fae3a7-f13f-47d3-b615-0ed248918d18",
+      "id": "msg_***",
       "author": {"role": "assistant"},
       "content": {
         "content_type": "code",
@@ -218,7 +218,7 @@ data: {"p": "/message/status", "o": "replace", "v": "finished_successfully"}
 
 #### ⑦ 标题生成
 ```json
-{"type": "title_generation", "title": "猪八戒吃西瓜", "conversation_id": "69f21cdb-..."}
+{"type": "title_generation", "title": "猪八戒吃西瓜", "conversation_id": "conv_***"}
 ```
 
 #### ⑧ ★ 图片结果 - 工具返回消息 (c: 2)
@@ -227,7 +227,7 @@ data: {"p": "/message/status", "o": "replace", "v": "finished_successfully"}
   "p": "", "o": "add",
   "v": {
     "message": {
-      "id": "434b484a-6eec-48ba-a58d-16bec73b7f8b",
+      "id": "msg_***",
       "author": {"role": "tool", "name": "t2uay3k.sj1i4kz"},
       "content": {
         "content_type": "multimodal_text",
@@ -239,11 +239,11 @@ data: {"p": "/message/status", "o": "replace", "v": "finished_successfully"}
           "height": 1122,
           "metadata": {
             "dalle": {
-              "gen_id": "d425c5d4-265e-481f-959b-10ab05eba650",
+              "gen_id": "gen_***",
               "prompt": ""
             },
             "generation": {
-              "gen_id": "d425c5d4-265e-481f-959b-10ab05eba650",
+              "gen_id": "gen_***",
               "gen_size": "smimage",
               "gen_size_v2": "16",
               "height": 1122,
@@ -257,7 +257,7 @@ data: {"p": "/message/status", "o": "replace", "v": "finished_successfully"}
       "status": "finished_successfully",
       "metadata": {
         "image_gen_title": "森林中吃西瓜的戏服人物",
-        "parent_id": "e9fae3a7-f13f-47d3-b615-0ed248918d18"
+        "parent_id": "msg_***"
       }
     }
   },
@@ -341,7 +341,7 @@ GET /backend-api/estuary/content?id=...&ts=...&sig=...
 | 6 | **beacons/home** | ✅ 有调用 | ❌ 没有实现 | 可能不重要 |
 | 7 | **stream_status 轮询** | ✅ 有调用 | ❌ 用 conversation GET 轮询代替 | JS 用不同方式轮询 |
 | 8 | **消息 metadata** | 较简单，无 `is_visually_hidden_from_conversation` 等字段 | 较完整，有很多额外字段 | JS 多传了字段，可能不被使用 |
-| 9 | **parent_message_id** | `"client-created-root"` (首次) | 随机 UUID | HAR 用固定字符串 |
+| 9 | **parent_message_id** | `"client-created-root"` (首次) | `"client-created-root"` | ✅ 已对齐 |
 | 10 | **bootstrap (GET /)** | ❌ HAR 没有显示 bootstrap 调用 | ✅ JS 做了 `bootstrap(headers)` | JS 多了一步 |
 | 11 | **lat/r (延迟报告)** | ✅ 有调用 | ❌ 没有实现 | 遥测，不重要 |
 | 12 | **prepare 响应中的 conduit_token** | ✅ 返回 conduit_token | ✅ JS 正确获取和使用 | ✅ 匹配 |
@@ -359,7 +359,7 @@ GET /backend-api/estuary/content?id=...&ts=...&sig=...
 HAR 显示前端在用户打字时不断调用 prepare（部分文本），这是为了预热连接。最终的 prepare 包含完整文本。JS 只做一次 prepare，这是正确的——不需要模拟打字行为。
 
 #### 差异 9: parent_message_id
-HAR 中首次对话的 `parent_message_id` 是固定字符串 `"client-created-root"`，JS 使用随机 UUID。这可能需要注意——首次对话可能需要这个固定值。
+HAR 中首次对话的 `parent_message_id` 是固定字符串 `"client-created-root"`，JS 也已改为使用该固定值。✅ 已对齐。
 
 #### 差异 10: bootstrap
 HAR 中没有显示 GET / 的调用（可能在更早的页面加载时已完成），JS 每次生图都做 bootstrap。这是合理的防御性做法。
