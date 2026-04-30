@@ -115,7 +115,7 @@
 {
   "action": "next",
   "messages": [{
-    "id": "1afec706-52ab-4e3d-aed7-aead10ba9d51",
+    "id": "msg_***",
     "author": {"role": "user"},
     "create_time": 1777474778.196,
     "content": {

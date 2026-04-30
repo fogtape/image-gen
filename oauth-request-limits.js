@@ -109,12 +109,37 @@ export function validateOAuthImageRequest(parsed, { maxBodyBytes } = {}) {
 
     // MIME type check: use declared MIME or sniff from magic bytes
     let effectiveMime = mime;
-    if (!effectiveMime && bytes > 0) {
-      // For raw base64 without data URL, try to sniff magic bytes
+
+    // Always try to sniff magic bytes from the actual data
+    let sniffedMime = '';
+    if (bytes > 0) {
       try {
         const buf = Buffer.from(String(base64 || '').replace(/\s/g, ''), 'base64');
-        effectiveMime = sniffImageMime(buf);
+        sniffedMime = sniffImageMime(buf);
       } catch { /* ignore decode errors */ }
+    }
+
+    // 1) For raw base64 without data URL prefix: reject if magic bytes unrecognized
+    if (!mime && bytes > 0 && !sniffedMime) {
+      const err = new Error('参考图无法识别为有效图片格式，请上传 PNG、JPEG 或 WebP');
+      err.status = 400;
+      throw err;
+    }
+
+    // Use sniffed MIME for effectiveMime when no declared MIME
+    if (!effectiveMime) {
+      effectiveMime = sniffedMime;
+    }
+
+    // 2) Cross-check declared MIME against actual magic bytes
+    if (mime && sniffedMime) {
+      const normalizedDeclared = normalizeMime(mime);
+      const normalizedSniffed = normalizeMime(sniffedMime);
+      if (normalizedDeclared !== normalizedSniffed) {
+        const err = new Error('参考图声明格式与实际内容不一致');
+        err.status = 400;
+        throw err;
+      }
     }
 
     if (effectiveMime && !ALLOWED_MIME.has(effectiveMime)) {

@@ -1,9 +1,5 @@
 import { handleOAuthImageRequestBody } from '../../openai-oauth-image.js';
-import {
-  assertTextBodyWithinLimit,
-  getImageJobBodyLimitBytes,
-  validateImagePayloadLimits,
-} from '../../request-limits.js';
+import { assertOAuthBodySize, validateOAuthImageRequest } from '../../oauth-request-limits.js';
 
 function verifyAdminToken(event) {
   const adminToken = process.env.IMAGE_GEN_ADMIN_TOKEN || '';
@@ -39,9 +35,9 @@ export async function handler(event) {
 
   let parsed;
   try {
-    assertTextBodyWithinLimit(event.body || '', { maxBytes: getImageJobBodyLimitBytes() });
+    assertOAuthBodySize(event.body || '');
     parsed = JSON.parse(event.body || '{}');
-    validateImagePayloadLimits(parsed);
+    validateOAuthImageRequest(parsed);
   } catch (e) {
     if (e.status === 413) {
       return {

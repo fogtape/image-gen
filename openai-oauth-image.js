@@ -1234,7 +1234,7 @@ export async function downloadBytes(headers, url) {
         resp = await fetchWithTimeout(target.href, {
           method: 'GET',
           headers: headersForImageDownload(headers, target),
-          timeoutMs: 120_000,
+          timeoutMs: 20_000,
           redirect: 'manual',
         });
         if (!IMAGE_DOWNLOAD_REDIRECT_STATUSES.has(resp.status)) break;
@@ -1250,6 +1250,13 @@ export async function downloadBytes(headers, url) {
         target = validateImageDownloadUrl(nextUrl.href);
       }
     } catch (err) {
+      const msg = (err.message || '').toLowerCase();
+      const isPermanent = msg.includes('redirect limit') ||
+        msg.includes('redirect location') ||
+        msg.includes('private host') ||
+        msg.includes('local host') ||
+        msg.includes('invalid url');
+      if (isPermanent) throw err;
       // Network-level or redirect error: retry if attempts remain and within deadline
       if (attempt < maxAttempts - 1 && Date.now() < deadline) {
         await sleep(delayMs);

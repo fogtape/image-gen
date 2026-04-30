@@ -11,3 +11,8 @@
   from = "/api/oauth/images"
   to = "/.netlify/functions/oauth-images"
   status = 200
+
+[[redirects]]
+  from = "/api/oauth/images/stream"
+  to = "/.netlify/functions/oauth-images"
+  status = 200
