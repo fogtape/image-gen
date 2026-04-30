@@ -76,7 +76,7 @@ test('首页 hero 保留副标题和适度留白，但不恢复顶部渐变横�
   assert.doesNotMatch(html, /class="hero-accent"/);
   assert.doesNotMatch(css, /\.hero-accent\s*\{/);
   const hero = ruleBody('.hero-section');
-  assert.match(hero, /padding\s*:\s*20px 0 12px\s*;/);
+  assert.match(hero, /padding\s*:\s*16px 0 12px\s*;/);
   const title = ruleBody('.hero-title');
   assert.match(title, /margin\s*:\s*0 0 4px\s*;/);
   assert.match(title, /font-size\s*:\s*1\.35rem\s*;/);
