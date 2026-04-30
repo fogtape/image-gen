@@ -699,7 +699,7 @@ textarea { resize: vertical; }
   max-width: calc(100vw - 32px);
   padding: 8px 9px 8px 12px;
   border-radius: 999px;
-  background: rgba(255,255,255,0.88);
+  background: rgba(255,255,255,0.92);
   border: 1px solid rgba(0,0,0,0.08);
   box-shadow: 0 14px 40px rgba(15,23,42,0.14), 0 3px 10px rgba(15,23,42,0.08);
   backdrop-filter: saturate(180%) blur(18px);
@@ -845,18 +845,6 @@ textarea { resize: vertical; }
   position: relative;
   padding: 36px 0 28px;
   text-align: center;
-  overflow: hidden;
-}
-
-.hero-accent {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 120px;
-  height: 4px;
-  border-radius: 2px;
-  background: linear-gradient(90deg, #6366f1, #3b82f6, #06b6d4);
 }
 
 .hero-title {
