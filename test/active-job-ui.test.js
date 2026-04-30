@@ -72,16 +72,15 @@ test('后台任务浮动胶囊不放在毛玻璃输入卡片内，避免 fixed �
   );
 });
 
-test('回退误修复：不再为了后台任务位置压缩或删除首页 hero 区', () => {
-  assert.match(html, /<div class="hero-accent" aria-hidden="true"><\/div>/);
+test('首页 hero 保持极简紧凑，不恢复顶部渐变横条', () => {
+  assert.doesNotMatch(html, /class="hero-accent"/);
+  assert.doesNotMatch(css, /\.hero-accent\s*\{/);
   const hero = ruleBody('.hero-section');
-  assert.match(hero, /padding\s*:\s*36px 0 28px\s*;/);
-  assert.match(hero, /overflow\s*:\s*hidden\s*;/);
+  assert.match(hero, /padding\s*:\s*6px 0 3px\s*;/);
   const title = ruleBody('.hero-title');
-  assert.match(title, /font-size\s*:\s*1\.5rem\s*;/);
+  assert.match(title, /font-size\s*:\s*1\.15rem\s*;/);
   const desc = ruleBody('.hero-desc');
-  assert.match(desc, /font-size\s*:\s*0\.88rem\s*;/);
-  assert.doesNotMatch(desc, /display\s*:\s*none/);
+  assert.match(desc, /display\s*:\s*none\s*;/);
 });
 
 test('后台任务停止操作使用停止文案，不再恢复取消任务文案', () => {
