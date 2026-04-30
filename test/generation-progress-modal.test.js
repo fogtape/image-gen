@@ -10,6 +10,7 @@ import {
 const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const css = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
 const app = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+const server = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
 
 function ruleBody(selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -90,6 +91,12 @@ test('前端会把 SSE progress 事件的 percent 透传到进度弹窗', () => 
   assert.match(app, /progressKind/);
   assert.match(app, /setGenerationStatus\(message,\s*undefined,\s*generationProgressOptionsFromSse\(data, event\)\)/);
   assert.match(app, /setGenerationStatus\(message,\s*undefined,\s*generationProgressOptionsFromSse\(ev\)\)/);
+});
+
+test('Responses 流式生图请求启用 partial_images 并把 partial_image 事件映射为进度', () => {
+  assert.match(app, /partial_images\s*:\s*3/);
+  assert.match(server, /partial_images\s*:\s*3/);
+  assert.match(app, /response\.image_generation_call\.partial_image[\s\S]*?'response:image_partial'/);
 });
 
 test('底部后台任务胶囊查看按钮可重新打开已最小化的生成详情弹窗', () => {

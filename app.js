@@ -4,6 +4,7 @@ import {
   getGenerationProgressMessage,
   getGenerationProgressView,
   getResponseStreamProgressMessage,
+  getResponseStreamProgressPhase,
   getSseProgressMessage,
   getWaitingProgressMessage,
   isPolicyViolationText,
@@ -2241,6 +2242,26 @@ function generationProgressEventFromStatus({ phase, message, meta, progress } = 
 function generationProgressPhaseFromSse(event, data = {}) {
   if (data?.phase) return data.phase;
   const type = String(data?.type || event || '').trim();
+  const direct = {
+    'response.created': 'response:created',
+    'response.output_item.added': data?.item?.type === 'image_generation_call' ? 'response:image_started' : '',
+    'response.image_generation_call.in_progress': 'response:image_started',
+    'response.image_generation_call.generating': 'response:image_started',
+    'response.image_generation_call.partial_image': 'response:image_partial',
+    'image_generation.partial_image': 'response:image_partial',
+    'image_edit.partial_image': 'response:image_partial',
+    'response.output_item.done': data?.item?.type === 'image_generation_call' ? 'response:image_done' : '',
+    'response.image_generation_call.completed': 'response:image_done',
+    'image_generation.completed': 'response:image_done',
+    'image_edit.completed': 'response:image_done',
+    'response.completed': 'response:completed',
+  };
+  if (direct[type]) return direct[type];
+  const normalized = data && typeof data === 'object'
+    ? (data.type ? data : { ...data, type })
+    : { type };
+  const streamPhase = getResponseStreamProgressPhase(normalized);
+  if (streamPhase) return streamPhase;
   if (type === 'response.created') return 'response:created';
   if (type === 'response.output_item.added' && data?.item?.type === 'image_generation_call') return 'response:image_started';
   if (type === 'response.output_item.done' && data?.item?.type === 'image_generation_call') return 'response:image_done';
@@ -2248,9 +2269,35 @@ function generationProgressPhaseFromSse(event, data = {}) {
   return type;
 }
 
+function getPartialImagePreviewFromSse(data = {}) {
+  if (!data || typeof data !== 'object') return '';
+  const value = data.partial_image_b64
+    || data.partial_image
+    || data.partialImage
+    || data.previewImage
+    || data.b64_json
+    || data.image?.b64_json
+    || '';
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text) return '';
+  if (/^(data:image\/|https?:\/\/)/i.test(text)) return text;
+  return toImageDataUrl(text);
+}
+
+function extractResponsesStreamImageResult(data = {}) {
+  if (!data || typeof data !== 'object') return '';
+  return data.item?.result
+    || data.output_item?.result
+    || data.result
+    || data.b64_json
+    || data.image?.b64_json
+    || '';
+}
+
 function generationProgressOptionsFromSse(data, event = '') {
   if (!data || typeof data !== 'object') return {};
   const phase = generationProgressPhaseFromSse(event, data);
+  const previewImage = getPartialImagePreviewFromSse(data);
   const progress = {
     phase,
     message: data.message,
@@ -2259,9 +2306,29 @@ function generationProgressOptionsFromSse(data, event = '') {
     current: data.current ?? data.completed ?? data.batchIndex,
     total: data.total ?? data.batchCount,
     source: data.source,
+    rawEvent: data.rawEvent || data.type || event,
+    previewImage,
   };
   const hasProgress = ['percent', 'percentage', 'progress', 'progressKind', 'current', 'completed', 'total', 'batchCount'].some((key) => Object.prototype.hasOwnProperty.call(data, key));
   return phase || hasProgress ? { progress } : {};
+}
+
+function setGenerationProgressPreview(src = '', reset = false) {
+  const previewEl = $('#generationProgressPreview');
+  const skeletonEl = $('.generation-image-skeleton');
+  if (!previewEl || !skeletonEl) return;
+  const text = typeof src === 'string' ? src.trim() : '';
+  if (text) {
+    previewEl.src = text;
+    previewEl.classList.remove('hidden');
+    skeletonEl.classList.add('has-preview');
+    return;
+  }
+  if (reset) {
+    previewEl.removeAttribute('src');
+    previewEl.classList.add('hidden');
+    skeletonEl.classList.remove('has-preview');
+  }
 }
 
 function updateGenerationProgressDialog({ phase, message, text, meta, progress } = {}) {
@@ -2277,6 +2344,8 @@ function updateGenerationProgressDialog({ phase, message, text, meta, progress }
   const view = getGenerationProgressView(generationProgressEventFromStatus({ phase, message, meta, progress }));
   const percent = view.percent ?? 0;
   const isReal = view.kind === 'real';
+  const effectivePhase = String(progress?.phase || phase || '').trim();
+  setGenerationProgressPreview(progress?.previewImage || '', ['prompt:prepare', 'request:send', 'queue:accepted', 'result:render'].includes(effectivePhase));
   if (titleEl) titleEl.textContent = isReal ? '正在批量生成图片' : '正在生成图片';
   if (metaEl) metaEl.textContent = text || message || '正在生成图片';
   if (labelEl) labelEl.textContent = view.label || '预计进度';
@@ -2305,6 +2374,7 @@ function hideGenerationProgressDialog() {
   if (!overlay) return;
   overlay.setAttribute('aria-busy', 'false');
   closeDialog(overlay, { restoreFocus: false });
+  setGenerationProgressPreview('', true);
 }
 
 function minimizeGenerationProgressDialog() {
@@ -3858,7 +3928,8 @@ async function genBackgroundImages(cfg, prompt, quality, background, size, forma
   const jobId = job.jobId || job.id;
   if (!jobId) throw new Error('后台任务创建失败：缺少 jobId');
   saveActiveJob(state, { jobId, format, isOAuth: cfg.isOAuth, count: actualCount, batchId, resultMeta: baseResultMeta, createdAt: Date.now() });
-  setGenerationStatus(actualCount > 1 ? `批量后台任务已提交（${actualCount} 张）` : '后台任务已提交，可以切到后台稍后回来查看');
+  const submittedText = actualCount > 1 ? `批量后台任务已提交（${actualCount} 张）` : '后台任务已提交，可以切到后台稍后回来查看';
+  setGenerationStatus('queue:accepted', submittedText, { progress: { phase: 'queue:accepted', progressKind: 'estimated', source: 'queue' } });
   showActiveJobBanner('后台任务已提交', actualCount > 1 ? `批量生成 ${actualCount} 张，你可以切到后台稍后回来继续恢复结果` : '你可以切到后台，稍后回到页面继续恢复结果');
 
   try {
@@ -4109,6 +4180,7 @@ async function genResponses(cfg, prompt, quality, background, size, format, hasR
     size: size === 'auto' ? 'auto' : size,
     background: background || 'auto',
     output_format: format,
+    partial_images: 3,
   };
 
   const body = {
@@ -4142,7 +4214,13 @@ async function genResponses(cfg, prompt, quality, background, size, format, hasR
           setGenerationStatus(message, undefined, generationProgressOptionsFromSse(data, event));
         }
         const type = data.type || event;
-        if (type === 'response.output_item.done' && data.item?.type === 'image_generation_call' && data.item.result) {
+        const streamResult = extractResponsesStreamImageResult(data);
+        if (streamResult && /^(response\.output_item\.done|response\.image_generation_call\.completed|image_generation\.completed|image_edit\.completed)$/.test(String(type || ''))) {
+          stopWaitingStatusSequence();
+          setGenerationStatus('result:render');
+          addResultCard(streamResult, format, resultMeta);
+          found = true;
+        } else if (type === 'response.output_item.done' && data.item?.type === 'image_generation_call' && data.item.result) {
           stopWaitingStatusSequence();
           setGenerationStatus('result:render');
           addResultCard(data.item.result, format, resultMeta);
@@ -4175,7 +4253,9 @@ async function genResponses(cfg, prompt, quality, background, size, format, hasR
       const ev = JSON.parse(s);
       const message = getResponseStreamProgressMessage(ev);
       if (message) { stopWaitingStatusSequence(); setGenerationStatus(message, undefined, generationProgressOptionsFromSse(ev)); }
-      if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call' && ev.item.result) { stopWaitingStatusSequence(); setGenerationStatus('result:render'); addResultCard(ev.item.result, format, resultMeta); found = true; }
+      const streamResult = extractResponsesStreamImageResult(ev);
+      if (streamResult && /^(response\.output_item\.done|response\.image_generation_call\.completed|image_generation\.completed|image_edit\.completed)$/.test(String(ev.type || ''))) { stopWaitingStatusSequence(); setGenerationStatus('result:render'); addResultCard(streamResult, format, resultMeta); found = true; }
+      else if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call' && ev.item.result) { stopWaitingStatusSequence(); setGenerationStatus('result:render'); addResultCard(ev.item.result, format, resultMeta); found = true; }
       if (ev.error) throw new Error(normalizeGenerationError(ev.error.message || JSON.stringify(ev.error)));
     } catch (e) {
       if (e.message && !e.message.includes('JSON') && !e.message.includes('position')) throw e;

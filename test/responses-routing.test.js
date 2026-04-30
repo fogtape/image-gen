@@ -61,6 +61,9 @@ test('Responses image jobs use relay-compatible Codex-style headers and store=fa
     assert.equal(body.store, false);
     assert.deepEqual(body.tool_choice, { type: 'image_generation' });
     assert.equal(body.tools[0].model, 'gpt-image-2');
+    assert.equal(body.tools[0].partial_images, 3);
+    assert.ok(job.progress.some((item) => item.phase === 'response:image_done'));
+    assert.ok(!job.progress.some((item) => item.phase === 'response.output_item.done'));
   } finally {
     globalThis.fetch = originalFetch;
   }

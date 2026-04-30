@@ -8,6 +8,8 @@ import {
   IDLE_GENERATION_HINT,
   getGenerationProgressMessage,
   getResponseStreamProgressMessage,
+  getResponseStreamProgressPhase,
+  getGenerationProgressView,
   getSseProgressMessage,
   getWaitingProgressMessage,
 } from '../ui-feedback.js';
@@ -59,6 +61,34 @@ test('getSseProgressMessage handles named SSE events as well as default message 
   assert.equal(getSseProgressMessage('response.output_item.added', { item: { type: 'image_generation_call' } }), '模型已开始生成图片');
   assert.equal(getSseProgressMessage('progress', { phase: 'oauth:download', message: '正在下载生成的图片' }), '正在下载生成的图片');
   assert.equal(getSseProgressMessage('message', { type: 'response.completed' }), '生成完成，正在渲染结果');
+});
+
+test('Responses image generation streaming events drive non-zero progress phases', () => {
+  const cases = [
+    [{ type: 'response.image_generation_call.in_progress' }, 'response:image_started', '模型已开始生成图片', 52],
+    [{ type: 'response.image_generation_call.generating' }, 'response:image_started', '模型已开始生成图片', 52],
+    [{ type: 'response.image_generation_call.partial_image', partial_image_index: 0, partial_image_b64: 'abc' }, 'response:image_partial', '正在接收生成预览', 72],
+    [{ type: 'response.image_generation_call.completed' }, 'response:image_done', '图片数据已返回', 88],
+    [{ type: 'image_generation.partial_image', partial_image_index: 1, partial_image_b64: 'abc' }, 'response:image_partial', '正在接收生成预览', 72],
+    [{ type: 'image_generation.completed' }, 'response:image_done', '图片数据已返回', 88],
+  ];
+
+  for (const [event, phase, message, percent] of cases) {
+    assert.equal(getResponseStreamProgressPhase(event), phase);
+    assert.equal(getResponseStreamProgressMessage(event), message);
+    assert.equal(getGenerationProgressView({ phase }).percent, percent);
+  }
+});
+
+test('named partial-image SSE events are recognized when data.type is omitted', () => {
+  assert.equal(
+    getSseProgressMessage('response.image_generation_call.partial_image', { partial_image_index: 0, partial_image_b64: 'abc' }),
+    '正在接收生成预览',
+  );
+  assert.equal(
+    getSseProgressMessage('image_edit.partial_image', { partial_image_index: 0, partial_image_b64: 'abc' }),
+    '正在接收生成预览',
+  );
 });
 
 test('getWaitingProgressMessage stays stable instead of cycling through noisy copy', () => {

@@ -118,6 +118,9 @@ export function createJobStore({
 
   function addProgress(job, phase, message, extra = {}) {
     if (isFinalStatus(job.status) && phase !== 'job:cancelled') return null;
+    if (extra?.previewImage) {
+      for (const item of job.progress) delete item.previewImage;
+    }
     const event = {
       phase: String(phase || ''),
       message: String(message || phase || '处理中'),
@@ -225,7 +228,7 @@ export function createJobStore({
       cancelledAt: null,
     };
     jobs.set(job.id, job);
-    addProgress(job, 'queue:accepted', runningCount >= maxConcurrency ? '任务已进入队列，等待执行' : '任务已提交，等待执行', { percent: 0, progressKind: 'estimated', source: 'queue' });
+    addProgress(job, 'queue:accepted', runningCount >= maxConcurrency ? '任务已进入队列，等待执行' : '任务已提交，等待执行', { progressKind: 'estimated', source: 'queue' });
     persistJobs();
     if (runningCount < maxConcurrency) start(job);
     else queue.push(job);

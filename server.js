@@ -11,6 +11,7 @@ import { createImageStore } from './image-storage.js';
 import {
   getGenerationProgressMessage,
   getResponseStreamProgressMessage,
+  getResponseStreamProgressPhase,
   isPolicyViolationText,
   normalizeGenerationError,
 } from './ui-feedback.js';
@@ -37,6 +38,7 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.IMAGE_GEN_DATA_DIR || path.join(__dirname, 'data');
 const STATIC_ROOT = path.resolve(process.env.IMAGE_GEN_STATIC_DIR || path.join(__dirname, 'dist'));
 const MAX_REF_IMAGES = 3;
+const RESPONSES_PARTIAL_IMAGES = 3;
 const IMAGES_API_TIMEOUT_MS = 300_000;
 const RESPONSES_API_TIMEOUT_MS = 300_000;
 
@@ -1236,6 +1238,45 @@ function normalizeRefImages(payload = {}) {
   return images;
 }
 
+function extractResponsesStreamImageResult(ev = {}) {
+  if (!ev || typeof ev !== 'object') return '';
+  return ev.item?.result
+    || ev.output_item?.result
+    || ev.result
+    || ev.b64_json
+    || ev.image?.b64_json
+    || '';
+}
+
+function getPartialImagePreviewFromSse(data = {}) {
+  if (!data || typeof data !== 'object') return '';
+  const value = data.partial_image_b64
+    || data.partial_image
+    || data.partialImage
+    || data.previewImage
+    || data.b64_json
+    || data.image?.b64_json
+    || '';
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text) return '';
+  if (/^(data:image\/|https?:\/\/)/i.test(text)) return text;
+  return toImageDataUrl(text);
+}
+
+function responsesStreamProgressExtra(ev = {}, event = '') {
+  const extra = {
+    source: 'responses-sse',
+    rawEvent: ev.type || event,
+  };
+  const previewImage = getPartialImagePreviewFromSse(ev);
+  if (previewImage) {
+    extra.previewImage = previewImage;
+    extra.partialIndex = Number(ev.partial_image_index ?? ev.partialImageIndex ?? 0) || 0;
+    extra.partialCount = RESPONSES_PARTIAL_IMAGES;
+  }
+  return extra;
+}
+
 function extractImagesFromResponsesText(rawText, format = 'png') {
   const found = [];
   const addResult = (result) => {
@@ -1256,7 +1297,10 @@ function extractImagesFromResponsesText(rawText, format = 'png') {
     if (!s || s === '[DONE]') continue;
     try {
       const ev = JSON.parse(s);
-      if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call' && ev.item.result) {
+      const streamResult = extractResponsesStreamImageResult(ev);
+      if (streamResult && /^(response\.output_item\.done|response\.image_generation_call\.completed|image_generation\.completed|image_edit\.completed)$/.test(String(ev.type || ''))) {
+        addResult(streamResult);
+      } else if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call' && ev.item.result) {
         addResult(ev.item.result);
       }
       if (ev.error) throw new Error(normalizeGenerationError(ev.error.message || JSON.stringify(ev.error)));
@@ -1294,7 +1338,8 @@ async function readResponseTextWithProgress(resp, onProgress) {
       const data = JSON.parse(dataText);
       const normalized = data.type ? data : { ...data, type: event };
       const message = getResponseStreamProgressMessage(normalized);
-      if (message) onProgress(normalized.type || event, message);
+      const phase = getResponseStreamProgressPhase(normalized);
+      if (message) onProgress(phase || normalized.type || event, message, responsesStreamProgressExtra(normalized, event));
     } catch {}
   };
 
@@ -1405,6 +1450,7 @@ async function runResponsesJob(payload, onProgress, signal = null) {
       size: payload.size === 'auto' ? 'auto' : payload.size,
       background: payload.background || 'auto',
       output_format: format,
+      partial_images: 3,
     }],
   };
 

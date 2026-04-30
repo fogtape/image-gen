@@ -9,6 +9,7 @@ export const GENERATION_PROGRESS_MESSAGES = {
   'request:accepted': '后端已接收请求',
   'response:created': '后端已接收请求',
   'response:image_started': '模型已开始生成图片',
+  'response:image_partial': '正在接收生成预览',
   'response:image_done': '图片数据已返回',
   'response:completed': '生成完成，正在渲染结果',
   'oauth:prepare': '正在准备 OAuth 生图请求',
@@ -38,6 +39,7 @@ export const GENERATION_PROGRESS_PHASES = {
   'request:accepted': 28,
   'response:created': 34,
   'response:image_started': 52,
+  'response:image_partial': 72,
   'oauth:prepare': 10,
   'oauth:bootstrap': 18,
   'oauth:upload': 24,
@@ -59,6 +61,25 @@ export const GENERATION_PROGRESS_PHASES = {
   'response:completed': 100,
   'result:render': 100,
   'job:cancelled': 0,
+  // Defensive aliases for raw OpenAI SSE event names. Backends should prefer
+  // canonical phases above, but keeping these mapped prevents the UI from
+  // falling back to 0% if a raw event leaks through.
+  'response.created': 34,
+  'response.output_item.added': 52,
+  'response.image_generation_call.in_progress': 52,
+  'response.image_generation_call.generating': 52,
+  'image_generation.in_progress': 52,
+  'image_generation.generating': 52,
+  'image_edit.in_progress': 52,
+  'image_edit.generating': 52,
+  'response.image_generation_call.partial_image': 72,
+  'image_generation.partial_image': 72,
+  'image_edit.partial_image': 72,
+  'response.output_item.done': 88,
+  'response.image_generation_call.completed': 88,
+  'image_generation.completed': 88,
+  'image_edit.completed': 88,
+  'response.completed': 100,
 };
 
 export function normalizeGenerationPercent(value) {
@@ -140,17 +161,51 @@ export function getGenerationProgressMessage(phase, fallback = '正在生成图�
   return GENERATION_PROGRESS_MESSAGES[key] || fallback;
 }
 
+function isImageGenerationOutputItem(ev = {}) {
+  const itemType = String(ev.item?.type || ev.output_item?.type || ev.item_type || '').trim();
+  if (itemType === 'image_generation_call' || itemType === 'image_generation') return true;
+  if (ev.item?.result || ev.output_item?.result) return true;
+  return false;
+}
+
+export function getResponseStreamProgressPhase(ev = {}) {
+  if (!ev || typeof ev !== 'object') return '';
+  const explicitPhase = String(ev.phase || '').trim();
+  if (explicitPhase) {
+    if (GENERATION_PROGRESS_PHASES[explicitPhase] != null) return explicitPhase;
+    if (explicitPhase.startsWith('oauth:') || explicitPhase.startsWith('batch:')) return explicitPhase;
+  }
+  const type = String(ev.type || ev.event || '').trim();
+  if (!type) return '';
+  if (GENERATION_PROGRESS_PHASES[type] != null) {
+    if (type === 'response.output_item.added' || type === 'response.output_item.done') {
+      return isImageGenerationOutputItem(ev) ? (type === 'response.output_item.added' ? 'response:image_started' : 'response:image_done') : '';
+    }
+    if (type === 'response.created') return 'response:created';
+    if (type === 'response.completed') return 'response:completed';
+    if (/partial_image$/.test(type)) return 'response:image_partial';
+    if (/(in_progress|generating)$/.test(type)) return 'response:image_started';
+    if (/completed$/.test(type)) return 'response:image_done';
+    return type;
+  }
+  if (type === 'response.created') return 'response:created';
+  if (type === 'response.completed') return 'response:completed';
+  if (type === 'response.output_item.added' && isImageGenerationOutputItem(ev)) return 'response:image_started';
+  if (type === 'response.output_item.done' && isImageGenerationOutputItem(ev)) return 'response:image_done';
+  if (/^(response\.)?image_generation_call\.(in_progress|generating)$/.test(type)) return 'response:image_started';
+  if (/^(response\.)?image_generation_call\.partial_image$/.test(type)) return 'response:image_partial';
+  if (/^(response\.)?image_generation_call\.completed$/.test(type)) return 'response:image_done';
+  if (/^image_(generation|edit)\.(in_progress|generating)$/.test(type)) return 'response:image_started';
+  if (/^image_(generation|edit)\.partial_image$/.test(type)) return 'response:image_partial';
+  if (/^image_(generation|edit)\.completed$/.test(type)) return 'response:image_done';
+  return '';
+}
+
 export function getResponseStreamProgressMessage(ev = {}) {
   if (!ev || typeof ev !== 'object') return '';
-  if (ev.type === 'response.created') return getGenerationProgressMessage('response:created');
-  if (ev.type === 'response.output_item.added' && ev.item?.type === 'image_generation_call') {
-    return getGenerationProgressMessage('response:image_started');
-  }
-  if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call') {
-    return getGenerationProgressMessage('response:image_done');
-  }
-  if (ev.type === 'response.completed') return getGenerationProgressMessage('response:completed');
   if (ev.type === 'response.failed' || ev.type === 'error') return '生成失败，正在整理错误信息';
+  const phase = getResponseStreamProgressPhase(ev);
+  if (phase) return getGenerationProgressMessage(phase, '');
   return '';
 }
 
