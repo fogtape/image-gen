@@ -1,8 +1,8 @@
 import {
   IDLE_GENERATION_HINT,
   POLICY_VIOLATION_MESSAGE,
-  getGeneratingHint,
   getGenerationProgressMessage,
+  getGenerationProgressView,
   getResponseStreamProgressMessage,
   getSseProgressMessage,
   getWaitingProgressMessage,
@@ -2222,16 +2222,109 @@ function getAccurateStatusText(phaseOrMessage, message, meta = getCurrentGenerat
   return mapping[phase] || message || getGenerationProgressMessage(phase, String(phaseOrMessage || '正在生成图片'));
 }
 
-function setGenerationStatus(phaseOrMessage, message, options = {}) {
+function setToolbarGenerationHint(label = IDLE_GENERATION_HINT) {
   const hintEl = $('#generationHint') || $('.toolbar-right .hint');
   if (!hintEl) return;
+  hintEl.textContent = label;
+  hintEl.title = label;
+}
+
+function generationProgressEventFromStatus({ phase, message, meta, progress } = {}) {
+  return {
+    phase,
+    message,
+    ...(progress && typeof progress === 'object' ? progress : {}),
+    ...(meta?.count ? { total: meta.count } : {}),
+  };
+}
+
+function generationProgressPhaseFromSse(event, data = {}) {
+  if (data?.phase) return data.phase;
+  const type = String(data?.type || event || '').trim();
+  if (type === 'response.created') return 'response:created';
+  if (type === 'response.output_item.added' && data?.item?.type === 'image_generation_call') return 'response:image_started';
+  if (type === 'response.output_item.done' && data?.item?.type === 'image_generation_call') return 'response:image_done';
+  if (type === 'response.completed') return 'response:completed';
+  return type;
+}
+
+function generationProgressOptionsFromSse(data, event = '') {
+  if (!data || typeof data !== 'object') return {};
+  const phase = generationProgressPhaseFromSse(event, data);
+  const progress = {
+    phase,
+    message: data.message,
+    percent: data.percent ?? data.percentage ?? data.progress,
+    progressKind: data.progressKind,
+    current: data.current ?? data.completed ?? data.batchIndex,
+    total: data.total ?? data.batchCount,
+    source: data.source,
+  };
+  const hasProgress = ['percent', 'percentage', 'progress', 'progressKind', 'current', 'completed', 'total', 'batchCount'].some((key) => Object.prototype.hasOwnProperty.call(data, key));
+  return phase || hasProgress ? { progress } : {};
+}
+
+function updateGenerationProgressDialog({ phase, message, text, meta, progress } = {}) {
+  const overlay = $('#generationProgressOverlay');
+  if (!overlay) return;
+  const titleEl = $('#generationProgressTitle');
+  const metaEl = $('#generationProgressMeta');
+  const labelEl = $('#generationProgressLabel');
+  const percentEl = $('#generationProgressPercent');
+  const barEl = $('#generationProgressBar');
+  const fillEl = $('#generationProgressFill');
+  const detailEl = $('#generationProgressDetail');
+  const view = getGenerationProgressView(generationProgressEventFromStatus({ phase, message, meta, progress }));
+  const percent = view.percent ?? 0;
+  const isReal = view.kind === 'real';
+  if (titleEl) titleEl.textContent = isReal ? '正在批量生成图片' : '正在生成图片';
+  if (metaEl) metaEl.textContent = text || message || '正在生成图片';
+  if (labelEl) labelEl.textContent = view.label || '预计进度';
+  if (percentEl) percentEl.textContent = `${percent}%`;
+  if (barEl) {
+    barEl.setAttribute('aria-valuenow', String(percent));
+    barEl.setAttribute('aria-valuetext', `${view.label || '生成进度'} ${percent}%`);
+  }
+  if (fillEl) fillEl.style.width = `${percent}%`;
+  if (detailEl) {
+    detailEl.textContent = view.detail || (isReal
+      ? '批量生成按已完成图片数量计算真实进度。'
+      : '单张生成进度为阶段估算；批量完成比例会显示真实进度。');
+  }
+}
+
+function showGenerationProgressDialog() {
+  const overlay = $('#generationProgressOverlay');
+  if (!overlay) return;
+  overlay.setAttribute('aria-busy', 'true');
+  openDialog(overlay, { focusSelector: '#generationProgressMinimize', restoreFocus: '#generateBtn' });
+}
+
+function hideGenerationProgressDialog() {
+  const overlay = $('#generationProgressOverlay');
+  if (!overlay) return;
+  overlay.setAttribute('aria-busy', 'false');
+  closeDialog(overlay, { restoreFocus: false });
+}
+
+function minimizeGenerationProgressDialog() {
+  const overlay = $('#generationProgressOverlay');
+  if (!overlay) return;
+  closeDialog(overlay, { restoreFocus: '#generateBtn' });
+}
+
+function setGenerationStatus(phaseOrMessage, message, options = {}) {
   const phase = String(phaseOrMessage || '').trim();
   const meta = options.meta || getCurrentGenerationMeta();
   const text = getAccurateStatusText(phaseOrMessage, message, meta);
   state.lastStatusPhase = phase;
   state.lastStatusText = text;
-  hintEl.textContent = text;
-  hintEl.title = text;
+  if (state.generating) {
+    setToolbarGenerationHint('');
+    updateGenerationProgressDialog({ phase, message, text, meta, progress: options.progress });
+  } else {
+    setToolbarGenerationHint(text);
+  }
 }
 
 function stopWaitingStatusSequence() {
@@ -2274,8 +2367,10 @@ function setLoading(on) {
   stopWaitingStatusSequence();
   if (on) {
     state.generationHintStep = 0;
+    showGenerationProgressDialog();
     setGenerationStatus('prompt:prepare');
   } else {
+    hideGenerationProgressDialog();
     setGenerationStatus(IDLE_GENERATION_HINT);
   }
 }
@@ -3535,11 +3630,11 @@ function applyJobProgress(job) {
   const last = Array.isArray(job.progress) ? job.progress.at(-1) : null;
   if (!last?.phase && !last?.message) return;
 
-  const progressKey = `${last.phase || ''}:${last.message || ''}`;
+  const progressKey = `${last.phase || ''}:${last.message || ''}:${last.percent ?? ''}:${last.progressKind || ''}`;
   if (progressKey === state.lastProgressKey) return;
   state.lastProgressKey = progressKey;
   stopWaitingStatusSequence();
-  setGenerationStatus(last.phase || last.message, last.message);
+  setGenerationStatus(last.phase || last.message, last.message, { progress: last });
   startWaitingStatusSequence();
 }
 
@@ -3848,7 +3943,7 @@ async function genOAuthImages(cfg, prompt, quality, background, size, format, re
     const message = getSseProgressMessage(event, data);
     if (message) {
       stopWaitingStatusSequence();
-      setGenerationStatus(message);
+      setGenerationStatus(message, undefined, generationProgressOptionsFromSse(data, event));
     }
     if (event === 'result') {
       resultData = data;
@@ -4036,7 +4131,7 @@ async function genResponses(cfg, prompt, quality, background, size, format, hasR
         const message = getSseProgressMessage(event, data);
         if (message) {
           stopWaitingStatusSequence();
-          setGenerationStatus(message);
+          setGenerationStatus(message, undefined, generationProgressOptionsFromSse(data, event));
         }
         const type = data.type || event;
         if (type === 'response.output_item.done' && data.item?.type === 'image_generation_call' && data.item.result) {
@@ -4071,7 +4166,7 @@ async function genResponses(cfg, prompt, quality, background, size, format, hasR
     try {
       const ev = JSON.parse(s);
       const message = getResponseStreamProgressMessage(ev);
-      if (message) { stopWaitingStatusSequence(); setGenerationStatus(message); }
+      if (message) { stopWaitingStatusSequence(); setGenerationStatus(message, undefined, generationProgressOptionsFromSse(ev)); }
       if (ev.type === 'response.output_item.done' && ev.item?.type === 'image_generation_call' && ev.item.result) { stopWaitingStatusSequence(); setGenerationStatus('result:render'); addResultCard(ev.item.result, format, resultMeta); found = true; }
       if (ev.error) throw new Error(normalizeGenerationError(ev.error.message || JSON.stringify(ev.error)));
     } catch (e) {
@@ -4356,6 +4451,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   $('#retryActiveJobBtn')?.addEventListener('click', () => { void resumeActiveJobIfAny(); });
   $('#cancelActiveJobBtn')?.addEventListener('click', () => { void cancelActiveJob(); });
+  $('#generationProgressMinimize')?.addEventListener('click', minimizeGenerationProgressDialog);
+  $('#generationProgressCancel')?.addEventListener('click', () => { void cancelActiveJob(); });
 
   // Add manual account
   $('#addManualBtn').onclick = () => openEditModal(null);

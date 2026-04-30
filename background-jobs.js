@@ -225,7 +225,7 @@ export function createJobStore({
       cancelledAt: null,
     };
     jobs.set(job.id, job);
-    addProgress(job, 'queue:accepted', runningCount >= maxConcurrency ? '任务已进入队列，等待执行' : '任务已提交，等待执行');
+    addProgress(job, 'queue:accepted', runningCount >= maxConcurrency ? '任务已进入队列，等待执行' : '任务已提交，等待执行', { percent: 0, progressKind: 'estimated', source: 'queue' });
     persistJobs();
     if (runningCount < maxConcurrency) start(job);
     else queue.push(job);

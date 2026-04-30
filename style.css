@@ -820,6 +820,164 @@ textarea { resize: vertical; }
   padding-top: 8px;
 }
 
+
+
+/* ── Generation Progress Dialog ── */
+.generation-progress-dialog {
+  width: min(92vw, 420px);
+  max-width: 420px;
+  overflow: hidden;
+  border: 1px solid rgba(99,102,241,0.12);
+  box-shadow: 0 24px 70px rgba(15,23,42,0.22), 0 8px 24px rgba(99,102,241,0.12);
+}
+
+.generation-progress-body {
+  padding: 22px;
+}
+
+.generation-image-skeleton {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.14), rgba(59,130,246,0.08));
+  border: 1px solid rgba(99,102,241,0.14);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.55);
+}
+
+.generation-image-skeleton::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+  animation: generationSkeletonSweep 1.7s ease-in-out infinite;
+}
+
+.generation-image-outline {
+  position: absolute;
+  inset: 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(79,70,229,0.18);
+  background: linear-gradient(180deg, rgba(255,255,255,0.56), rgba(255,255,255,0.22));
+}
+
+.generation-skeleton-sun {
+  position: absolute;
+  top: 18px;
+  right: 22px;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: rgba(251,191,36,0.5);
+  box-shadow: 0 0 30px rgba(251,191,36,0.35);
+}
+
+.generation-skeleton-mountain {
+  position: absolute;
+  bottom: 18px;
+  width: 58%;
+  height: 42%;
+  border-radius: 18px 18px 10px 10px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.45), rgba(37,99,235,0.22));
+  clip-path: polygon(0 100%, 44% 20%, 100% 100%);
+}
+
+.generation-skeleton-mountain-a { left: 10px; }
+.generation-skeleton-mountain-b {
+  right: 6px;
+  width: 48%;
+  opacity: 0.72;
+}
+
+@keyframes generationSkeletonSweep {
+  0% { transform: translateX(-100%); }
+  55%, 100% { transform: translateX(100%); }
+}
+
+.generation-progress-copy {
+  margin-top: 18px;
+  text-align: center;
+}
+
+.generation-progress-eyebrow {
+  margin: 0 0 5px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+
+.generation-progress-copy h2 {
+  margin: 0;
+  font-size: 1.18rem;
+  letter-spacing: -0.02em;
+}
+
+.generation-progress-meta {
+  margin: 8px 0 0;
+  color: var(--text-2);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.generation-progress-meter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  font-size: 0.8rem;
+  color: var(--text-3);
+}
+
+.generation-progress-percent {
+  min-width: 4ch;
+  text-align: right;
+  font-weight: 750;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.generation-progress-bar {
+  position: relative;
+  height: 9px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(99,102,241,0.12);
+}
+
+.generation-progress-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #6366f1, #2563eb, #06b6d4);
+  transition: width 0.32s ease;
+}
+
+.generation-progress-detail {
+  min-height: 1.2em;
+  margin: 8px 0 0;
+  color: var(--text-3);
+  font-size: 0.74rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.generation-progress-actions {
+  margin-top: 18px;
+  justify-content: center;
+}
+
+.generation-progress-actions .danger {
+  color: var(--danger);
+  border-color: rgba(239,68,68,0.24);
+  background: rgba(239,68,68,0.06);
+}
+
 /* ── Toast ── */
 .toast {
   margin-top: 14px;
@@ -3089,6 +3247,16 @@ input[type="color"]:hover { border-color: var(--primary); }
   .options-bar .opt {
     min-width: min(100%, 148px);
   }
+
+
+  .generation-progress-dialog {
+    width: calc(100vw - 16px);
+    max-width: calc(100vw - 16px);
+  }
+
+  .generation-progress-body { padding: 16px; }
+  .generation-progress-actions { flex-direction: column; }
+  .generation-progress-actions .btn { width: 100%; }
 }
 
 /* ── Safe Area (Notch Devices) ── */
@@ -3114,5 +3282,10 @@ input[type="color"]:hover { border-color: var(--primary); }
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.001ms !important;
+  }
+
+
+  .generation-image-skeleton::before {
+    animation: none !important;
   }
 }

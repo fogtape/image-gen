@@ -1621,7 +1621,17 @@ async function runImageJob(payload, onProgress, signal = null) {
   const errors = [];
   for (let index = 1; index <= count; index += 1) {
     throwIfJobAborted(signal);
-    onProgress('batch:item:start', `正在生成第 ${index}/${count} 张`, { batchId, batchIndex: index, batchCount: count });
+    const completedBefore = index - 1;
+    onProgress('batch:item:start', `正在生成第 ${index}/${count} 张`, {
+      batchId,
+      batchIndex: index,
+      batchCount: count,
+      current: completedBefore,
+      total: count,
+      percent: Math.floor((completedBefore / count) * 100),
+      progressKind: 'real',
+      source: 'batch',
+    });
     try {
       const single = await runSingleImageJob({
         ...normalized,
@@ -1634,12 +1644,34 @@ async function runImageJob(payload, onProgress, signal = null) {
       for (const item of items) {
         data.push({ ...item, batchId, batchIndex: item?.batchIndex || index, batchCount: item?.batchCount || count });
       }
+      const completedNow = data.filter((item) => !item?.failed).length + errors.length;
+      onProgress('batch:item:done', `第 ${index}/${count} 张生成完成`, {
+        batchId,
+        batchIndex: index,
+        batchCount: count,
+        current: completedNow,
+        total: count,
+        percent: Math.floor((completedNow / count) * 100),
+        progressKind: 'real',
+        source: 'batch',
+      });
     } catch (error) {
       if (isAbortError(error)) throw error;
       const message = normalizeGenerationError(error?.message || error || '生成失败');
       errors.push({ batchIndex: index, message });
       data.push({ failed: true, error: message, batchId, batchIndex: index, batchCount: count });
-      onProgress('batch:item:error', `第 ${index}/${count} 张生成失败`, { batchId, batchIndex: index, batchCount: count, error: message });
+      const completedNow = data.filter((item) => !item?.failed).length + errors.length;
+      onProgress('batch:item:error', `第 ${index}/${count} 张生成失败`, {
+        batchId,
+        batchIndex: index,
+        batchCount: count,
+        current: completedNow,
+        total: count,
+        percent: Math.floor((completedNow / count) * 100),
+        progressKind: 'real',
+        source: 'batch',
+        error: message,
+      });
     }
   }
 
@@ -1655,10 +1687,23 @@ async function runImageJob(payload, onProgress, signal = null) {
     onProgress('batch:partial', `批量生成部分完成：成功 ${successCount}/${count} 张`, {
       batchId,
       batchCount: count,
+      current: count,
+      total: count,
+      percent: 100,
+      progressKind: 'real',
+      source: 'batch',
       batchErrors: errors.slice(0, 3),
     });
   } else {
-    onProgress('batch:done', `批量生成完成：${successCount}/${count} 张`, { batchId, batchCount: count });
+    onProgress('batch:done', `批量生成完成：${successCount}/${count} 张`, {
+      batchId,
+      batchCount: count,
+      current: successCount,
+      total: count,
+      percent: 100,
+      progressKind: 'real',
+      source: 'batch',
+    });
   }
   return {
     created: Math.floor(Date.now() / 1000),

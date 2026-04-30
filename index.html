@@ -830,6 +830,39 @@
       </div> <!-- /results-section -->
     </main>
 
+
+    <!-- Generation Progress Dialog -->
+    <div id="generationProgressOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="generationProgressTitle" aria-describedby="generationProgressMeta" aria-busy="false">
+      <div class="modal generation-progress-dialog">
+        <div class="generation-progress-body">
+          <div class="generation-image-skeleton" aria-hidden="true">
+            <div class="generation-image-outline">
+              <span class="generation-skeleton-sun"></span>
+              <span class="generation-skeleton-mountain generation-skeleton-mountain-a"></span>
+              <span class="generation-skeleton-mountain generation-skeleton-mountain-b"></span>
+            </div>
+          </div>
+          <div class="generation-progress-copy">
+            <p class="generation-progress-eyebrow">AI Image Studio</p>
+            <h2 id="generationProgressTitle">正在生成图片</h2>
+            <p id="generationProgressMeta" class="generation-progress-meta" role="status" aria-live="polite">正在整理提示词</p>
+          </div>
+          <div class="generation-progress-meter-row">
+            <span id="generationProgressLabel" class="generation-progress-label">预计进度</span>
+            <span id="generationProgressPercent" class="generation-progress-percent">0%</span>
+          </div>
+          <div id="generationProgressBar" class="generation-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="图片生成进度">
+            <span id="generationProgressFill" class="generation-progress-fill" style="width: 0%"></span>
+          </div>
+          <p id="generationProgressDetail" class="generation-progress-detail">单张生成进度为阶段估算；批量完成比例会显示真实进度。</p>
+          <div class="modal-footer generation-progress-actions">
+            <button id="generationProgressMinimize" class="btn btn-ghost" type="button">最小化</button>
+            <button id="generationProgressCancel" class="btn btn-outline danger" type="button">停止任务</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Error Dialog -->
     <div id="generationErrorOverlay" class="overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="generationErrorTitle" aria-describedby="generationErrorMessage">
       <div class="modal error-dialog">

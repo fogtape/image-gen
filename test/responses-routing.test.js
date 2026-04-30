@@ -180,7 +180,12 @@ test('后台批量生成单张失败不影响其他成功结果', async () => {
     assert.equal(job.result.data.filter((item) => item.failed).length, 1);
     assert.equal(job.result.data[1].failed, true);
     assert.match(job.result.data[1].error, /upstream one image failed|HTTP 500/);
-    assert.equal(job.progress.some((item) => item.phase === 'batch:partial'), true);
+    const partialProgress = job.progress.find((item) => item.phase === 'batch:partial');
+    assert.ok(partialProgress);
+    assert.equal(partialProgress.current, 3);
+    assert.equal(partialProgress.total, 3);
+    assert.equal(partialProgress.percent, 100);
+    assert.equal(partialProgress.progressKind, 'real');
   } finally {
     globalThis.fetch = originalFetch;
   }

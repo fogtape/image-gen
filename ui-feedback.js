@@ -26,6 +26,70 @@ export const GENERATION_PROGRESS_MESSAGES = {
   'result:render': '正在渲染生成结果',
 };
 
+
+
+export const GENERATION_PROGRESS_PHASES = {
+  'prompt:prepare': 6,
+  'prompt:enhance:send': 8,
+  'prompt:enhance:done': 12,
+  'queue:accepted': 14,
+  'request:send': 18,
+  'route:selected': 22,
+  'request:accepted': 28,
+  'response:created': 34,
+  'response:image_started': 52,
+  'oauth:prepare': 10,
+  'oauth:bootstrap': 18,
+  'oauth:upload': 24,
+  'oauth:requirements': 30,
+  'oauth:prepare_conversation': 36,
+  'oauth:conversation': 44,
+  'oauth:responses': 48,
+  'oauth:generating': 62,
+  'oauth:poll': 72,
+  'oauth:download_url': 82,
+  'oauth:download': 88,
+  'response:image_done': 88,
+  'result:parse': 92,
+  'storage:save': 95,
+  'storage:done': 98,
+  'storage:partial': 98,
+  'storage:error': 98,
+  'oauth:done': 98,
+  'response:completed': 100,
+  'result:render': 100,
+  'job:cancelled': 0,
+};
+
+export function normalizeGenerationPercent(value) {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+export function getGenerationProgressView(event = {}) {
+  const input = event && typeof event === 'object' ? event : { phase: String(event || '') };
+  const explicit = normalizeGenerationPercent(input.percent ?? input.percentage ?? input.progress);
+  if (explicit != null) {
+    const kind = input.progressKind === 'real' ? 'real' : input.progressKind === 'stage' ? 'stage' : 'estimated';
+    const current = Number(input.current ?? input.completed ?? input.batchIndex ?? 0);
+    const total = Number(input.total ?? input.batchCount ?? 0);
+    const view = {
+      percent: explicit,
+      kind,
+      label: kind === 'real' ? '真实进度' : kind === 'stage' ? '阶段进度' : '预计进度',
+    };
+    if (kind === 'real' && Number.isFinite(current) && current > 0 && Number.isFinite(total) && total > 0) {
+      view.detail = `已完成 ${Math.min(current, total)}/${total} 张`;
+    }
+    return view;
+  }
+  const phase = String(input.phase || input.type || '').trim();
+  const estimated = normalizeGenerationPercent(GENERATION_PROGRESS_PHASES[phase]);
+  if (estimated == null) return { percent: null, kind: 'stage', label: '阶段进度' };
+  return { percent: estimated, kind: 'estimated', label: '预计进度' };
+}
 export const GENERATING_HINTS = [
   GENERATION_PROGRESS_MESSAGES['prompt:prepare'],
   GENERATION_PROGRESS_MESSAGES['request:send'],
