@@ -2499,6 +2499,14 @@ function setAccountTab(tab) {
   }
 }
 
+function getDefaultAccountManagerTab() {
+  const active = getActiveAccount();
+  const hasOauthAccounts = state.data.accounts.some((acc) => acc.type === 'oauth');
+  const hasManualAccounts = state.data.accounts.some((acc) => acc.type !== 'oauth');
+  if (active?.type === 'oauth') return 'oauth';
+  return hasOauthAccounts && !hasManualAccounts ? 'oauth' : 'api';
+}
+
 function setSettingsPanel(panel) {
   const selected = ['generation', 'storage', 'deploy', 'appearance', 'backup'].includes(panel)
     ? panel
@@ -2654,6 +2662,7 @@ function renderAccountList() {
   const oauthAccounts = state.data.accounts.filter((acc) => acc.type === 'oauth');
   renderAccountCards($('#accountList'), manualAccounts, '还没有 API Key 账号，点击上方按钮添加');
   renderAccountCards($('#oauthAccountList'), oauthAccounts, '还没有 ChatGPT 登录账号，点击“登录 ChatGPT”开始添加');
+  syncOAuthLoginSummary(oauthAccounts);
   syncAccountMigrationUi();
   syncSettingsCenterSummary();
 }
@@ -2753,10 +2762,24 @@ function setOAuthLoginState(text, stateClass = '') {
   if (cardEl) cardEl.className = `oauth-login-state${stateClass ? ` ${stateClass}` : ''}`;
 }
 
+function syncOAuthLoginSummary(oauthAccounts = state.data.accounts.filter((acc) => acc.type === 'oauth')) {
+  if (state.oauthLoginInProgress || state.oauthPendingSessionId) return;
+  const active = getActiveAccount();
+  const account = active?.type === 'oauth' ? active : oauthAccounts[0];
+  if (!account) {
+    setOAuthLoginState('未登录');
+    return;
+  }
+  const label = account.email || account.name || account.accountId || 'ChatGPT';
+  const isExpired = account.tokenExpiresAt && Date.now() > account.tokenExpiresAt;
+  setOAuthLoginState(`已登录：${label}`, isExpired ? 'expired' : 'success');
+}
+
 function setOAuthLoginBusy(isBusy) {
   state.oauthLoginInProgress = !!isBusy;
   const btn = $('#oauthLoginBtn');
-  setOAuthLoginState(isBusy ? '登录中' : '未登录', isBusy ? 'busy' : '');
+  if (isBusy) setOAuthLoginState('登录中', 'busy');
+  else syncOAuthLoginSummary();
   if (!btn) return;
   btn.disabled = !!isBusy;
   btn.setAttribute('aria-busy', isBusy ? 'true' : 'false');
@@ -3949,7 +3972,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Account management opens its own dialog, separate from global settings.
   $('#dropdownManage').onclick = () => {
     toggleDropdown(false);
-    void openAccountManager('api', { focusSelector: '#addManualBtn', restoreFocus: '#switcherBtn' });
+    void openAccountManager(getDefaultAccountManagerTab(), { restoreFocus: '#switcherBtn' });
   };
   $('#accountTabApi')?.addEventListener('click', () => setAccountTab('api'));
   $('#accountTabOauth')?.addEventListener('click', () => setAccountTab('oauth'));

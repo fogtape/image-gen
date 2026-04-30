@@ -29,7 +29,7 @@ test('设置和账号管理分成两个入口，账号下拉打开独立账号�
   assert.match(app, /async function openAccountManager\(initialTab = 'api'/);
   assert.match(app, /openDialog\(\$\('#accountOverlay'\)/);
   assert.match(app, /closeDialog\(\$\('#accountOverlay'\)/);
-  assert.match(app, /openAccountManager\('api', \{[^}]*restoreFocus: '#switcherBtn'[^}]*\}\)/);
+  assert.match(app, /openAccountManager\(getDefaultAccountManagerTab\(\), \{[^}]*restoreFocus: '#switcherBtn'[^}]*\}\)/);
   assert.doesNotMatch(app, /openSettingsCenter\('accounts'/);
 });
 

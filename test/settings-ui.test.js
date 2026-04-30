@@ -150,6 +150,24 @@ test('独立账号管理按 API Key、ChatGPT 登录和保存位置三段分流'
   assert.match(app, /\$\('#accountTabOauth'\)\?\.addEventListener\('click', \(\) => setAccountTab\('oauth'\)\)/);
 });
 
+test('账号管理打开时会优先展示当前 OAuth 登录账号并同步顶部登录状态', () => {
+  const oauthPanelMatch = html.match(/<section id="accountPanelOauth"[\s\S]*?<\/section>\s*<section id="accountPanelAdvanced"/);
+  assert.ok(oauthPanelMatch, 'OAuth account panel should exist');
+  const oauthPanel = oauthPanelMatch[0];
+  assert.ok(
+    oauthPanel.indexOf('id="oauthAccountList"') < oauthPanel.indexOf('id="oauthLoginBtn"'),
+    'logged-in OAuth account list should be above the login button',
+  );
+
+  assert.match(app, /function getDefaultAccountManagerTab\(\)/);
+  assert.match(app, /active\?\.type === 'oauth'/);
+  assert.match(app, /hasOauthAccounts && !hasManualAccounts \? 'oauth' : 'api'/);
+  assert.match(app, /void openAccountManager\(getDefaultAccountManagerTab\(\), \{/);
+  assert.match(app, /function syncOAuthLoginSummary\(/);
+  assert.match(app, /setOAuthLoginState\(`已登录：\$\{label\}`,\s*isExpired \? 'expired' : 'success'\)/);
+  assert.match(app, /syncOAuthLoginSummary\(oauthAccounts\)/);
+});
+
 test('水印预览使用高对比背景并默认把自定义文字和时间分两行显示', () => {
   assert.match(css, /\.watermark-preview\s*\{[\s\S]*?flex-direction:\s*column/);
   assert.match(css, /\.watermark-preview\s*\{[\s\S]*?linear-gradient\(135deg/);

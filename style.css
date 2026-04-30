@@ -2206,6 +2206,11 @@ input[type="color"]:hover { border-color: var(--primary); }
 
 .oauth-login-state.busy .oauth-state-dot { background: var(--warning); }
 .oauth-login-state.success .oauth-state-dot { background: var(--success); }
+.oauth-login-state.expired .oauth-state-dot { background: var(--danger); }
+.oauth-login-state.success,
+.oauth-login-state.expired {
+  color: var(--text);
+}
 
 .account-actions {
   display: flex;
