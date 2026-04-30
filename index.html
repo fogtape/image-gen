@@ -646,17 +646,27 @@
 
     <!-- Main -->
     <main class="main">
+      <!-- Hero Section -->
+      <div class="hero-section">
+        <div class="hero-accent" aria-hidden="true"></div>
+        <div class="hero-content">
+          <h1 class="hero-title">AI Image Studio</h1>
+          <p class="hero-desc">描述你的想法，让 AI 为你生成精美图片</p>
+        </div>
+      </div>
+
       <div class="workspace">
         <!-- Input Area -->
-        <div class="input-card">
-          <label class="sr-only" for="prompt">图片提示词</label>
-          <textarea id="prompt" placeholder="描述你想生成的图片..." rows="3"></textarea>
-          <div class="input-toolbar">
-            <div class="toolbar-left">
-              <div class="prompt-tools">
-                <button class="tool-btn" id="uploadLabel" type="button" title="上传参考图，最多 3 张" aria-label="上传参考图，最多 3 张">
-                  <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-                </button>
+        <div class="input-section">
+          <div class="input-card">
+            <label class="sr-only" for="prompt">图片提示词</label>
+            <textarea id="prompt" placeholder="描述你想生成的图片..." rows="3"></textarea>
+            <div class="input-toolbar">
+              <div class="toolbar-left">
+                <div class="prompt-tools">
+                  <button class="tool-btn" id="uploadLabel" type="button" title="上传参考图，最多 3 张" aria-label="上传参考图，最多 3 张">
+                    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+                  </button>
                 <input type="file" id="refImage" accept="image/*" multiple hidden>
                 <button id="enhancePromptBtn" class="tool-btn enhance-prompt-btn hidden" type="button" title="润色提示词" aria-label="润色提示词">
                   <svg class="enhance-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3l1.7 5.2L19 10l-5.3 1.8L12 17l-1.7-5.2L5 10l5.3-1.8L12 3z"/><path d="M5 16l.7 2.2L8 19l-2.3.8L5 22l-.7-2.2L2 19l2.3-.8L5 16z"/></svg>
@@ -686,7 +696,10 @@
             </div>
           </div>
         </div>
+      </div> <!-- /input-section -->
 
+      <!-- Controls Section -->
+      <div class="controls-section">
         <!-- Options Bar -->
         <div class="options-bar">
           <div class="opt">
@@ -788,10 +801,12 @@
           </section>
 
         </details>
-      </div>
+      </div> <!-- /controls-section -->
+      </div> <!-- /workspace -->
 
-      <!-- Results -->
-      <div id="historyToolbar" class="history-toolbar" aria-label="历史记录工具栏">
+      <!-- Results Section -->
+      <div class="results-section">
+        <div id="historyToolbar" class="history-toolbar" aria-label="历史记录工具栏">
         <input id="historySearch" class="history-search" type="search" placeholder="搜索提示词、标签或批次">
         <div class="history-actions">
           <button id="historyFavoriteOnly" class="btn btn-outline history-fav-btn" type="button" aria-pressed="false">
@@ -809,6 +824,7 @@
 
       <!-- Error -->
       <div id="errorMsg" class="error-bar hidden" role="alert" aria-live="assertive"></div>
+      </div> <!-- /results-section -->
     </main>
 
     <!-- Error Dialog -->
