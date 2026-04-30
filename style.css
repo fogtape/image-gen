@@ -842,13 +842,13 @@ textarea { resize: vertical; }
 
 /* ── Hero Section ── */
 .hero-section {
-  position: relative;
-  padding: 16px 0 12px;
+  padding: 8px 0 4px;
   text-align: center;
 }
+
 .hero-title {
-  margin: 0 0 6px;
-  font-size: 1.5rem;
+  margin: 0;
+  font-size: 1.2rem;
   font-weight: 800;
   letter-spacing: -0.04em;
   background: linear-gradient(135deg, #4338ca, #2563eb);
@@ -858,9 +858,7 @@ textarea { resize: vertical; }
 }
 
 .hero-desc {
-  margin: 0;
-  color: var(--text-3);
-  font-size: 0.88rem;
+  display: none;
 }
 
 /* ── Input Section ── */
