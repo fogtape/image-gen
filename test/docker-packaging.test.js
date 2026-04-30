@@ -15,9 +15,11 @@ const root = new URL('../', import.meta.url);
 
 test('Docker 镜像安装 sharp 依赖并复制水印、存储和提示词增强运行文件', () => {
   assert.match(dockerfile, /COPY package\*\.json/);
+  assert.match(dockerfile, /apk add --no-cache su-exec/);
   assert.match(dockerfile, /npm ci --omit=dev/);
   assert.match(dockerfile, /RUN npm run build/);
   assert.match(dockerfile, /COPY frontend \.\/frontend/);
+  assert.match(dockerfile, /COPY scripts\/docker-entrypoint\.sh \.\/scripts\/docker-entrypoint\.sh/);
   assert.match(dockerfile, /image-storage\.js/);
   assert.match(dockerfile, /image-watermark\.js/);
   assert.match(dockerfile, /prompt-enhancement\.js/);
@@ -29,6 +31,19 @@ test('Docker 镜像安装 sharp 依赖并复制水印、存储和提示词增强
   assert.match(dockerfile, /account-store-upstash\.js/);
   assert.match(dockerfile, /account-store-capabilities\.js/);
   assert.match(dockerfile, /pow-config\.js/);
+});
+
+test('Docker 启动时会修正 bind mount 数据目录权限后再降权运行 Node', () => {
+  const entrypoint = fs.readFileSync(new URL('../scripts/docker-entrypoint.sh', import.meta.url), 'utf8');
+
+  assert.match(dockerfile, /ENV IMAGE_GEN_RUNTIME=node/);
+  assert.match(dockerfile, /ENV IMAGE_GEN_DATA_DIR=\/app\/data/);
+  assert.match(dockerfile, /chmod \+x \.\/scripts\/docker-entrypoint\.sh/);
+  assert.match(dockerfile, /ENTRYPOINT \["\.\/scripts\/docker-entrypoint\.sh"\]/);
+  assert.doesNotMatch(dockerfile, /^USER node$/m);
+  assert.match(entrypoint, /mkdir -p "\$\{IMAGE_GEN_DATA_DIR:-\/app\/data\}" \/app\/config/);
+  assert.match(entrypoint, /chown -R node:node "\$\{IMAGE_GEN_DATA_DIR:-\/app\/data\}" \/app\/config/);
+  assert.match(entrypoint, /exec su-exec node "\$@"/);
 });
 
 test('Docker 构建只复制配置模板，不把本地运行态配置和数据打进镜像', () => {

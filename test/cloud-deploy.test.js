@@ -1,10 +1,132 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createConfigService } from '../config-service.js';
+import { resolveRuntimeMode } from '../server.js';
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const exists = (path) => fs.existsSync(new URL(`../${path}`, import.meta.url));
+
+test('Docker/Node 显式 runtime 覆盖云平台环境变量，保持服务端图片持久化能力', () => {
+  const server = read('server.js');
+  const dockerfile = read('Dockerfile');
+  const compose = read('docker-compose.yml');
+
+  assert.match(server, /IMAGE_GEN_RUNTIME/);
+  assert.match(server, /return false/);
+  assert.match(dockerfile, /ENV IMAGE_GEN_RUNTIME=node/);
+  assert.match(dockerfile, /ENV IMAGE_GEN_DATA_DIR=\/app\/data/);
+  assert.match(compose, /IMAGE_GEN_RUNTIME: node/);
+  assert.match(compose, /IMAGE_GEN_DATA_DIR: \/app\/data/);
+  assert.equal(resolveRuntimeMode({ IMAGE_GEN_RUNTIME: 'node', VERCEL: '1', NETLIFY: '1' }), 'node');
+  assert.equal(resolveRuntimeMode({ IMAGE_GEN_RUNTIME: 'docker', AWS_EXECUTION_ENV: 'AWS_Lambda_nodejs22.x' }), 'node');
+  assert.equal(resolveRuntimeMode({ IMAGE_GEN_RUNTIME: 'vercel' }), 'serverless');
+
+  const configService = createConfigService({ isServerless: false });
+  const runtime = configService.getRuntimeConfig();
+  assert.equal(runtime.capabilities.runtime, 'node');
+  assert.equal(runtime.capabilities.backgroundJobsInline, false);
+  assert.equal(runtime.capabilities.canPersistImages, true);
+  assert.equal(runtime.capabilities.canUseStorageApi, true);
+  assert.equal(runtime.capabilities.canUseBackgroundJobs, true);
+  configService.stopWatcher?.();
+});
+
+test('Docker runtime 即使宿主环境残留 VERCEL 变量，/api/config/runtime 仍返回 node 存储能力', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'image-gen-docker-runtime-'));
+  const script = `
+    const { server } = await import('./server.js');
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = server.address();
+      const resp = await fetch('http://127.0.0.1:' + port + '/api/config/runtime');
+      const data = await resp.json();
+      if (data.meta.capabilities.runtime !== 'node') throw new Error('runtime=' + data.meta.capabilities.runtime);
+      if (data.meta.capabilities.canPersistImages !== true) throw new Error('canPersistImages=false');
+      if (data.meta.capabilities.canUseStorageApi !== true) throw new Error('canUseStorageApi=false');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: new URL('..', import.meta.url),
+    env: {
+      ...process.env,
+      VERCEL: '1',
+      IMAGE_GEN_RUNTIME: 'node',
+      IMAGE_GEN_DATA_DIR: path.join(tempRoot, 'data'),
+      IMAGE_GEN_CONFIG_DIR: path.join(tempRoot, 'config'),
+      IMAGE_GEN_ENV_FILE: path.join(tempRoot, 'config', '.env'),
+    },
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
+
+test('Docker/Node 后台生图默认写入 /app/data 风格的数据目录，刷新后可由 storage API 找回', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'image-gen-docker-storage-'));
+  const script = `
+    const oneByOnePng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, options) => {
+      if (!String(url).endsWith('/v1/responses')) return realFetch(url, options);
+      return new Response('event: response.output_item.done\\ndata: {"type":"response.output_item.done","item":{"type":"image_generation_call","result":"' + oneByOnePng + '"}}\\n\\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    };
+    const { server, imageJobStore } = await import('./server.js');
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const created = imageJobStore.create({
+        mode: 'responses',
+        prompt: 'docker persistence check',
+        cfg: { apiUrl: 'https://api.openai.com', apiKey: 'test-key', model: 'gpt-image-2', responsesModel: 'gpt-5.4' },
+        quality: 'low',
+        size: 'auto',
+        background: 'auto',
+        format: 'png',
+        storageSettings: { enabled: true },
+      });
+      let job = null;
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline) {
+        job = imageJobStore.get(created.id);
+        if (job && (job.status === 'completed' || job.status === 'failed')) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      if (job?.status !== 'completed') throw new Error('job did not complete: ' + JSON.stringify(job));
+      const item = job.result.data[0];
+      if (item.persisted !== true) throw new Error('not persisted: ' + JSON.stringify(item.storageError || item));
+      if (!String(item.url || '').startsWith('/api/images/')) throw new Error('bad image url: ' + item.url);
+      if (item.b64_json !== undefined) throw new Error('b64_json should be removed after server persistence');
+      const base = 'http://127.0.0.1:' + server.address().port;
+      const stats = await (await fetch(base + '/api/storage')).json();
+      if (stats.count !== 1) throw new Error('storage count=' + stats.count);
+      if (stats.history[0].prompt !== 'docker persistence check') throw new Error('history prompt missing');
+      const imageResp = await fetch(base + item.url);
+      if (imageResp.status !== 200) throw new Error('stored image HTTP ' + imageResp.status);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: new URL('..', import.meta.url),
+    env: {
+      ...process.env,
+      VERCEL: '1',
+      IMAGE_GEN_RUNTIME: 'node',
+      IMAGE_GEN_DATA_DIR: path.join(tempRoot, 'data'),
+      IMAGE_GEN_CONFIG_DIR: path.join(tempRoot, 'config'),
+      IMAGE_GEN_ENV_FILE: path.join(tempRoot, 'config', '.env'),
+    },
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
 
 test('Vercel 使用静态构建产物部署，避免把浏览器 app.js 当服务端函数执行', () => {
   const pkg = JSON.parse(read('package.json'));
@@ -61,7 +183,7 @@ test('Vercel Serverless Functions 数量不超过 Hobby 计划 12 个限制', ()
 test('OAuth start 在 Vercel serverless 环境不启动本地 loopback 监听', () => {
   const server = read('server.js');
   assert.match(server, /function shouldStartOAuthLoopbackServer/);
-  assert.match(server, /process\.env\.VERCEL/);
+  assert.match(server, /return !isServerlessRuntime\(\)/);
   assert.match(server, /if \(shouldStartOAuthLoopbackServer\(\)\) await ensureLoopbackServer\(\)/);
 });
 

@@ -402,10 +402,20 @@ setInterval(cleanSessions, 60_000).unref();
 let loopbackServer = null;
 
 function shouldStartOAuthLoopbackServer() {
-  return !process.env.VERCEL;
+  return !isServerlessRuntime();
+}
+
+export function resolveRuntimeMode(env = process.env) {
+  const explicit = String(env.IMAGE_GEN_RUNTIME || env.IMAGE_GEN_DEPLOY_RUNTIME || '').trim().toLowerCase();
+  if (['node', 'docker', 'local', 'server', 'vps'].includes(explicit)) return 'node';
+  if (['serverless', 'vercel', 'netlify', 'lambda', 'aws'].includes(explicit)) return 'serverless';
+  return '';
 }
 
 function isServerlessRuntime() {
+  const runtimeMode = resolveRuntimeMode();
+  if (runtimeMode === 'node') return false;
+  if (runtimeMode === 'serverless') return true;
   return !!(process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.AWS_EXECUTION_ENV);
 }
 

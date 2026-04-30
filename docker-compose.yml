@@ -5,6 +5,8 @@ services:
       - "127.0.0.1:3000:3000"
     environment:
       PORT: 3000
+      IMAGE_GEN_RUNTIME: node
+      IMAGE_GEN_DATA_DIR: /app/data
     volumes:
       - ./config:/app/config
       - ./data:/app/data

@@ -108,6 +108,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      IMAGE_GEN_RUNTIME: node
       IMAGE_GEN_DATA_DIR: /app/data
     volumes:
       - ./config:/app/config
@@ -146,6 +147,8 @@ docker run --rm -p 3000:3000 image-gen:local
 - 服务端 watcher 会检测文件变化
 - 配置支持热更新
 - 历史图片等数据会持久化到 `data/`
+
+镜像启动时会先修正挂载的 `config/` 和 `data/` 目录权限，再降权运行 Node；如果你的宿主机目录曾由 root 创建，更新镜像后仍应能正常保存历史图片。
 
 Docker 镜像构建时只复制 `config/.env.example`，不会把本地 `config/.env`、`data/`、`.oauth-sessions.json` 或 `.tmp_*` 临时文件打进镜像。容器首次启动时如果没有挂载自己的 `config/.env`，服务端会按模板生成默认配置。
 
@@ -357,6 +360,7 @@ IMAGE_GEN_DEPLOY_AUTO_REDEPLOY=true
 | 变量名 | 说明 |
 |---|---|
 | `PORT` | Node / Docker HTTP 监听端口，默认 `3000` |
+| `IMAGE_GEN_RUNTIME` | 运行形态显式覆盖。Docker/Node 推荐 `node`，可避免宿主环境残留 `VERCEL`、`NETLIFY`、`AWS_*` 时误判为 serverless |
 | `IMAGE_GEN_ADMIN_TOKEN` | 管理口令。保存服务端配置、清理服务端图片、同步云平台变量时建议设置 |
 | `IMAGE_GEN_CONFIG_DIR` | 配置目录，默认 `config/` |
 | `IMAGE_GEN_ENV_FILE` | 配置文件路径，默认 `IMAGE_GEN_CONFIG_DIR/.env` |
@@ -576,6 +580,8 @@ DOCKERHUB_TOKEN
 ```
 
 没有挂载时，配置和图片历史可能只在容器内部，重建容器会丢。
+
+如果接口里 `/api/config/runtime` 显示 `runtime: "serverless"` 或 `canPersistImages: false`，请在 compose 里补上 `IMAGE_GEN_RUNTIME: node` 并重建容器。正常 Docker 应显示 `runtime: "node"`、`canPersistImages: true`、`canUseStorageApi: true`。
 
 ### API Key 和 token 应该放哪里？
 

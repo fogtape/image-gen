@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { createJobStore } from '../background-jobs.js';
 
@@ -206,4 +209,31 @@ test('background job cancellation is idempotent for completed jobs', async () =>
   const afterCancel = store.cancel('job_done');
   assert.equal(afterCancel.status, 'completed');
   assert.deepEqual(afterCancel.result, { ok: true });
+});
+
+test('background job persistence path records active jobs for Docker restart diagnostics', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'image-gen-job-persist-'));
+  const persistencePath = path.join(dir, 'jobs.json');
+  let releaseRunning;
+  const runningGate = new Promise((resolve) => { releaseRunning = resolve; });
+  const store = createJobStore({
+    idFactory: () => 'job_persist_active',
+    persistencePath,
+    runner: async () => {
+      await runningGate;
+      return { ok: true };
+    },
+  });
+
+  store.create({ prompt: 'restart-sensitive task' });
+  await tick();
+  assert.equal(store.get('job_persist_active').status, 'running');
+  assert.equal(fs.existsSync(persistencePath), true);
+  const persisted = JSON.parse(fs.readFileSync(persistencePath, 'utf8'));
+  assert.deepEqual(persisted.active.map((item) => item.id), ['job_persist_active']);
+  assert.equal(JSON.stringify(persisted).includes('restart-sensitive task'), false);
+
+  releaseRunning();
+  await tick();
+  assert.equal(store.get('job_persist_active').status, 'completed');
 });
