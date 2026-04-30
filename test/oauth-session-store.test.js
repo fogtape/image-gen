@@ -141,6 +141,44 @@ test('serverless mode stateless session uses AEAD encryption', () => {
   });
 });
 
+test('OAuth start 在 serverless 缺少 session secret 时返回可读 JSON 错误', async () => {
+  const script = [
+    `delete process.env.IMAGE_GEN_OAUTH_SESSION_SECRET;`,
+    `process.env.VERCEL = '1';`,
+    `const mod = await import(${JSON.stringify(pathToFileURL(path.resolve('server.js')).href)});`,
+    `await new Promise((resolve) => mod.server.listen(0, '127.0.0.1', resolve));`,
+    `try {`,
+    `  const port = mod.server.address().port;`,
+    `  const resp = await fetch('http://127.0.0.1:' + port + '/api/oauth/start', { method: 'POST' });`,
+    `  const data = await resp.json();`,
+    `  if (resp.status !== 500) throw new Error('unexpected status ' + resp.status);`,
+    `  if (!/IMAGE_GEN_OAUTH_SESSION_SECRET/.test(data.error || '')) throw new Error('missing readable error: ' + JSON.stringify(data));`,
+    `} finally {`,
+    `  await new Promise((resolve) => mod.server.close(resolve));`,
+    `}`,
+  ].join('\n');
+  execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: path.resolve('.'),
+    env: {
+      ...process.env,
+      VERCEL: '1',
+      IMAGE_GEN_OAUTH_SESSION_SECRET: '',
+    },
+    stdio: 'pipe',
+  });
+});
+
+test('前端 OAuth start 失败时透传后端 error，而不是误报未获取到授权地址', () => {
+  const source = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+  const fnMatch = source.match(/async function startOAuth\(\) \{[\s\S]*?\n\}/);
+  assert.ok(fnMatch, 'startOAuth function should exist');
+  const fn = fnMatch[0];
+  assert.match(fn, /const data = await resp\.json\(\)\.catch\(\(\) => \(\{\}\)\)/);
+  assert.match(fn, /if \(!resp\.ok\)/);
+  assert.match(fn, /data\.error \|\| data\.message \|\| `HTTP \$\{resp\.status\}`/);
+  assert.match(fn, /if \(!data\.authorizationUrl\) throw new Error\(data\.error \|\| data\.message \|\| '未获取到授权地址'\)/);
+});
+
 test('OAuth status 只允许 sessionId 读取结果，不能再用 state 抢读 token', async () => {
   const sessionId = 'status-session-' + Date.now();
   const state = 'status-state-' + Date.now();

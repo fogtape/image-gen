@@ -627,42 +627,47 @@ async function exchangeOAuthCodeForResult(code, session) {
 }
 
 async function handleOAuthStart(req, res) {
-  const codeVerifier = makeOAuthCodeVerifier();
-  const codeChallenge = makeOAuthCodeChallenge(codeVerifier);
-  const state = crypto.randomBytes(24).toString('base64url');
-  const createdAt = Date.now();
-  const session = {
-    state,
-    codeVerifier,
-    redirectUri: OAUTH_REDIRECT_URI,
-    status: 'pending',
-    result: null,
-    error: null,
-    createdAt,
-  };
-  const sessionId = makeStatelessOAuthSessionId(session);
+  try {
+    const codeVerifier = makeOAuthCodeVerifier();
+    const codeChallenge = makeOAuthCodeChallenge(codeVerifier);
+    const state = crypto.randomBytes(24).toString('base64url');
+    const createdAt = Date.now();
+    const session = {
+      state,
+      codeVerifier,
+      redirectUri: OAUTH_REDIRECT_URI,
+      status: 'pending',
+      result: null,
+      error: null,
+      createdAt,
+    };
+    const sessionId = makeStatelessOAuthSessionId(session);
 
-  setOAuthSession(sessionId, session);
+    setOAuthSession(sessionId, session);
 
-  if (shouldStartOAuthLoopbackServer()) await ensureLoopbackServer();
+    if (shouldStartOAuthLoopbackServer()) await ensureLoopbackServer();
 
-  const params = new URLSearchParams({
-    client_id: OAUTH_CLIENT_ID,
-    redirect_uri: OAUTH_REDIRECT_URI,
-    response_type: 'code',
-    scope: OAUTH_SCOPES,
-    state,
-    code_challenge: codeChallenge,
-    code_challenge_method: 'S256',
-    prompt: 'login',
-    id_token_add_organizations: 'true',
-    codex_cli_simplified_flow: 'true',
-  });
+    const params = new URLSearchParams({
+      client_id: OAUTH_CLIENT_ID,
+      redirect_uri: OAUTH_REDIRECT_URI,
+      response_type: 'code',
+      scope: OAUTH_SCOPES,
+      state,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+      prompt: 'login',
+      id_token_add_organizations: 'true',
+      codex_cli_simplified_flow: 'true',
+    });
 
-  const authorizationUrl = `${OAUTH_AUTH_URL}?${params}`;
+    const authorizationUrl = `${OAUTH_AUTH_URL}?${params}`;
 
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ authorizationUrl, sessionId, state, redirectUri: OAUTH_REDIRECT_URI }));
+    writeNoStoreJson(res, 200, { authorizationUrl, sessionId, state, redirectUri: OAUTH_REDIRECT_URI });
+  } catch (e) {
+    const message = e?.message || 'OAuth start failed';
+    console.warn('OAuth start failed:', message);
+    writeNoStoreJson(res, 500, { error: message });
+  }
 }
 
 function writeNoStoreJson(res, status, body) {

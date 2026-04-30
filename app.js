@@ -2550,12 +2550,25 @@ async function openSettingsCenter(initialPanel = 'generation', options = {}) {
   });
 }
 
+async function refreshAccountManagerData({ silent = true } = {}) {
+  if (state.accountManagerRefreshInProgress) return state.accountManagerRefreshInProgress;
+  const refreshPromise = (async () => {
+    await fetchAccountStoreCapabilities();
+    if (hasValidAdminSession()) {
+      try { await fetchEditableRuntimeConfig(); } catch (e) { console.warn('Failed to load editable runtime config:', e?.message || e); }
+      await loadServerAccountsIntoLocal({ silent });
+    }
+    fillAccountStoreConfigForm(state.serverConfig || {});
+    renderAccountList();
+  })();
+  const trackedPromise = refreshPromise.finally(() => {
+    if (state.accountManagerRefreshInProgress === trackedPromise) state.accountManagerRefreshInProgress = null;
+  });
+  state.accountManagerRefreshInProgress = trackedPromise;
+  return state.accountManagerRefreshInProgress;
+}
+
 async function openAccountManager(initialTab = 'api', options = {}) {
-  await fetchAccountStoreCapabilities();
-  if (hasValidAdminSession()) {
-    try { await fetchEditableRuntimeConfig(); } catch (e) { console.warn('Failed to load editable runtime config:', e?.message || e); }
-    await loadServerAccountsIntoLocal({ silent: true });
-  }
   fillAccountStoreConfigForm(state.serverConfig || {});
   renderAccountList();
   setAccountTab(initialTab);
@@ -2563,6 +2576,8 @@ async function openAccountManager(initialTab = 'api', options = {}) {
     focusSelector: options.focusSelector || (initialTab === 'oauth' ? '#oauthLoginBtn' : initialTab === 'advanced' ? '#accountStoreTypeSelect' : '#addManualBtn'),
     restoreFocus: options.restoreFocus || '#switcherBtn',
   });
+  void refreshAccountManagerData({ silent: true })
+    .catch((e) => console.warn('Failed to refresh account manager data:', e?.message || e));
 }
 
 function renderAccountCards(list, accounts, emptyText) {
@@ -2832,8 +2847,9 @@ async function startOAuth() {
 
   try {
     const resp = await fetch('/api/oauth/start', { method: 'POST' });
-    const data = await resp.json();
-    if (!data.authorizationUrl) throw new Error('未获取到授权地址');
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || data.message || `HTTP ${resp.status}`);
+    if (!data.authorizationUrl) throw new Error(data.error || data.message || '未获取到授权地址');
 
     state.oauthPendingSessionId = data.sessionId || data.state;
     state.oauthPendingState = data.state;

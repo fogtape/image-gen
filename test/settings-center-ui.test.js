@@ -33,6 +33,19 @@ test('设置和账号管理分成两个入口，账号下拉打开独立账号�
   assert.doesNotMatch(app, /openSettingsCenter\('accounts'/);
 });
 
+test('账号管理弹窗先打开，再后台刷新服务端账号数据，避免被慢接口阻塞', () => {
+  const fnMatch = app.match(/async function openAccountManager\(initialTab = 'api', options = \{\}\) \{[\s\S]*?\n\}/);
+  assert.ok(fnMatch, 'openAccountManager function should exist');
+  const fn = fnMatch[0];
+  const openIndex = fn.indexOf("openDialog($('#accountOverlay')");
+  const refreshIndex = fn.indexOf('refreshAccountManagerData');
+  const firstAwaitIndex = fn.indexOf('await ');
+  assert.ok(openIndex >= 0, 'account dialog should be opened by openAccountManager');
+  assert.ok(refreshIndex > openIndex, 'refresh should be scheduled after opening the dialog');
+  assert.equal(firstAwaitIndex, -1, 'openAccountManager should not await network requests before opening the dialog');
+  assert.match(app, /async function refreshAccountManagerData\(/);
+});
+
 test('设置页面只保留生成、外观、存储、部署、备份，不再混入管理员和账号分区', () => {
   const sections = [
     ['generation', '生成'],
