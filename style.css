@@ -337,64 +337,51 @@ html[data-admin-session="active"] .app-shell.hidden {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
-  height: 56px;
-  background: rgba(255,255,255,0.78);
-  backdrop-filter: saturate(180%) blur(24px);
-  -webkit-backdrop-filter: saturate(180%) blur(24px);
-  border-bottom: 1px solid rgba(0,0,0,0.04);
-  box-shadow: 0 1px 0 0 rgba(99,102,241,0.06);
-}
-
-.topbar::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, rgba(99,102,241,0.2) 30%, rgba(59,130,246,0.2) 70%, transparent);
-  pointer-events: none;
+  padding: 0 16px;
+  height: 52px;
+  background: #fff;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
 }
 
 .topbar-left,
 .topbar-right { min-width: 0; }
 
+.topbar-left {
+  flex: 1 1 auto;
+}
+
 .topbar-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 3px;
-  background: rgba(0,0,0,0.03);
-  border-radius: 10px;
+  gap: 0;
 }
 
 .logo {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  font-size: 1rem;
+  font-size: 0.92rem;
   font-weight: 700;
   letter-spacing: -0.02em;
 }
 
 .logo-icon {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #ede9fe, #dbeafe);
-  font-size: 1.1rem;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6366f1, #3b82f6);
+  font-size: 0.9rem;
   flex-shrink: 0;
 }
 
@@ -403,10 +390,7 @@ html[data-admin-session="active"] .app-shell.hidden {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  background: linear-gradient(135deg, #4338ca, #2563eb);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--text);
 }
 
 .sr-only {
@@ -420,24 +404,20 @@ html[data-admin-session="active"] .app-shell.hidden {
 }
 
 .topbar-btn {
-  width: 34px; height: 34px;
+  width: 32px; height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
   background: transparent;
   border-radius: 8px;
-  color: var(--text-2);
+  color: var(--text-3);
   cursor: pointer;
   transition: var(--transition-fast);
 }
 
 .topbar-btn:hover { background: rgba(0,0,0,0.05); color: var(--text); }
 .topbar-btn:active { transform: scale(0.92); }
-
-.admin-logout-top {
-  color: var(--text-3);
-}
 
 .admin-logout-top:hover {
   color: var(--danger);
@@ -1731,21 +1711,21 @@ textarea { resize: vertical; }
 .switcher-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
-  padding: 6px 14px;
-  border: 1px solid rgba(0,0,0,0.08);
-  border-radius: 10px;
-  background: rgba(255,255,255,0.7);
-  color: var(--text);
-  font-size: 0.82rem;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.8rem;
   font-family: inherit;
   cursor: pointer;
   transition: var(--transition);
-  max-width: 200px;
+  max-width: 180px;
 }
 
-.switcher-btn:hover { border-color: var(--primary); background: var(--primary-bg); }
+.switcher-btn:hover { border-color: var(--border); background: rgba(0,0,0,0.02); color: var(--text); }
 .switcher-btn:active { transform: scale(0.97); }
 
 .switcher-dot {
