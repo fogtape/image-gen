@@ -693,7 +693,7 @@ textarea { resize: vertical; }
 .active-job-banner {
   position: fixed;
   left: 50%;
-  bottom: max(14px, calc(10px + env(safe-area-inset-bottom)));
+  bottom: 14px;
   z-index: 180;
   width: min(680px, calc(100vw - 32px));
   max-width: calc(100vw - 32px);
@@ -710,6 +710,12 @@ textarea { resize: vertical; }
   overflow: hidden;
   transform: translateX(-50%);
   animation: activeJobPillIn 0.26s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+@supports (padding: env(safe-area-inset-bottom)) {
+  .active-job-banner {
+    bottom: max(14px, env(safe-area-inset-bottom));
+  }
 }
 
 @keyframes activeJobPillIn {
@@ -842,13 +848,13 @@ textarea { resize: vertical; }
 
 /* ── Hero Section ── */
 .hero-section {
-  padding: 8px 0 4px;
+  padding: 24px 0 16px;
   text-align: center;
 }
 
 .hero-title {
-  margin: 0;
-  font-size: 1.2rem;
+  margin: 0 0 4px;
+  font-size: 1.4rem;
   font-weight: 800;
   letter-spacing: -0.04em;
   background: linear-gradient(135deg, #4338ca, #2563eb);
@@ -858,7 +864,9 @@ textarea { resize: vertical; }
 }
 
 .hero-desc {
-  display: none;
+  margin: 0;
+  color: var(--text-3);
+  font-size: 0.85rem;
 }
 
 /* ── Input Section ── */
@@ -2987,7 +2995,7 @@ input[type="color"]:hover { border-color: var(--primary); }
   .active-job-banner {
     width: calc(100vw - 20px);
     max-width: calc(100vw - 20px);
-    bottom: max(10px, calc(8px + env(safe-area-inset-bottom)));
+    bottom: 10px;
     padding: 7px 7px 7px 10px;
     gap: 8px;
   }

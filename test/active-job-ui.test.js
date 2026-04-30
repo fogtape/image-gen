@@ -30,7 +30,7 @@ test('后台任务浮动胶囊在移动端保持紧凑，不再竖排全宽按�
   const banner = ruleBody('.active-job-banner');
   assert.match(banner, /position\s*:\s*fixed\s*;/);
   assert.match(banner, /left\s*:\s*50%\s*;/);
-  assert.match(banner, /bottom\s*:\s*max\(14px,\s*calc\(10px \+ env\(safe-area-inset-bottom\)\)\)\s*;/);
+  assert.match(banner, /bottom\s*:\s*14px\s*;/);
   assert.match(banner, /border-radius\s*:\s*999px\s*;/);
 
   const actions = ruleBody('.active-job-actions');
