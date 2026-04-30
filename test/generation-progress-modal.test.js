@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 import {
+  getPreservedGenerationProgressEvent,
   getGenerationProgressView,
   normalizeGenerationPercent,
 } from '../ui-feedback.js';
@@ -76,6 +77,21 @@ test('阶段进度映射区分真实和预计百分比', () => {
     label: '真实进度',
     detail: '已完成 2/4 张',
   });
+});
+
+test('长等待提示保留上一段已知生成进度，避免进度条回退到 0%', () => {
+  const previous = { phase: 'response:image_partial', message: '正在接收生成预览' };
+  const waiting = { phase: '__long_wait__', message: '流式图生图仍在进行，请耐心等待' };
+
+  const preserved = getPreservedGenerationProgressEvent(waiting, previous, true);
+
+  assert.equal(getGenerationProgressView(previous).percent, 72);
+  assert.equal(getGenerationProgressView(waiting).percent, null);
+  assert.equal(getGenerationProgressView(preserved).percent, 72);
+  assert.equal(preserved.message, waiting.message);
+  assert.match(app, /getPreservedGenerationProgressEvent\(/);
+  assert.match(app, /state\.lastGenerationProgressEvent/);
+  assert.match(app, /setGenerationStatus\('__long_wait__', getWaitingProgressMessage\(\), \{ preserveLast: true \}\)/);
 });
 
 test('生成状态只写入弹窗进度，生成按钮左侧不再重复显示进度', () => {

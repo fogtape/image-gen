@@ -3,6 +3,7 @@ import {
   POLICY_VIOLATION_MESSAGE,
   getGenerationProgressMessage,
   getGenerationProgressView,
+  getPreservedGenerationProgressEvent,
   getResponseStreamProgressMessage,
   getResponseStreamProgressPhase,
   getSseProgressMessage,
@@ -2357,11 +2358,20 @@ function setGenerationStatus(phaseOrMessage, message, options = {}) {
   const phase = String(phaseOrMessage || '').trim();
   const meta = options.meta || getCurrentGenerationMeta();
   const text = getAccurateStatusText(phaseOrMessage, message, meta);
+  const progressEvent = generationProgressEventFromStatus({ phase, message, meta, progress: options.progress });
+  const preservedProgressEvent = getPreservedGenerationProgressEvent(
+    progressEvent,
+    state.lastGenerationProgressEvent,
+    options.preserveLast === true,
+  );
   state.lastStatusPhase = phase;
   state.lastStatusText = text;
   if (state.generating) {
     setToolbarGenerationHint('');
-    updateGenerationProgressDialog({ phase, message, text, meta, progress: options.progress });
+    updateGenerationProgressDialog({ phase, message, text, meta, progress: preservedProgressEvent });
+    if (!options.preserveLast && getGenerationProgressView(progressEvent).percent != null) {
+      state.lastGenerationProgressEvent = progressEvent;
+    }
   } else {
     setToolbarGenerationHint(text);
   }
@@ -2387,6 +2397,7 @@ function setLoading(on) {
   state.generating = on;
   if (on) {
     state.lastProgressKey = '';
+    state.lastGenerationProgressEvent = null;
     state.lastStatusPhase = '';
     state.lastStatusText = '';
   } else {

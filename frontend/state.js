@@ -62,6 +62,7 @@ export const state = {
   generationHintStep: 0,
   waitingStatusTimer: null,
   lastProgressKey: '',
+  lastGenerationProgressEvent: null,
   lastStatusText: IDLE_GENERATION_HINT,
   lastStatusPhase: '',
   currentGenerationMeta: null,

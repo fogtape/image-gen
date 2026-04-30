@@ -111,6 +111,18 @@ export function getGenerationProgressView(event = {}) {
   if (estimated == null) return { percent: null, kind: 'stage', label: '阶段进度' };
   return { percent: estimated, kind: 'estimated', label: '预计进度' };
 }
+
+export function getPreservedGenerationProgressEvent(current = {}, previous = null, preserveLast = false) {
+  const currentEvent = current && typeof current === 'object' ? current : { phase: String(current || '') };
+  if (!preserveLast) return currentEvent;
+  if (getGenerationProgressView(currentEvent).percent != null) return currentEvent;
+  const previousEvent = previous && typeof previous === 'object' ? previous : null;
+  if (!previousEvent || getGenerationProgressView(previousEvent).percent == null) return currentEvent;
+  return {
+    ...previousEvent,
+    message: currentEvent.message || previousEvent.message,
+  };
+}
 export const GENERATING_HINTS = [
   GENERATION_PROGRESS_MESSAGES['prompt:prepare'],
   GENERATION_PROGRESS_MESSAGES['request:send'],
