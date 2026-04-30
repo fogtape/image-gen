@@ -353,6 +353,7 @@ html[data-admin-session="active"] .app-shell.hidden {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .logo {
@@ -413,6 +414,8 @@ html[data-admin-session="active"] .app-shell.hidden {
   border-radius: 999px;
   font-size: 0.78rem;
   font-weight: 650;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* ── Overlay & Modal ── */
@@ -1693,7 +1696,11 @@ textarea { resize: vertical; }
 }
 
 /* ── Account Switcher ── */
-.account-switcher { position: relative; }
+.account-switcher {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
 
 .switcher-btn {
   display: flex;
@@ -2945,7 +2952,9 @@ input[type="color"]:hover { border-color: var(--primary); }
 /* ── Responsive: Mobile (≤600px) ── */
 
 @media (max-width: 600px) {
-  .topbar { padding: 0 14px; }
+  .topbar { padding: 0 14px; gap: 6px; }
+  .logo span { display: none; }
+  .switcher-btn { max-width: 120px; padding: 6px 10px; }
 
   .main { padding: 16px 10px calc(60px + env(safe-area-inset-bottom)); }
 
