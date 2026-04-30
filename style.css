@@ -848,13 +848,26 @@ textarea { resize: vertical; }
 
 /* ── Hero Section ── */
 .hero-section {
-  padding: 24px 0 16px;
+  position: relative;
+  padding: 36px 0 28px;
   text-align: center;
+  overflow: hidden;
+}
+
+.hero-accent {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #6366f1, #3b82f6, #06b6d4);
 }
 
 .hero-title {
-  margin: 0 0 4px;
-  font-size: 1.4rem;
+  margin: 0 0 6px;
+  font-size: 1.5rem;
   font-weight: 800;
   letter-spacing: -0.04em;
   background: linear-gradient(135deg, #4338ca, #2563eb);
@@ -866,7 +879,7 @@ textarea { resize: vertical; }
 .hero-desc {
   margin: 0;
   color: var(--text-3);
-  font-size: 0.85rem;
+  font-size: 0.88rem;
 }
 
 /* ── Input Section ── */

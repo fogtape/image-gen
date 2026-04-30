@@ -13,6 +13,20 @@ function ruleBody(selector) {
   return match[1];
 }
 
+function divAncestorsBefore(needle) {
+  const targetIndex = html.indexOf(needle);
+  assert.ok(targetIndex >= 0, `${needle} should exist`);
+  const stack = [];
+  const divTag = /<\/?div\b[^>]*>/gi;
+  let match;
+  while ((match = divTag.exec(html)) && match.index < targetIndex) {
+    const tag = match[0];
+    if (/^<\//.test(tag)) stack.pop();
+    else stack.push(tag);
+  }
+  return stack.join('\n');
+}
+
 test('后台任务提示改为浮动胶囊，只保留查看和停止两个操作', () => {
   const bannerMatch = html.match(/<div id="activeJobBanner"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/);
   assert.ok(bannerMatch, 'active job banner markup should exist');
@@ -47,6 +61,27 @@ test('后台任务浮动胶囊在移动端保持紧凑，不再竖排全宽按�
   assert.ok(mobileActionMatch, 'mobile active job button rule should exist');
   assert.doesNotMatch(mobileActionMatch[1], /width\s*:\s*100%/);
   assert.doesNotMatch(mobileActionMatch[1], /flex-basis\s*:/);
+});
+
+test('后台任务浮动胶囊不放在毛玻璃输入卡片内，避免 fixed 被包含块劫持', () => {
+  const inputCard = ruleBody('.input-card');
+  assert.match(inputCard, /backdrop-filter\s*:\s*blur\(16px\)/);
+  assert.doesNotMatch(
+    divAncestorsBefore('<div id="activeJobBanner"'),
+    /class="[^"]*\binput-card\b[^"]*"/,
+  );
+});
+
+test('回退误修复：不再为了后台任务位置压缩或删除首页 hero 区', () => {
+  assert.match(html, /<div class="hero-accent" aria-hidden="true"><\/div>/);
+  const hero = ruleBody('.hero-section');
+  assert.match(hero, /padding\s*:\s*36px 0 28px\s*;/);
+  assert.match(hero, /overflow\s*:\s*hidden\s*;/);
+  const title = ruleBody('.hero-title');
+  assert.match(title, /font-size\s*:\s*1\.5rem\s*;/);
+  const desc = ruleBody('.hero-desc');
+  assert.match(desc, /font-size\s*:\s*0\.88rem\s*;/);
+  assert.doesNotMatch(desc, /display\s*:\s*none/);
 });
 
 test('后台任务停止操作使用停止文案，不再恢复取消任务文案', () => {

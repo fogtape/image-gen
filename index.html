@@ -652,6 +652,7 @@
     <main class="main">
       <!-- Hero Section -->
       <div class="hero-section">
+        <div class="hero-accent" aria-hidden="true"></div>
         <div class="hero-content">
           <h1 class="hero-title">AI Image Studio</h1>
           <p class="hero-desc">描述你的想法，让 AI 为你生成精美图片</p>
@@ -687,16 +688,16 @@
               </button>
             </div>
           </div>
-          <div id="activeJobBanner" class="active-job-banner active-job-pill hidden" role="status" aria-live="polite" aria-atomic="true">
-            <span class="active-job-dot" aria-hidden="true"></span>
-            <div class="active-job-main">
-              <div id="activeJobBannerTitle" class="active-job-title">后台任务恢复中</div>
-              <div id="activeJobBannerMeta" class="active-job-meta">正在同步任务状态…</div>
-            </div>
-            <div class="active-job-actions">
-              <button id="retryActiveJobBtn" class="btn btn-ghost active-job-view" type="button" aria-label="查看后台任务结果">查看</button>
-              <button id="cancelActiveJobBtn" class="btn btn-outline active-job-stop" type="button" aria-label="停止后台任务">停止</button>
-            </div>
+        </div>
+        <div id="activeJobBanner" class="active-job-banner active-job-pill hidden" role="status" aria-live="polite" aria-atomic="true">
+          <span class="active-job-dot" aria-hidden="true"></span>
+          <div class="active-job-main">
+            <div id="activeJobBannerTitle" class="active-job-title">后台任务恢复中</div>
+            <div id="activeJobBannerMeta" class="active-job-meta">正在同步任务状态…</div>
+          </div>
+          <div class="active-job-actions">
+            <button id="retryActiveJobBtn" class="btn btn-ghost active-job-view" type="button" aria-label="查看后台任务结果">查看</button>
+            <button id="cancelActiveJobBtn" class="btn btn-outline active-job-stop" type="button" aria-label="停止后台任务">停止</button>
           </div>
         </div>
       </div> <!-- /input-section -->
