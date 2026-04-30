@@ -44,6 +44,10 @@ import {
 const ACCOUNTS_KEY = 'img-gen-accounts';
 const APP_SETTINGS_KEY = 'img-gen-app-settings';
 const PROMPT_HISTORY_KEY = 'img-gen-prompt-history';
+const LOCAL_IMAGE_HISTORY_DB = 'img-gen-local-image-history';
+const LOCAL_IMAGE_HISTORY_STORE = 'images';
+const LOCAL_IMAGE_HISTORY_VERSION = 1;
+const LOCAL_IMAGE_HISTORY_LIMIT = 120;
 const OLD_KEY = 'img-gen-settings';
 const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
 const DEFAULT_RESPONSES_MODEL = 'gpt-5.4';
@@ -70,6 +74,217 @@ function loadData() {
 
 function saveData() {
   localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(state.data));
+}
+
+function getLocalImageDb() {
+  if (!globalThis.indexedDB) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    let request;
+    try {
+      request = indexedDB.open(LOCAL_IMAGE_HISTORY_DB, LOCAL_IMAGE_HISTORY_VERSION);
+    } catch {
+      resolve(null);
+      return;
+    }
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(LOCAL_IMAGE_HISTORY_STORE)) {
+        const store = db.createObjectStore(LOCAL_IMAGE_HISTORY_STORE, { keyPath: 'id' });
+        store.createIndex('createdAt', 'createdAt');
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+  });
+}
+
+function requestToPromise(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('IndexedDB request failed'));
+  });
+}
+
+function txDone(tx) {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted'));
+    tx.onerror = () => reject(tx.error || new Error('IndexedDB transaction failed'));
+  });
+}
+
+function isLocalImageHistoryItem(meta = {}) {
+  return String(meta?.id || '').startsWith('local_img_') || meta?.localHistory === true;
+}
+
+function normalizeLocalImageMeta(meta = {}) {
+  const snapshot = getHistoryGenerationSnapshot(meta);
+  return {
+    prompt: String(meta.prompt || snapshot.prompt || '').slice(0, 300),
+    createdAt: Number(meta.createdAt || Date.now()),
+    favorite: meta.favorite === true,
+    tags: Array.isArray(meta.tags) ? meta.tags.map((tag) => String(tag || '').trim()).filter(Boolean).slice(0, 12) : [],
+    model: String(meta.model || snapshot.model || '').slice(0, 80),
+    accountName: String(meta.accountName || '').slice(0, 80),
+    accountHost: String(meta.accountHost || '').slice(0, 120),
+    batchId: String(meta.batchId || '').slice(0, 80),
+    batchIndex: Number(meta.batchIndex || 0) || null,
+    batchCount: Number(meta.batchCount || 0) || null,
+    generation: snapshot,
+  };
+}
+
+async function pruneLocalImageHistory(db) {
+  if (!db) return;
+  const tx = db.transaction(LOCAL_IMAGE_HISTORY_STORE, 'readwrite');
+  const store = tx.objectStore(LOCAL_IMAGE_HISTORY_STORE);
+  const all = await requestToPromise(store.getAll()).catch(() => []);
+  const overflow = (Array.isArray(all) ? all : [])
+    .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+    .slice(LOCAL_IMAGE_HISTORY_LIMIT);
+  for (const item of overflow) {
+    if (item?.id) store.delete(item.id);
+  }
+  await txDone(tx).catch(() => {});
+}
+
+async function saveLocalImageResult(src, format = 'png', meta = {}) {
+  if (!src) return null;
+  const db = await getLocalImageDb();
+  if (!db) return null;
+  const id = meta.id && isLocalImageHistoryItem(meta) ? meta.id : `local_img_${genId()}`;
+  const record = {
+    id,
+    url: src,
+    format: format || meta.format || 'png',
+    localHistory: true,
+    persisted: true,
+    ...normalizeLocalImageMeta(meta),
+  };
+  const tx = db.transaction(LOCAL_IMAGE_HISTORY_STORE, 'readwrite');
+  tx.objectStore(LOCAL_IMAGE_HISTORY_STORE).put(record);
+  await txDone(tx);
+  await pruneLocalImageHistory(db);
+  return record;
+}
+
+async function listLocalImageHistory() {
+  const db = await getLocalImageDb();
+  if (!db) return [];
+  const tx = db.transaction(LOCAL_IMAGE_HISTORY_STORE, 'readonly');
+  const records = await requestToPromise(tx.objectStore(LOCAL_IMAGE_HISTORY_STORE).getAll()).catch(() => []);
+  return (Array.isArray(records) ? records : [])
+    .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+}
+
+async function deleteLocalImage(id) {
+  const db = await getLocalImageDb();
+  if (!db) return false;
+  const tx = db.transaction(LOCAL_IMAGE_HISTORY_STORE, 'readwrite');
+  tx.objectStore(LOCAL_IMAGE_HISTORY_STORE).delete(id);
+  await txDone(tx);
+  return true;
+}
+
+async function patchLocalImageMeta(id, meta = {}) {
+  const db = await getLocalImageDb();
+  if (!db) return null;
+  const tx = db.transaction(LOCAL_IMAGE_HISTORY_STORE, 'readwrite');
+  const store = tx.objectStore(LOCAL_IMAGE_HISTORY_STORE);
+  const record = await requestToPromise(store.get(id)).catch(() => null);
+  if (!record) return null;
+  if (Object.prototype.hasOwnProperty.call(meta, 'favorite')) record.favorite = meta.favorite === true;
+  if (Object.prototype.hasOwnProperty.call(meta, 'tags')) {
+    record.tags = Array.isArray(meta.tags)
+      ? meta.tags.map((tag) => String(tag || '').trim()).filter(Boolean).slice(0, 12)
+      : String(meta.tags || '').split(',').map((tag) => tag.trim()).filter(Boolean).slice(0, 12);
+  }
+  store.put(record);
+  await txDone(tx);
+  return record;
+}
+
+async function clearLocalImageHistory() {
+  const db = await getLocalImageDb();
+  if (!db) return;
+  const tx = db.transaction(LOCAL_IMAGE_HISTORY_STORE, 'readwrite');
+  tx.objectStore(LOCAL_IMAGE_HISTORY_STORE).clear();
+  await txDone(tx);
+}
+
+function filterLocalHistory(history = [], filters = {}) {
+  const query = String(filters.query || '').trim().toLowerCase();
+  const favoriteOnly = filters.favorite === true;
+  const batchId = String(filters.batchId || '').trim();
+  let items = Array.isArray(history) ? history : [];
+  if (favoriteOnly) items = items.filter((item) => item.favorite === true);
+  if (batchId) items = items.filter((item) => String(item.batchId || '') === batchId);
+  if (query) {
+    items = items.filter((item) => [
+      item.prompt,
+      item.model,
+      item.accountName,
+      item.accountHost,
+      item.batchId,
+      ...(Array.isArray(item.tags) ? item.tags : []),
+    ].map((value) => String(value || '').toLowerCase()).join('\n').includes(query));
+  }
+  return items;
+}
+
+async function fetchLocalImageHistory(filters = {}) {
+  const all = filterLocalHistory(await listLocalImageHistory(), filters);
+  const limit = Math.max(1, Math.min(100, Number(filters.limit || 60)));
+  const cursor = Math.max(0, Number(filters.cursor || 0));
+  const history = all.slice(cursor, cursor + limit);
+  const nextOffset = cursor + history.length;
+  return {
+    history,
+    limit,
+    cursor,
+    nextCursor: nextOffset < all.length ? String(nextOffset) : '',
+    count: history.length,
+    total: all.length,
+  };
+}
+
+async function loadLocalImageHistory({ replace = false } = {}) {
+  const data = await fetchLocalImageHistory({ limit: 60 });
+  if (!replace && $('#results')?.children.length) {
+    const total = Number(data.total || 0);
+    setHistoryStatus(total ? `本地已保存 ${total} 张图片` : '暂无本地历史记录');
+    return data;
+  }
+  renderHistoryResults(data.history || [], { replace });
+  const total = Number(data.total || 0);
+  setHistoryStatus(total ? `本地已保存 ${total} 张图片` : '暂无本地历史记录');
+  return data;
+}
+
+function shouldPersistClientImageResult(meta = {}) {
+  return state.appSettings.storage.enabled !== false && (
+    meta.persistClientHistory === true
+    || meta.persisted === false
+    || !!meta.storageError
+    || !canUseStorageApi()
+  );
+}
+
+async function persistClientResultIfNeeded(src, format, meta = {}, card = null, actions = null) {
+  if (!shouldPersistClientImageResult(meta)) return null;
+  if (meta.id || isLocalImageHistoryItem(meta)) return null;
+  try {
+    const record = await saveLocalImageResult(src, format, meta);
+    if (record) {
+      if (card && actions) appendHistoryActions(actions, record, card);
+      setHistoryStatus('已保存到浏览器本地历史');
+    }
+    return record;
+  } catch (error) {
+    console.warn('Failed to save local image history:', error?.message || error);
+    setHistoryStatus('本地历史保存失败，当前图片仍可下载', true);
+    return null;
+  }
 }
 
 function sanitizeTemplateText(value = '', max = 2000) {
@@ -520,10 +735,20 @@ function logoutAdminSession() {
   notifyAction('已退出管理员登录');
 }
 
+function isRuntimeConfigPayload(data = {}) {
+  return !!(
+    data
+    && typeof data === 'object'
+    && data.runtime
+    && (data.meta?.capabilities || data.capabilities)
+  );
+}
+
 async function fetchServerRuntimeConfig() {
   const resp = await fetch('/api/config/runtime');
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  if (!isRuntimeConfigPayload(data)) throw new Error('Runtime config API unavailable');
   state.serverConfig = data.runtime || null;
   state.serverCapabilities = data.meta?.capabilities || data.capabilities || null;
   state.configSchema = data.schema || null;
@@ -556,6 +781,19 @@ function getServerCapabilities() {
   return state.serverCapabilities || {};
 }
 
+function markRuntimeApisUnavailable() {
+  state.serverCapabilities = {
+    ...(state.serverCapabilities || {}),
+    runtime: state.serverCapabilities?.runtime || 'static',
+    canUseStorageApi: false,
+    canPersistImages: false,
+    canUseBackgroundJobs: false,
+    backgroundJobsInline: false,
+    canUseConfigApi: false,
+    canUseConfigSaveApi: false,
+  };
+}
+
 function canUseProxyMultipart() {
   return getServerCapabilities().canProxyMultipart !== false;
 }
@@ -566,6 +804,10 @@ function canPersistImagesOnServer() {
 
 function canUseStorageApi() {
   return getServerCapabilities().canUseStorageApi !== false;
+}
+
+function canUseBackgroundJobs() {
+  return getServerCapabilities().canUseBackgroundJobs !== false;
 }
 
 function canUseConfigSaveApi() {
@@ -1545,9 +1787,11 @@ async function loadStorageStats() {
   const el = $('#storageStats');
   if (!el) return;
   if (!canUseStorageApi()) {
-    el.textContent = '当前部署不支持服务端历史管理';
-    setHistoryStatus('当前部署不支持历史搜索、收藏和删除');
-    setHistoryControlsEnabled(false);
+    const local = await fetchLocalImageHistory({ limit: 1 });
+    el.textContent = `当前部署使用浏览器本地历史，已保存 ${local.total || 0} 张图片`;
+    setHistoryStatus('当前部署不支持服务端历史管理，已启用浏览器本地历史');
+    setHistoryControlsEnabled(true);
+    await loadLocalImageHistory({ replace: false });
     return;
   }
   setHistoryControlsEnabled(true);
@@ -1614,7 +1858,13 @@ function loadImageHistory(history, { replace = false } = {}) {
 
 async function loadHistoryWithFilters() {
   if (!canUseStorageApi()) {
-    setHistoryStatus('当前部署不支持历史管理', true);
+    const filters = getHistoryFilters();
+    setHistoryStatus('正在读取浏览器本地历史...');
+    const data = await fetchLocalImageHistory(filters);
+    renderHistoryResults(data.history || [], { replace: true });
+    const total = Number(data.total || 0);
+    if (total) setHistoryStatus(`显示 ${data.count || 0}/${total} 条本地历史`);
+    else setHistoryStatus(filters.query || filters.favorite ? '没有匹配的本地历史记录' : '暂无本地历史记录');
     return;
   }
   const filters = getHistoryFilters();
@@ -1632,6 +1882,18 @@ async function clearStorageData(scope) {
     clearActiveJob();
     $('#prompt').value = '';
     $('#results').innerHTML = '';
+    await loadStorageStats();
+    return { ok: true, scope, localOnly: true };
+  }
+  if (!canUseStorageApi()) {
+    if (scope === 'images' || scope === 'all') {
+      await clearLocalImageHistory();
+      $('#results').innerHTML = '';
+    }
+    if (scope === 'all') {
+      clearActiveJob();
+      $('#prompt').value = '';
+    }
     await loadStorageStats();
     return { ok: true, scope, localOnly: true };
   }
@@ -2163,6 +2425,11 @@ function updateStoredImageCards(image = {}) {
 }
 
 async function patchStoredImageMeta(id, meta) {
+  if (isLocalImageHistoryItem({ id })) {
+    const image = await patchLocalImageMeta(id, meta);
+    if (!image) throw new Error('本地历史图片不存在');
+    return image;
+  }
   const resp = await adminFetch(`/api/images/${encodeURIComponent(id)}/meta`, {
     method: 'PATCH',
     body: JSON.stringify(meta),
@@ -2173,6 +2440,10 @@ async function patchStoredImageMeta(id, meta) {
 }
 
 async function deleteStoredImage(id) {
+  if (isLocalImageHistoryItem({ id })) {
+    await deleteLocalImage(id);
+    return { ok: true, id, deleted: true, localHistory: true };
+  }
   const resp = await adminFetch(`/api/images/${encodeURIComponent(id)}`, {
     method: 'DELETE',
     body: JSON.stringify({}),
@@ -2242,7 +2513,8 @@ function appendHistoryActions(actions, meta = {}, card) {
       if (!confirmAction('确定删除这张历史图片？此操作不会影响同批次其他图片。')) return;
       del.disabled = true;
       try {
-        await deleteStoredImage(meta.id);
+        if (isLocalImageHistoryItem(meta)) await deleteLocalImage(meta.id);
+        else await deleteStoredImage(meta.id);
         document.querySelectorAll(`.gallery-card[data-image-id="${cssEscape(meta.id)}"]`).forEach((node) => node.remove());
         await loadStorageStats();
         setHistoryStatus('已删除 1 张历史图片');
@@ -2274,6 +2546,7 @@ function addResultCard(b64, format, meta = {}) {
   appendResultMeta(bar, meta);
   const actions = document.createElement('div');
   actions.className = 'card-actions';
+  appendHistoryActions(actions, meta, card);
   const dl = document.createElement('button');
   dl.className = 'btn btn-ghost';
   dl.textContent = '下载';
@@ -2284,6 +2557,7 @@ function addResultCard(b64, format, meta = {}) {
   appendResultDetails(card, meta);
   card.appendChild(bar);
   $('#results').prepend(card);
+  void persistClientResultIfNeeded(src, format, meta, card, actions);
 }
 
 function addResultCardFromUrl(imageUrl, format, meta = {}) {
@@ -2312,6 +2586,7 @@ function addResultCardFromUrl(imageUrl, format, meta = {}) {
   appendResultDetails(card, meta);
   card.appendChild(bar);
   $('#results').prepend(card);
+  void persistClientResultIfNeeded(imageUrl, format, meta, card, actions);
 }
 
 function addFailedResultCard(item = {}) {
@@ -3191,6 +3466,18 @@ function publicJobCfg(cfg) {
   };
 }
 
+function isValidBackgroundJobResponse(data = {}) {
+  return !!(
+    data
+    && typeof data === 'object'
+    && (
+      data.jobId
+      || data.id
+      || (data.status === 'completed' && data.result)
+    )
+  );
+}
+
 async function createBackgroundJob(payload) {
   const resp = await fetchWithTimeout('/api/jobs', {
     method: 'POST',
@@ -3203,6 +3490,13 @@ async function createBackgroundJob(payload) {
     err.status = resp.status;
     err.data = data;
     if (data.error || data.message) err.isBackgroundJobTerminalFailure = true;
+    throw err;
+  }
+  if (!isValidBackgroundJobResponse(data)) {
+    const err = new Error('后台任务 API 不可用或返回格式无效');
+    err.status = resp.status;
+    err.data = data;
+    err.isBackgroundJobsUnavailable = true;
     throw err;
   }
   return data;
@@ -3310,8 +3604,9 @@ async function pollBackgroundJob(jobId, format, isOAuth, resultMeta = {}) {
 }
 
 function isBackgroundJobsUnavailableError(error) {
+  if (error?.isBackgroundJobsUnavailable) return true;
   const message = normalizeGenerationError(error?.message || error || '');
-  return /HTTP\s+(404|405|408|429|5\d\d)|Failed to fetch|NetworkError|Method not allowed|timeout|timed out|超时/i.test(message);
+  return /HTTP\s+(404|405|408|429|5\d\d)|Failed to fetch|NetworkError|Method not allowed|timeout|timed out|超时|后台任务 API 不可用/i.test(message);
 }
 
 function isRetryableBackgroundJobError(error) {
@@ -3380,7 +3675,7 @@ async function genDirectImagesAfterJobFallback(cfg, prompt, quality, background,
   for (let index = 1; index <= actualCount; index += 1) {
     try {
       setGenerationStatus(`正在直连生成第 ${index}/${actualCount} 张`);
-      const itemMeta = { ...resultMeta, batchIndex: index, batchCount: actualCount };
+      const itemMeta = { ...resultMeta, persistClientHistory: true, batchIndex: index, batchCount: actualCount };
       if (cfg.isOAuth) await genOAuthImages(cfg, prompt, quality, background, size, format, itemMeta);
       else if (cfg.streamMode) await genResponsesWithFallback(cfg, prompt, quality, background, size, format, hasRef, itemMeta);
       else if (hasRef) await genEdits(cfg, prompt, quality, background, size, format, itemMeta);
@@ -3397,6 +3692,28 @@ async function genBackgroundImages(cfg, prompt, quality, background, size, forma
   const mode = backgroundModeFor(cfg, hasRef);
   const actualCount = getGenerationCount(count);
   const batchId = `batch_${genId()}`;
+  const baseResultMeta = {
+    ...resultMeta,
+    prompt,
+    model: cfg.model || '',
+    accountName: cfg.accountName || '',
+    accountHost: cfg.accountHost || cfg.apiUrl || '',
+    generation: {
+      prompt,
+      size: size || 'auto',
+      quality: quality || '',
+      format: format || 'png',
+      background: background || 'auto',
+      mode,
+      model: cfg.model || '',
+      hasRef,
+    },
+  };
+  if (!canUseBackgroundJobs()) {
+    await genDirectImagesAfterJobFallback(cfg, prompt, quality, background, size, format, hasRef, actualCount, baseResultMeta);
+    return;
+  }
+
   const payload = {
     mode,
     cfg: publicJobCfg(cfg),
@@ -3418,7 +3735,7 @@ async function genBackgroundImages(cfg, prompt, quality, background, size, forma
     job = await createBackgroundJob(payload);
   } catch (e) {
     if (isBackgroundJobsUnavailableError(e)) {
-      await genDirectImagesAfterJobFallback(cfg, prompt, quality, background, size, format, hasRef, actualCount, resultMeta);
+      await genDirectImagesAfterJobFallback(cfg, prompt, quality, background, size, format, hasRef, actualCount, baseResultMeta);
       return;
     }
     throw e;
@@ -3428,20 +3745,21 @@ async function genBackgroundImages(cfg, prompt, quality, background, size, forma
     clearActiveJob();
     stopWaitingStatusSequence();
     setGenerationStatus('result:render');
-    if (cfg.isOAuth) handleOAuthImageResult(job.result, format, resultMeta);
-    else handleImagesResult(job.result, format, resultMeta);
+    const completedMeta = job.serverless === true ? { ...baseResultMeta, persistClientHistory: true } : baseResultMeta;
+    if (cfg.isOAuth) handleOAuthImageResult(job.result, format, completedMeta);
+    else handleImagesResult(job.result, format, completedMeta);
     await loadStorageStats();
     return;
   }
 
   const jobId = job.jobId || job.id;
   if (!jobId) throw new Error('后台任务创建失败：缺少 jobId');
-  saveActiveJob(state, { jobId, format, isOAuth: cfg.isOAuth, count: actualCount, batchId, resultMeta, createdAt: Date.now() });
+  saveActiveJob(state, { jobId, format, isOAuth: cfg.isOAuth, count: actualCount, batchId, resultMeta: baseResultMeta, createdAt: Date.now() });
   setGenerationStatus(actualCount > 1 ? `批量后台任务已提交（${actualCount} 张）` : '后台任务已提交，可以切到后台稍后回来查看');
   showActiveJobBanner('后台任务已提交', actualCount > 1 ? `批量生成 ${actualCount} 张，你可以切到后台稍后回来继续恢复结果` : '你可以切到后台，稍后回到页面继续恢复结果');
 
   try {
-    await pollBackgroundJob(jobId, format, cfg.isOAuth, resultMeta);
+    await pollBackgroundJob(jobId, format, cfg.isOAuth, baseResultMeta);
   } catch (e) {
     if (isRetryableBackgroundJobError(e)) {
       stopWaitingStatusSequence();
@@ -3951,6 +4269,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     await fetchServerRuntimeConfig();
   } catch (e) {
+    markRuntimeApisUnavailable();
     console.warn('Failed to load server runtime config:', e?.message || e);
   }
   await fetchAccountStoreCapabilities();

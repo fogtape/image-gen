@@ -92,9 +92,13 @@ test('云平台静态部署没有后台任务 API 时会回退到浏览器直连
   const app = read('app.js');
   assert.match(app, /function isBackgroundJobsUnavailableError/);
   assert.match(app, /HTTP\\s\+\(404\|405\|408\|429\|5\\d\\d\)/);
+  assert.match(app, /function canUseBackgroundJobs/);
   assert.match(app, /async function genDirectImagesAfterJobFallback/);
+  assert.match(app, /if \(!canUseBackgroundJobs\(\)\) \{[\s\S]*await genDirectImagesAfterJobFallback\(cfg, prompt, quality, background, size, format, hasRef, actualCount, baseResultMeta\);[\s\S]*return;[\s\S]*\}/s);
+  assert.match(app, /function isValidBackgroundJobResponse/);
+  assert.match(app, /if \(!isValidBackgroundJobResponse\(data\)\) \{[\s\S]*后台任务 API 不可用或返回格式无效[\s\S]*throw err;[\s\S]*\}/s);
   assert.match(app, /job = await createBackgroundJob\(payload\);[\s\S]*if \(isBackgroundJobsUnavailableError\(e\)\)/s);
-  assert.match(app, /await genDirectImagesAfterJobFallback\(cfg, prompt, quality, background, size, format, hasRef, actualCount(?:, resultMeta)?\)/);
+  assert.match(app, /await genDirectImagesAfterJobFallback\(cfg, prompt, quality, background, size, format, hasRef, actualCount, baseResultMeta\)/);
 });
 
 test('Vercel serverless 后台任务同步完成并直接返回结果，避免跨实例轮询丢失', () => {
@@ -111,8 +115,8 @@ test('Vercel serverless 后台任务同步完成并直接返回结果，避免�
 test('前端能处理 serverless 直接完成结果，刷新遇到过期后台任务不弹错误', () => {
   const app = read('app.js');
   assert.match(app, /if \(job\.status === 'completed'\) \{/);
-  assert.match(app, /handleOAuthImageResult\(job\.result, format(?:, resultMeta)?\)/);
-  assert.match(app, /handleImagesResult\(job\.result, format(?:, resultMeta)?\)/);
+  assert.match(app, /handleOAuthImageResult\(job\.result, format, completedMeta\)/);
+  assert.match(app, /handleImagesResult\(job\.result, format, completedMeta\)/);
   assert.match(app, /function isMissingBackgroundJobError\(error\)/);
   assert.match(app, /if \(isMissingBackgroundJobError\(e\)\) \{[\s\S]*clearActiveJob\(\)[\s\S]*return;[\s\S]*\}/);
 });
