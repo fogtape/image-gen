@@ -2313,6 +2313,14 @@ function minimizeGenerationProgressDialog() {
   closeDialog(overlay, { restoreFocus: '#generateBtn' });
 }
 
+function openGenerationProgressFromBanner() {
+  if (state.generating) {
+    showGenerationProgressDialog();
+    return;
+  }
+  void resumeActiveJobIfAny();
+}
+
 function setGenerationStatus(phaseOrMessage, message, options = {}) {
   const phase = String(phaseOrMessage || '').trim();
   const meta = options.meta || getCurrentGenerationMeta();
@@ -4449,7 +4457,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       try { await loadHistoryWithFilters(); } catch (e) { setHistoryStatus('历史读取失败', true); showError(e, { context: 'history' }); }
     }, 250);
   });
-  $('#retryActiveJobBtn')?.addEventListener('click', () => { void resumeActiveJobIfAny(); });
+  $('#retryActiveJobBtn')?.addEventListener('click', () => { openGenerationProgressFromBanner(); });
   $('#cancelActiveJobBtn')?.addEventListener('click', () => { void cancelActiveJob(); });
   $('#generationProgressMinimize')?.addEventListener('click', minimizeGenerationProgressDialog);
   $('#generationProgressCancel')?.addEventListener('click', () => { void cancelActiveJob(); });

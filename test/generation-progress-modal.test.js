@@ -32,11 +32,15 @@ test('生成中弹窗提供图片轮廓、进度条和可读状态', () => {
 
 test('生成中弹窗居中且移动端不溢出，动画支持 reduced motion', () => {
   const dialog = ruleBody('.generation-progress-dialog');
-  assert.match(dialog, /max-width\s*:\s*420px\s*;/);
+  assert.match(dialog, /max-width\s*:\s*360px\s*;/);
   assert.match(dialog, /overflow\s*:\s*hidden\s*;/);
 
+  const body = ruleBody('.generation-progress-body');
+  assert.match(body, /padding\s*:\s*18px\s*;/);
+
   const skeleton = ruleBody('.generation-image-skeleton');
-  assert.match(skeleton, /aspect-ratio\s*:\s*4\s*\/\s*3\s*;/);
+  assert.match(skeleton, /height\s*:\s*138px\s*;/);
+  assert.match(skeleton, /aspect-ratio\s*:\s*16\s*\/\s*9\s*;/);
   assert.match(skeleton, /overflow\s*:\s*hidden\s*;/);
 
   const percent = ruleBody('.generation-progress-percent');
@@ -86,4 +90,11 @@ test('前端会把 SSE progress 事件的 percent 透传到进度弹窗', () => 
   assert.match(app, /progressKind/);
   assert.match(app, /setGenerationStatus\(message,\s*undefined,\s*generationProgressOptionsFromSse\(data, event\)\)/);
   assert.match(app, /setGenerationStatus\(message,\s*undefined,\s*generationProgressOptionsFromSse\(ev\)\)/);
+});
+
+test('底部后台任务胶囊查看按钮可重新打开已最小化的生成详情弹窗', () => {
+  assert.match(app, /function openGenerationProgressFromBanner/);
+  assert.match(app, /if \(state\.generating\) \{[\s\S]*showGenerationProgressDialog\(\);[\s\S]*return;/);
+  assert.match(app, /\$\('#retryActiveJobBtn'\)\?\.addEventListener\('click', \(\) => \{ openGenerationProgressFromBanner\(\); \}\)/);
+  assert.doesNotMatch(app, /\$\('#retryActiveJobBtn'\)\?\.addEventListener\('click', \(\) => \{ void resumeActiveJobIfAny\(\); \}\)/);
 });
