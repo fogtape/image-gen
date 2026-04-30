@@ -1,5 +1,9 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import crypto from 'crypto';
+import {
+  SCREEN_EVEN, SCREEN_ODD, PROOF_VERSION,
+  REACT_LISTENING_KEY, ALERT_KEY, DEFAULT_DPL,
+} from './pow-config.js';
 
 function sha3Hex(input) {
   return crypto.createHash('sha3-512').update(input).digest('hex');
@@ -23,7 +27,7 @@ function generateChallengeAnswer(seed, difficulty, config) {
 }
 
 function generateProofToken({ seed, difficulty, userAgent, chatgptBase, dpl }) {
-  const screen = String(seed).length % 2 === 0 ? 4010 : 3008;
+  const screen = String(seed).length % 2 === 0 ? SCREEN_EVEN : SCREEN_ODD;
   const token = [
     screen,
     new Date().toUTCString(),
@@ -31,13 +35,13 @@ function generateProofToken({ seed, difficulty, userAgent, chatgptBase, dpl }) {
     0,
     userAgent,
     `${chatgptBase}/`,
-    dpl || 'dpl=openai-images',
+    dpl || DEFAULT_DPL,
     'en',
     'en-US',
     null,
-    '5',
-    '_reactListening',
-    'alert',
+    PROOF_VERSION,
+    REACT_LISTENING_KEY,
+    ALERT_KEY,
   ];
   const diffLen = String(difficulty).length;
   for (let i = 0; i < 100000; i++) {

@@ -2,6 +2,10 @@ import crypto from 'crypto';
 import { isPolicyViolationText, normalizeGenerationError } from './ui-feedback.js';
 import { isLocalOrPrivateHost } from './proxy-policy.js';
 import { runProofOfWork } from './proof-worker-runner.js';
+import {
+  CORE_VERSION, REQUIREMENTS_PRODUCT,
+  WEBDRIVER_KEY, LOCATION_KEY, DOCUMENT_BODY_KEY, CHALLENGE_VERSION,
+} from './pow-config.js';
 
 const CHATGPT_BASE = 'https://chatgpt.com';
 const CHATGPT_START_URL = `${CHATGPT_BASE}/`;
@@ -151,9 +155,7 @@ export function buildOAuthResponsesImageBody(input = {}) {
     input: [{ type: 'message', role: 'user', content }],
     stream: true,
     store: false,
-    reasoning: { effort: 'medium', summary: 'auto' },
     parallel_tool_calls: true,
-    include: ['reasoning.encrypted_content'],
     tool_choice: { type: 'image_generation' },
     tools: [tool],
   };
@@ -719,23 +721,23 @@ export function getImageQuotaMessage(data = {}) {
 export async function generateRequirementsToken(userAgent = IMAGE_BACKEND_USER_AGENT) {
   const now = new Date();
   const config = [
-    'core3008',
+    CORE_VERSION,
     now.toUTCString(),
     null,
     0.123456,
     coalesce(userAgent, IMAGE_BACKEND_USER_AGENT),
     null,
-    'prod-openai-images',
+    REQUIREMENTS_PRODUCT,
     'en-US',
     'en-US,en',
     0,
-    'navigator.webdriver',
-    'location',
-    'document.body',
+    WEBDRIVER_KEY,
+    LOCATION_KEY,
+    DOCUMENT_BODY_KEY,
     Date.now() / 1000,
     randomUUID(),
     '',
-    8,
+    CHALLENGE_VERSION,
     Math.floor(Date.now() / 1000),
   ];
   const answer = await runProofOfWork('challenge', {
@@ -793,7 +795,7 @@ function chatRequirementChallengeError(challenge) {
 async function fetchChatRequirementsLegacy(headers) {
   let lastErr = null;
   const reqToken = await generateRequirementsToken(headers['User-Agent']);
-  const payloads = [{ p: null }, { p: reqToken }];
+  const payloads = [{ p: reqToken }, { p: null }];
   for (const payload of payloads) {
     const resp = await fetchWithTimeout(CHATGPT_CHAT_REQUIREMENTS_URL, {
       method: 'POST',
@@ -907,6 +909,10 @@ async function processUploadedFile(headers, fileId, filename) {
     timeoutMs: 120_000,
   });
   if (!resp.ok) throw await statusError(resp, 'reference image process upload failed');
+  // NOTE: This reads the entire SSE response body before parsing lines.
+  // Ideally this would use streaming SSE parsing (e.g. TextDecoderStream / eventsource)
+  // so that events are processed as they arrive. Not fatal for current use but could
+  // reduce latency for large uploads with many SSE events.
   const text = await resp.text();
   if (!text.trim()) return;
   let sawReady = false;
@@ -1217,39 +1223,65 @@ export async function downloadBytes(headers, url) {
     if (buf.length > MAX_DOWNLOAD_BYTES) throw new Error('download image is too large');
     return buf;
   }
-  let target = validateImageDownloadUrl(url);
-  let resp;
-  for (let redirectCount = 0; ; redirectCount += 1) {
-    resp = await fetchWithTimeout(target.href, {
-      method: 'GET',
-      headers: headersForImageDownload(headers, target),
-      timeoutMs: 120_000,
-      redirect: 'manual',
-    });
-    if (!IMAGE_DOWNLOAD_REDIRECT_STATUSES.has(resp.status)) break;
-    if (redirectCount >= MAX_IMAGE_DOWNLOAD_REDIRECTS) throw new Error('image download redirect limit exceeded');
-    const location = resp.headers.get('location');
-    if (!location) throw new Error('image download redirect location is missing');
-    let nextUrl;
+  const deadline = Date.now() + 60_000;
+  let delayMs = 1000;
+  const maxAttempts = 4; // 1 initial attempt + 3 retries
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let target = validateImageDownloadUrl(url);
+    let resp;
     try {
-      nextUrl = new URL(location, target.href);
-    } catch {
-      throw new Error('image download redirect location is invalid');
+      for (let redirectCount = 0; ; redirectCount += 1) {
+        resp = await fetchWithTimeout(target.href, {
+          method: 'GET',
+          headers: headersForImageDownload(headers, target),
+          timeoutMs: 120_000,
+          redirect: 'manual',
+        });
+        if (!IMAGE_DOWNLOAD_REDIRECT_STATUSES.has(resp.status)) break;
+        if (redirectCount >= MAX_IMAGE_DOWNLOAD_REDIRECTS) throw new Error('image download redirect limit exceeded');
+        const location = resp.headers.get('location');
+        if (!location) throw new Error('image download redirect location is missing');
+        let nextUrl;
+        try {
+          nextUrl = new URL(location, target.href);
+        } catch {
+          throw new Error('image download redirect location is invalid');
+        }
+        target = validateImageDownloadUrl(nextUrl.href);
+      }
+    } catch (err) {
+      // Network-level or redirect error: retry if attempts remain and within deadline
+      if (attempt < maxAttempts - 1 && Date.now() < deadline) {
+        await sleep(delayMs);
+        delayMs = Math.min(delayMs * 2, 4000);
+        continue;
+      }
+      throw err;
     }
-    target = validateImageDownloadUrl(nextUrl.href);
+    // 5xx server errors are retryable
+    if (resp.status >= 500 && resp.status < 600) {
+      if (attempt < maxAttempts - 1 && Date.now() < deadline) {
+        await sleep(delayMs);
+        delayMs = Math.min(delayMs * 2, 4000);
+        continue;
+      }
+      throw await statusError(resp, 'download image bytes failed');
+    }
+    // 4xx and other non-ok: do not retry (client errors are permanent)
+    if (!resp.ok) throw await statusError(resp, 'download image bytes failed');
+    const mime = (resp.headers.get('content-type') || '').split(';')[0].toLowerCase();
+    const isAllowedMime = ALLOWED_IMAGE_DOWNLOAD_MIME.has(mime);
+    const isSniffable = mime === 'application/octet-stream';
+    if (!isAllowedMime && !isSniffable) throw new Error('unsupported image download content type');
+    const len = Number(resp.headers.get('content-length') || 0);
+    if (len > MAX_DOWNLOAD_BYTES) throw new Error('download image is too large');
+    const bytes = await readImageResponseBodyWithLimit(resp, MAX_DOWNLOAD_BYTES);
+    if (isSniffable && !ALLOWED_IMAGE_DOWNLOAD_MIME.has(inferImageMimeType(bytes))) {
+      throw new Error('unsupported image download content type');
+    }
+    return bytes;
   }
-  if (!resp.ok) throw await statusError(resp, 'download image bytes failed');
-  const mime = (resp.headers.get('content-type') || '').split(';')[0].toLowerCase();
-  const isAllowedMime = ALLOWED_IMAGE_DOWNLOAD_MIME.has(mime);
-  const isSniffable = mime === 'application/octet-stream';
-  if (!isAllowedMime && !isSniffable) throw new Error('unsupported image download content type');
-  const len = Number(resp.headers.get('content-length') || 0);
-  if (len > MAX_DOWNLOAD_BYTES) throw new Error('download image is too large');
-  const bytes = await readImageResponseBodyWithLimit(resp, MAX_DOWNLOAD_BYTES);
-  if (isSniffable && !ALLOWED_IMAGE_DOWNLOAD_MIME.has(inferImageMimeType(bytes))) {
-    throw new Error('unsupported image download content type');
-  }
-  return bytes;
+  throw new Error('download image bytes failed');
 }
 
 async function resolvePointerBytes(headers, conversationId, pointer) {
