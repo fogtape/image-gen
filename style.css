@@ -843,10 +843,9 @@ textarea { resize: vertical; }
 /* ── Hero Section ── */
 .hero-section {
   position: relative;
-  padding: 36px 0 28px;
+  padding: 16px 0 12px;
   text-align: center;
 }
-
 .hero-title {
   margin: 0 0 6px;
   font-size: 1.5rem;
