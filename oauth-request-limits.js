@@ -119,8 +119,15 @@ export function validateOAuthImageRequest(parsed, { maxBodyBytes } = {}) {
       } catch { /* ignore decode errors */ }
     }
 
-    // 1) For raw base64 without data URL prefix: reject if magic bytes unrecognized
-    if (!mime && bytes > 0 && !sniffedMime) {
+    // 1) Reject empty image content
+    if (bytes === 0) {
+      const err = new Error('参考图内容为空');
+      err.status = 400;
+      throw err;
+    }
+
+    // 2) ALL non-empty images MUST have recognizable image magic bytes
+    if (bytes > 0 && !sniffedMime) {
       const err = new Error('参考图无法识别为有效图片格式，请上传 PNG、JPEG 或 WebP');
       err.status = 400;
       throw err;

@@ -28,6 +28,7 @@ test('Docker 镜像安装 sharp 依赖并复制水印、存储和提示词增强
   assert.match(dockerfile, /account-store-file\.js/);
   assert.match(dockerfile, /account-store-upstash\.js/);
   assert.match(dockerfile, /account-store-capabilities\.js/);
+  assert.match(dockerfile, /pow-config\.js/);
 });
 
 test('Docker 构建只复制配置模板，不把本地运行态配置和数据打进镜像', () => {

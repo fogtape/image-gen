@@ -3,7 +3,10 @@ import test from 'node:test';
 import { handler } from '../netlify/functions/oauth-images.js';
 
 function makeImageDataUrl(sizeBytes) {
-  return `data:image/png;base64,${Buffer.alloc(sizeBytes, 1).toString('base64')}`;
+  const buf = Buffer.alloc(sizeBytes, 0);
+  // Include valid PNG magic bytes so sniffImageMime recognizes it
+  buf[0] = 0x89; buf[1] = 0x50; buf[2] = 0x4e; buf[3] = 0x47; // \x89PNG
+  return `data:image/png;base64,${buf.toString('base64')}`;
 }
 
 function authHeaders(token = 'test-admin-token') {

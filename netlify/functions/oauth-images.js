@@ -36,17 +36,28 @@ export async function handler(event) {
   let parsed;
   try {
     assertOAuthBodySize(event.body || '');
+  } catch (e) {
+    return {
+      statusCode: e.status || 413,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: e.message || '请求体过大' }),
+    };
+  }
+
+  try {
     parsed = JSON.parse(event.body || '{}');
+  } catch {
+    return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) };
+  }
+
+  try {
     validateOAuthImageRequest(parsed);
   } catch (e) {
-    if (e.status === 413) {
-      return {
-        statusCode: 413,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: e.message || '请求体过大' }),
-      };
-    }
-    return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) };
+    return {
+      statusCode: e.status || 400,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: e.message || 'Validation failed' }),
+    };
   }
 
   try {

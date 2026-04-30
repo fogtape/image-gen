@@ -1029,7 +1029,6 @@ async function initializeConversation(headers) {
     requested_default_model: null,
     conversation_id: null,
     timezone_offset_min: timezoneOffsetMinutes(),
-    system_hints: ['picture_v2'],
   };
   const resp = await fetchWithTimeout(CHATGPT_CONVERSATION_INIT_URL, {
     method: 'POST',
@@ -1177,10 +1176,20 @@ function validateImageDownloadUrl(rawUrl) {
   try {
     target = new URL(String(rawUrl || ''));
   } catch {
-    throw new Error('image download URL is invalid');
+    const err = new Error('image download URL is invalid');
+    err.permanent = true;
+    throw err;
   }
-  if (target.protocol !== 'https:') throw new Error('image download URL protocol is not allowed');
-  if (isLocalOrPrivateHost(target.hostname)) throw new Error('image download URL host is not allowed');
+  if (target.protocol !== 'https:') {
+    const err = new Error('image download URL protocol is not allowed');
+    err.permanent = true;
+    throw err;
+  }
+  if (isLocalOrPrivateHost(target.hostname)) {
+    const err = new Error('image download URL host is not allowed');
+    err.permanent = true;
+    throw err;
+  }
   return target;
 }
 
@@ -1238,26 +1247,30 @@ export async function downloadBytes(headers, url) {
           redirect: 'manual',
         });
         if (!IMAGE_DOWNLOAD_REDIRECT_STATUSES.has(resp.status)) break;
-        if (redirectCount >= MAX_IMAGE_DOWNLOAD_REDIRECTS) throw new Error('image download redirect limit exceeded');
+        if (redirectCount >= MAX_IMAGE_DOWNLOAD_REDIRECTS) {
+          const err = new Error('image download redirect limit exceeded');
+          err.permanent = true;
+          throw err;
+        }
         const location = resp.headers.get('location');
-        if (!location) throw new Error('image download redirect location is missing');
+        if (!location) {
+          const err = new Error('image download redirect location is missing');
+          err.permanent = true;
+          throw err;
+        }
         let nextUrl;
         try {
           nextUrl = new URL(location, target.href);
         } catch {
-          throw new Error('image download redirect location is invalid');
+          const err = new Error('image download redirect location is invalid');
+          err.permanent = true;
+          throw err;
         }
         target = validateImageDownloadUrl(nextUrl.href);
       }
     } catch (err) {
-      const msg = (err.message || '').toLowerCase();
-      const isPermanent = msg.includes('redirect limit') ||
-        msg.includes('redirect location') ||
-        msg.includes('private host') ||
-        msg.includes('local host') ||
-        msg.includes('invalid url');
-      if (isPermanent) throw err;
-      // Network-level or redirect error: retry if attempts remain and within deadline
+      if (err?.permanent) throw err;
+      // Network-level error: retry if attempts remain and within deadline
       if (attempt < maxAttempts - 1 && Date.now() < deadline) {
         await sleep(delayMs);
         delayMs = Math.min(delayMs * 2, 4000);
