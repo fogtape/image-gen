@@ -1705,7 +1705,6 @@ textarea { resize: vertical; }
 .account-switcher {
   position: relative;
   min-width: 0;
-  overflow: hidden;
 }
 
 .switcher-btn {
