@@ -179,9 +179,13 @@ export function newOAuthSessionId() {
 }
 
 function oauthSessionEncryptionKey() {
-  const secret = String(process.env.IMAGE_GEN_OAUTH_SESSION_SECRET || '').trim();
-  if (!secret) throw new Error('IMAGE_GEN_OAUTH_SESSION_SECRET is required for stateless OAuth sessions');
+  const secret = getOAuthSessionSecret();
+  if (!secret) throw new Error('IMAGE_GEN_OAUTH_SESSION_SECRET or IMAGE_GEN_ADMIN_TOKEN is required for stateless OAuth sessions');
   return crypto.createHash('sha256').update(secret, 'utf8').digest();
+}
+
+function getOAuthSessionSecret() {
+  return String(process.env.IMAGE_GEN_OAUTH_SESSION_SECRET || process.env.IMAGE_GEN_ADMIN_TOKEN || '').trim();
 }
 
 export function encryptOAuthSessionPayload(payload, secret) {
@@ -226,9 +230,9 @@ export function makeStatelessOAuthSessionId(session) {
   if (!isServerlessRuntime()) {
     return newOAuthSessionId();
   }
-  const secret = process.env.IMAGE_GEN_OAUTH_SESSION_SECRET;
+  const secret = getOAuthSessionSecret();
   if (!secret) {
-    throw new Error('IMAGE_GEN_OAUTH_SESSION_SECRET is required in serverless environments for stateless OAuth sessions');
+    throw new Error('IMAGE_GEN_OAUTH_SESSION_SECRET or IMAGE_GEN_ADMIN_TOKEN is required in serverless environments for stateless OAuth sessions');
   }
   const payload = {
     state: session?.state || '',
@@ -243,7 +247,7 @@ export function makeStatelessOAuthSessionId(session) {
 export function getOAuthSessionFromStatelessId(sessionId) {
   if (!sessionId || !String(sessionId).startsWith('pkce_')) return null;
   try {
-    const secret = process.env.IMAGE_GEN_OAUTH_SESSION_SECRET;
+    const secret = getOAuthSessionSecret();
     if (!secret) return null;
     const envelopeJson = Buffer.from(String(sessionId).slice(5), 'base64url').toString('utf8');
     const envelope = JSON.parse(envelopeJson);

@@ -141,18 +141,46 @@ test('serverless mode stateless session uses AEAD encryption', () => {
   });
 });
 
-test('OAuth start 在 serverless 缺少 session secret 时返回可读 JSON 错误', async () => {
+test('serverless mode can derive stateless OAuth session secret from admin token', () => {
   const script = [
     `delete process.env.IMAGE_GEN_OAUTH_SESSION_SECRET;`,
     `process.env.VERCEL = '1';`,
+    `const mod = await import(${JSON.stringify(pathToFileURL(path.resolve('server.js')).href)});`,
+    `const sessionId = mod.makeStatelessOAuthSessionId({`,
+    `  state: 'state-admin-fallback',`,
+    `  codeVerifier: 'verifier-admin-fallback',`,
+    `  redirectUri: 'http://localhost:1455/auth/callback',`,
+    `  createdAt: Date.now(),`,
+    `});`,
+    `if (!sessionId.startsWith('pkce_')) process.exit(1);`,
+    `const session = mod.getOAuthSessionFromStatelessId(sessionId);`,
+    `if (!session || session.state !== 'state-admin-fallback' || session.codeVerifier !== 'verifier-admin-fallback') process.exit(2);`,
+  ].join('\n');
+  execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: path.resolve('.'),
+    env: {
+      ...process.env,
+      VERCEL: '1',
+      IMAGE_GEN_OAUTH_SESSION_SECRET: '',
+      IMAGE_GEN_ADMIN_TOKEN: 'test-admin-token-as-oauth-session-secret',
+    },
+    stdio: 'pipe',
+  });
+});
+
+test('OAuth start 在 serverless 有 admin token 时不要求额外 session secret', async () => {
+  const script = [
+    `delete process.env.IMAGE_GEN_OAUTH_SESSION_SECRET;`,
+    `process.env.VERCEL = '1';`,
+    `process.env.IMAGE_GEN_ADMIN_TOKEN = 'test-admin-token-oauth-start-fallback';`,
     `const mod = await import(${JSON.stringify(pathToFileURL(path.resolve('server.js')).href)});`,
     `await new Promise((resolve) => mod.server.listen(0, '127.0.0.1', resolve));`,
     `try {`,
     `  const port = mod.server.address().port;`,
     `  const resp = await fetch('http://127.0.0.1:' + port + '/api/oauth/start', { method: 'POST' });`,
     `  const data = await resp.json();`,
-    `  if (resp.status !== 500) throw new Error('unexpected status ' + resp.status);`,
-    `  if (!/IMAGE_GEN_OAUTH_SESSION_SECRET/.test(data.error || '')) throw new Error('missing readable error: ' + JSON.stringify(data));`,
+    `  if (resp.status !== 200) throw new Error('unexpected status ' + resp.status + ': ' + JSON.stringify(data));`,
+    `  if (!data.authorizationUrl || !data.sessionId || !data.state) throw new Error('missing oauth start fields: ' + JSON.stringify(data));`,
     `} finally {`,
     `  await new Promise((resolve) => mod.server.close(resolve));`,
     `}`,
@@ -163,6 +191,36 @@ test('OAuth start 在 serverless 缺少 session secret 时返回可读 JSON 错�
       ...process.env,
       VERCEL: '1',
       IMAGE_GEN_OAUTH_SESSION_SECRET: '',
+      IMAGE_GEN_ADMIN_TOKEN: 'test-admin-token-oauth-start-fallback',
+    },
+    stdio: 'pipe',
+  });
+});
+
+test('OAuth start 在 serverless 同时缺少 session secret 和 admin token 时返回可读 JSON 错误', async () => {
+  const script = [
+    `delete process.env.IMAGE_GEN_OAUTH_SESSION_SECRET;`,
+    `delete process.env.IMAGE_GEN_ADMIN_TOKEN;`,
+    `process.env.VERCEL = '1';`,
+    `const mod = await import(${JSON.stringify(pathToFileURL(path.resolve('server.js')).href)});`,
+    `await new Promise((resolve) => mod.server.listen(0, '127.0.0.1', resolve));`,
+    `try {`,
+    `  const port = mod.server.address().port;`,
+    `  const resp = await fetch('http://127.0.0.1:' + port + '/api/oauth/start', { method: 'POST' });`,
+    `  const data = await resp.json();`,
+    `  if (resp.status !== 500) throw new Error('unexpected status ' + resp.status);`,
+    `  if (!/IMAGE_GEN_OAUTH_SESSION_SECRET or IMAGE_GEN_ADMIN_TOKEN/.test(data.error || '')) throw new Error('missing readable error: ' + JSON.stringify(data));`,
+    `} finally {`,
+    `  await new Promise((resolve) => mod.server.close(resolve));`,
+    `}`,
+  ].join('\n');
+  execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: path.resolve('.'),
+    env: {
+      ...process.env,
+      VERCEL: '1',
+      IMAGE_GEN_OAUTH_SESSION_SECRET: '',
+      IMAGE_GEN_ADMIN_TOKEN: '',
     },
     stdio: 'pipe',
   });

@@ -445,7 +445,7 @@ IMAGE_GEN_DEPLOY_AUTO_REDEPLOY=true
 | `IMAGE_GEN_REMOTE_IMAGE_TIMEOUT_MS` | 远程图片下载超时 |
 | `IMAGE_GEN_REMOTE_IMAGE_MAX_REDIRECTS` | 远程图片最大重定向次数 |
 | `IMAGE_GEN_OAUTH_SESSION_FILE` | OAuth session 文件位置 |
-| `IMAGE_GEN_OAUTH_SESSION_SECRET` | serverless stateless OAuth session 加密签名密钥 |
+| `IMAGE_GEN_OAUTH_SESSION_SECRET` | serverless stateless OAuth session 加密签名密钥；未配置时会回退使用 `IMAGE_GEN_ADMIN_TOKEN` 派生密钥 |
 | `IMAGE_GEN_PLATFORM_API_TIMEOUT_MS` | 平台 API 调用超时 |
 | `REQUIRE_DOCKER_SMOKE` | 设为 `1` 时 Docker smoke 不可用会让发布门禁失败 |
 
