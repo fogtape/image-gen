@@ -23,6 +23,7 @@ test('生成中弹窗提供图片轮廓、进度条和可读状态', () => {
   assert.match(html, /id="generationProgressOverlay"[^>]*class="overlay hidden"[^>]*role="dialog"[^>]*aria-modal="true"[^>]*aria-labelledby="generationProgressTitle"[^>]*aria-describedby="generationProgressMeta"/);
   assert.match(html, /class="modal generation-progress-dialog"/);
   assert.match(html, /class="generation-image-skeleton"[^>]*aria-hidden="true"/);
+  assert.doesNotMatch(html, /id="generationProgressPreview"/);
   assert.match(html, /id="generationProgressPercent"[^>]*>0%<\/span>/);
   assert.match(html, /id="generationProgressBar"[^>]*role="progressbar"[^>]*aria-valuemin="0"[^>]*aria-valuemax="100"[^>]*aria-valuenow="0"/);
   assert.match(html, /id="generationProgressFill"/);
@@ -33,16 +34,18 @@ test('生成中弹窗提供图片轮廓、进度条和可读状态', () => {
 
 test('生成中弹窗居中且移动端不溢出，动画支持 reduced motion', () => {
   const dialog = ruleBody('.generation-progress-dialog');
-  assert.match(dialog, /max-width\s*:\s*360px\s*;/);
+  assert.match(dialog, /max-width\s*:\s*420px\s*;/);
   assert.match(dialog, /overflow\s*:\s*hidden\s*;/);
 
   const body = ruleBody('.generation-progress-body');
-  assert.match(body, /padding\s*:\s*18px\s*;/);
+  assert.match(body, /padding\s*:\s*22px\s*;/);
 
   const skeleton = ruleBody('.generation-image-skeleton');
-  assert.match(skeleton, /height\s*:\s*138px\s*;/);
-  assert.match(skeleton, /aspect-ratio\s*:\s*16\s*\/\s*9\s*;/);
+  assert.doesNotMatch(skeleton, /height\s*:\s*138px\s*;/);
+  assert.match(skeleton, /aspect-ratio\s*:\s*4\s*\/\s*3\s*;/);
   assert.match(skeleton, /overflow\s*:\s*hidden\s*;/);
+  assert.doesNotMatch(css, /generation-progress-preview/);
+  assert.doesNotMatch(css, /has-preview/);
 
   const percent = ruleBody('.generation-progress-percent');
   assert.match(percent, /font-variant-numeric\s*:\s*tabular-nums\s*;/);
@@ -89,6 +92,8 @@ test('前端会把 SSE progress 事件的 percent 透传到进度弹窗', () => 
   assert.match(app, /type === 'response\.output_item\.added'[\s\S]*?'response:image_started'/);
   assert.match(app, /function generationProgressOptionsFromSse/);
   assert.match(app, /progressKind/);
+  assert.doesNotMatch(app, /setGenerationProgressPreview/);
+  assert.doesNotMatch(app, /previewImage/);
   assert.match(app, /setGenerationStatus\(message,\s*undefined,\s*generationProgressOptionsFromSse\(data, event\)\)/);
   assert.match(app, /setGenerationStatus\(message,\s*undefined,\s*generationProgressOptionsFromSse\(ev\)\)/);
 });

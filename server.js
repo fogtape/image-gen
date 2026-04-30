@@ -1248,29 +1248,12 @@ function extractResponsesStreamImageResult(ev = {}) {
     || '';
 }
 
-function getPartialImagePreviewFromSse(data = {}) {
-  if (!data || typeof data !== 'object') return '';
-  const value = data.partial_image_b64
-    || data.partial_image
-    || data.partialImage
-    || data.previewImage
-    || data.b64_json
-    || data.image?.b64_json
-    || '';
-  const text = typeof value === 'string' ? value.trim() : '';
-  if (!text) return '';
-  if (/^(data:image\/|https?:\/\/)/i.test(text)) return text;
-  return toImageDataUrl(text);
-}
-
 function responsesStreamProgressExtra(ev = {}, event = '') {
   const extra = {
     source: 'responses-sse',
     rawEvent: ev.type || event,
   };
-  const previewImage = getPartialImagePreviewFromSse(ev);
-  if (previewImage) {
-    extra.previewImage = previewImage;
+  if (/partial_image$/.test(String(ev.type || event || ''))) {
     extra.partialIndex = Number(ev.partial_image_index ?? ev.partialImageIndex ?? 0) || 0;
     extra.partialCount = RESPONSES_PARTIAL_IMAGES;
   }

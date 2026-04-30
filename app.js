@@ -2269,21 +2269,6 @@ function generationProgressPhaseFromSse(event, data = {}) {
   return type;
 }
 
-function getPartialImagePreviewFromSse(data = {}) {
-  if (!data || typeof data !== 'object') return '';
-  const value = data.partial_image_b64
-    || data.partial_image
-    || data.partialImage
-    || data.previewImage
-    || data.b64_json
-    || data.image?.b64_json
-    || '';
-  const text = typeof value === 'string' ? value.trim() : '';
-  if (!text) return '';
-  if (/^(data:image\/|https?:\/\/)/i.test(text)) return text;
-  return toImageDataUrl(text);
-}
-
 function extractResponsesStreamImageResult(data = {}) {
   if (!data || typeof data !== 'object') return '';
   return data.item?.result
@@ -2297,7 +2282,6 @@ function extractResponsesStreamImageResult(data = {}) {
 function generationProgressOptionsFromSse(data, event = '') {
   if (!data || typeof data !== 'object') return {};
   const phase = generationProgressPhaseFromSse(event, data);
-  const previewImage = getPartialImagePreviewFromSse(data);
   const progress = {
     phase,
     message: data.message,
@@ -2307,28 +2291,9 @@ function generationProgressOptionsFromSse(data, event = '') {
     total: data.total ?? data.batchCount,
     source: data.source,
     rawEvent: data.rawEvent || data.type || event,
-    previewImage,
   };
   const hasProgress = ['percent', 'percentage', 'progress', 'progressKind', 'current', 'completed', 'total', 'batchCount'].some((key) => Object.prototype.hasOwnProperty.call(data, key));
   return phase || hasProgress ? { progress } : {};
-}
-
-function setGenerationProgressPreview(src = '', reset = false) {
-  const previewEl = $('#generationProgressPreview');
-  const skeletonEl = $('.generation-image-skeleton');
-  if (!previewEl || !skeletonEl) return;
-  const text = typeof src === 'string' ? src.trim() : '';
-  if (text) {
-    previewEl.src = text;
-    previewEl.classList.remove('hidden');
-    skeletonEl.classList.add('has-preview');
-    return;
-  }
-  if (reset) {
-    previewEl.removeAttribute('src');
-    previewEl.classList.add('hidden');
-    skeletonEl.classList.remove('has-preview');
-  }
 }
 
 function updateGenerationProgressDialog({ phase, message, text, meta, progress } = {}) {
@@ -2344,8 +2309,6 @@ function updateGenerationProgressDialog({ phase, message, text, meta, progress }
   const view = getGenerationProgressView(generationProgressEventFromStatus({ phase, message, meta, progress }));
   const percent = view.percent ?? 0;
   const isReal = view.kind === 'real';
-  const effectivePhase = String(progress?.phase || phase || '').trim();
-  setGenerationProgressPreview(progress?.previewImage || '', ['prompt:prepare', 'request:send', 'queue:accepted', 'result:render'].includes(effectivePhase));
   if (titleEl) titleEl.textContent = isReal ? '正在批量生成图片' : '正在生成图片';
   if (metaEl) metaEl.textContent = text || message || '正在生成图片';
   if (labelEl) labelEl.textContent = view.label || '预计进度';
@@ -2374,7 +2337,6 @@ function hideGenerationProgressDialog() {
   if (!overlay) return;
   overlay.setAttribute('aria-busy', 'false');
   closeDialog(overlay, { restoreFocus: false });
-  setGenerationProgressPreview('', true);
 }
 
 function minimizeGenerationProgressDialog() {

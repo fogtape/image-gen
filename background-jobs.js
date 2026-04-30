@@ -118,9 +118,6 @@ export function createJobStore({
 
   function addProgress(job, phase, message, extra = {}) {
     if (isFinalStatus(job.status) && phase !== 'job:cancelled') return null;
-    if (extra?.previewImage) {
-      for (const item of job.progress) delete item.previewImage;
-    }
     const event = {
       phase: String(phase || ''),
       message: String(message || phase || '处理中'),
